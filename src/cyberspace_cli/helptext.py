@@ -40,6 +40,7 @@ Environment variables
 - CYBERSPACE_STATE_PATH: override the state.json path (useful for tests)
 
 Commands (high-level)
+- cyberspace spec
 - cyberspace spawn [--from-key <nsec|hex>] [--chain <label>]
 - cyberspace whereami
 - cyberspace sector

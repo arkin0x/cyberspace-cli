@@ -42,6 +42,9 @@ cyberspace history
 
 ## Command reference
 ```bash
+# open the upstream spec
+cyberspace spec
+
 # identity + chain genesis
 cyberspace spawn
 cyberspace spawn --from-key <nsec_or_32-byte-hex>

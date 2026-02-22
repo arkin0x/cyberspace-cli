@@ -27,6 +27,14 @@ chain_app = typer.Typer(no_args_is_help=True)
 app.add_typer(chain_app, name="chain")
 
 
+def _plane_label(plane: int) -> str:
+    if plane == 0:
+        return "dataspace"
+    if plane == 1:
+        return "ideaspace"
+    return "unknown"
+
+
 def _require_state() -> CyberspaceState:
     state = load_state()
     if not state:
@@ -81,6 +89,25 @@ def help() -> None:
 
 
 @app.command()
+def spec() -> None:
+    """Open the Cyberspace spec / README in your browser."""
+    import webbrowser
+
+    url = "https://github.com/arkin0x/cyberspace/blob/master/readme.md"
+
+    ok = False
+    try:
+        ok = bool(webbrowser.open(url, new=2))
+    except Exception:
+        ok = False
+
+    # Always print for copy/paste (and for headless environments).
+    typer.echo(url)
+    if not ok:
+        typer.echo("(Could not auto-open browser; URL printed above.)", err=True)
+
+
+@app.command()
 def spawn(
     from_key: str = typer.Option(
         None,
@@ -122,6 +149,9 @@ def spawn(
     typer.echo(f"npub: {encode_npub(bytes.fromhex(pub_hex))}")
     typer.echo(f"nsec: {encode_nsec(priv)}")
     typer.echo(f"coord: 0x{coord_hex}")
+    _coord_int = int.from_bytes(bytes.fromhex(coord_hex), "big")
+    _x, _y, _z, _plane = coord_to_xyz(_coord_int)
+    typer.echo(f"      plane={_plane} {_plane_label(_plane)}")
 
 
 @app.command()
@@ -134,7 +164,11 @@ def whereami() -> None:
     typer.echo(f"coord: 0x{state.coord_hex}")
     typer.echo(f"pubkey: {state.pubkey_hex}")
     typer.echo(f"active_chain: {state.active_chain_label or '(none)'}")
-    typer.echo(f"xyz(u85): x={x} y={y} z={z} plane={plane}")
+    typer.echo("xyz(u85):")
+    typer.echo(f"x={x}")
+    typer.echo(f"y={y}")
+    typer.echo(f"z={z}")
+    typer.echo(f"plane={plane} {_plane_label(plane)}")
 
 
 @app.command()
@@ -150,7 +184,11 @@ def sector() -> None:
     sy = y >> sector_bits
     sz = z >> sector_bits
 
-    typer.echo(f"sector: X={sx} Y={sy} Z={sz} plane={plane}")
+    typer.echo("sector:")
+    typer.echo(f"X={sx}")
+    typer.echo(f"Y={sy}")
+    typer.echo(f"Z={sz}")
+    typer.echo(f"plane={plane} {_plane_label(plane)}")
     typer.echo(f"S tag: {sx}-{sy}-{sz}")
 
 
@@ -193,7 +231,7 @@ def gps(
     x, y, z, plane = coord_to_xyz(coord_int)
 
     typer.echo(f"coord: 0x{coord_hex}")
-    typer.echo(f"xyz(u85): x={x} y={y} z={z} plane={plane}")
+    typer.echo(f"xyz(u85): x={x} y={y} z={z} plane={plane} {_plane_label(plane)}")
 
 
 @app.command()
@@ -272,10 +310,10 @@ def cantor(
 
     typer.echo("from:")
     typer.echo(f"  coord: 0x{fc_hex}")
-    typer.echo(f"  xyz:   x={x1} y={y1} z={z1} plane={plane}")
+    typer.echo(f"  xyz:   x={x1} y={y1} z={z1} plane={plane} {_plane_label(plane)}")
     typer.echo("to:")
     typer.echo(f"  coord: 0x{tc_hex}")
-    typer.echo(f"  xyz:   x={x2} y={y2} z={z2} plane={plane}")
+    typer.echo(f"  xyz:   x={x2} y={y2} z={z2} plane={plane} {_plane_label(plane)}")
 
     def _print_axis(name: str, v1: int, v2: int) -> int:
         height = find_lca_height(v1, v2)
@@ -542,7 +580,7 @@ def chain_status() -> None:
     typer.echo(f"current: 0x{state.coord_hex}")
     if cur != last:
         typer.echo("warning: state coord != last chain coord", err=True)
-    typer.echo(f"delta_xyz: dx={dx} dy={dy} dz={dz} (plane={cplane})")
+    typer.echo(f"delta_xyz: dx={dx} dy={dy} dz={dz} (plane={cplane} {_plane_label(cplane)})")
 
 
 if __name__ == "__main__":
