@@ -26,3 +26,11 @@ def sha256_hex(data: bytes) -> str:
 
 def sha256_int_hex(n: int) -> str:
     return sha256_hex(int_to_bytes_be_min(n))
+
+
+def int_to_hex_be_min(n: int, *, prefix: str = "0x") -> str:
+    """Hex string for an int using minimal big-endian bytes (0 -> 0x00).
+
+    This avoids Python's base-10 int->str conversion limits for extremely large integers.
+    """
+    return prefix + int_to_bytes_be_min(n).hex()

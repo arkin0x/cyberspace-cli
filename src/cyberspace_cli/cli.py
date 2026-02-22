@@ -8,6 +8,7 @@ import typer
 from cyberspace_cli import chains
 from cyberspace_cli.helptext import HELP_TEXT
 from cyberspace_cli.nostr_event import make_hop_event, make_spawn_event
+from cyberspace_cli.parsing import normalize_hex_32
 from cyberspace_cli.nostr_keys import (
     encode_nsec,
     encode_npub,
@@ -16,7 +17,7 @@ from cyberspace_cli.nostr_keys import (
     pubkey_hex_from_privkey,
 )
 from cyberspace_cli.state import CyberspaceState, STATE_VERSION, load_state, save_state
-from cyberspace_core.cantor import sha256, sha256_int_hex
+from cyberspace_core.cantor import int_to_bytes_be_min, int_to_hex_be_min, sha256, sha256_int_hex
 from cyberspace_core.coords import AXIS_MAX, coord_to_xyz, gps_to_dataspace_coord, xyz_to_coord
 from cyberspace_core.movement import compute_axis_cantor, compute_movement_proof_xyz, find_lca_height
 from cyberspace_core.movement_debug import axis_cantor_debug
@@ -55,13 +56,10 @@ def _parse_csv_ints(s: str) -> List[int]:
 
 
 def _parse_coord_hex(s: str) -> str:
-    s = s.strip().lower()
-    s = s.removeprefix("0x")
-    if len(s) != 64:
-        raise typer.BadParameter("expected 32-byte (64 hex chars) coordinate")
-    # validate hex
-    bytes.fromhex(s)
-    return s
+    try:
+        return normalize_hex_32(s)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
 
 
 def _coord_hex_from_xyz(x: int, y: int, z: int, plane: int) -> str:
@@ -200,8 +198,8 @@ def gps(
 
 @app.command()
 def cantor(
-    from_coord: Optional[str] = typer.Option(None, "--from-coord", help="256-bit coord hex (64 hex chars, with optional 0x)."),
-    to_coord: Optional[str] = typer.Option(None, "--to-coord", help="256-bit coord hex (64 hex chars, with optional 0x)."),
+    from_coord: Optional[str] = typer.Option(None, "--from-coord", help="256-bit coord hex (with optional 0x; leading zeros optional)."),
+    to_coord: Optional[str] = typer.Option(None, "--to-coord", help="256-bit coord hex (with optional 0x; leading zeros optional)."),
     from_xyz: Optional[str] = typer.Option(None, "--from-xyz", help="x,y,z (u85 integers)."),
     to_xyz: Optional[str] = typer.Option(None, "--to-xyz", help="x,y,z (u85 integers)."),
     plane: int = typer.Option(0, "--plane", help="Plane bit (only used with --from-xyz/--to-xyz)."),
@@ -302,13 +300,15 @@ def cantor(
         if height <= max_height:
             dbg = axis_cantor_debug(v1, v2, max_height=max_height)
             for level, values in enumerate(dbg.levels):
-                typer.echo(f"  level_{level} ({len(values)} nodes): {values}")
+                hex_values = [int_to_hex_be_min(v) for v in values]
+                typer.echo(f"  level_{level} ({len(values)} nodes): {hex_values}")
             root = dbg.root
         else:
             typer.echo(f"  tree_levels: omitted (height {height} > --max-height {max_height})")
             root = compute_axis_cantor(v1, v2)
 
-        typer.echo(f"  cantor_root={root}")
+        typer.echo(f"  cantor_root_hex={int_to_hex_be_min(root)}")
+        typer.echo(f"  cantor_root_bytes={len(int_to_bytes_be_min(root))}")
         return root
 
     cx = _print_axis("X", x1, x2)
@@ -322,8 +322,11 @@ def cantor(
     encryption_key_hex = sha256_int_hex(combined)
     discovery_id_hex = sha256(bytes.fromhex(encryption_key_hex)).hex()
 
+    combined_bytes = int_to_bytes_be_min(combined)
+
     typer.echo("combined:")
-    typer.echo(f"  cantor_number={combined}")
+    typer.echo(f"  cantor_number_hex={int_to_hex_be_min(combined)}")
+    typer.echo(f"  cantor_number_bytes={len(combined_bytes)}")
     typer.echo(f"  encryption_key_sha256={encryption_key_hex}")
     typer.echo(f"  discovery_id_sha256_sha256={discovery_id_hex}")
 

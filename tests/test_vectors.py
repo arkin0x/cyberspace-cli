@@ -7,6 +7,59 @@ from cyberspace_cli.nostr_event import make_hop_event, make_spawn_event
 
 
 class TestVectors(unittest.TestCase):
+    def test_cantor_coord_input_accepts_missing_leading_zeros(self) -> None:
+        # This mirrors `cyberspace cantor --from-coord/--to-coord` parsing behavior.
+        # A coordinate may be provided without leading zeros; it must normalize to 32 bytes.
+        from cyberspace_cli.parsing import normalize_hex_32
+
+        self.assertEqual(normalize_hex_32("0x1"), "0" * 63 + "1")
+        self.assertEqual(normalize_hex_32("1"), "0" * 63 + "1")
+
+    def test_cantor_coord_vector_close_points(self) -> None:
+        # Golden vector for `cyberspace cantor --from-coord/--to-coord`.
+        # Two nearby points in xyz so LCA heights are small.
+        from cyberspace_cli.parsing import normalize_hex_32
+        from cyberspace_core.coords import coord_to_xyz
+        from cyberspace_core.movement import compute_axis_cantor, find_lca_height
+        from cyberspace_core.cantor import cantor_pair, sha256, sha256_int_hex
+
+        # These are 256-bit coords with leading zeros omitted on purpose.
+        from_coord = "0x2b50e80"
+        to_coord = "0x2b50e88"
+
+        from_hex = normalize_hex_32(from_coord)
+        to_hex = normalize_hex_32(to_coord)
+
+        self.assertEqual(from_hex, "0000000000000000000000000000000000000000000000000000000002b50e80")
+        self.assertEqual(to_hex, "0000000000000000000000000000000000000000000000000000000002b50e88")
+
+        c1 = int.from_bytes(bytes.fromhex(from_hex), "big")
+        c2 = int.from_bytes(bytes.fromhex(to_hex), "big")
+
+        x1, y1, z1, p1 = coord_to_xyz(c1)
+        x2, y2, z2, p2 = coord_to_xyz(c2)
+
+        self.assertEqual((x1, y1, z1, p1), (100, 200, 300, 0))
+        self.assertEqual((x2, y2, z2, p2), (101, 200, 300, 0))
+
+        self.assertEqual(find_lca_height(x1, x2), 1)
+        self.assertEqual(find_lca_height(y1, y2), 0)
+        self.assertEqual(find_lca_height(z1, z2), 0)
+
+        cx = compute_axis_cantor(x1, x2)
+        cy = compute_axis_cantor(y1, y2)
+        cz = compute_axis_cantor(z1, z2)
+
+        self.assertEqual(cx, 20402)
+        self.assertEqual(cy, 200)
+        self.assertEqual(cz, 300)
+
+        combined = cantor_pair(cantor_pair(cx, cy), cz)
+        encryption_key = sha256_int_hex(combined)
+        discovery_id = sha256(bytes.fromhex(encryption_key)).hex()
+
+        self.assertEqual(encryption_key, "4e02171a1986de2299e3abe37a00b419d853da9bcab7139d76189f5506b138f6")
+        self.assertEqual(discovery_id, "b3e3141659d48d3f7e39a684ab9f193badc11497ea6c3d0f89fefd8e9dbc85c5")
     def test_gps_golden_vectors_subset(self) -> None:
         # Consensus-critical outputs (copied from v2 selftest).
         vectors = [
@@ -59,6 +112,23 @@ class TestVectors(unittest.TestCase):
             discovery_id,
             "1247b1caeb69145100d6adbb52943c36d72023b10a0f5f434d41311d0b0b339c",
         )
+
+    def test_large_cantor_encryption_and_discovery_ids(self) -> None:
+        # Regression vector: this produces a huge combined Cantor number.
+        # We intentionally assert on the 1-hash and 2-hash values (stable, fixed-size).
+        from cyberspace_core.movement import compute_axis_cantor
+        from cyberspace_core.cantor import cantor_pair, sha256, sha256_int_hex
+
+        cx = compute_axis_cantor(0, 800)
+        cy = compute_axis_cantor(0, 900)
+        cz = compute_axis_cantor(0, 1000)
+        combined = cantor_pair(cantor_pair(cx, cy), cz)
+
+        encryption_key = sha256_int_hex(combined)
+        discovery_id = sha256(bytes.fromhex(encryption_key)).hex()
+
+        self.assertEqual(encryption_key, "d1ed6818770b37a3d68c97fd65cd07d3af24a705ef8eb681fea99172b8eadf0d")
+        self.assertEqual(discovery_id, "7b67be1e49962882683bc3b3a1be728136754c9fbe9b9a75c4a3e2a629c2d97a")
 
     def test_nostr_event_id_vectors(self) -> None:
         # These lock our NIP-01 serialization + tag ordering.
