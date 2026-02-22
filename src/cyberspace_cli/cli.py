@@ -8,7 +8,7 @@ import typer
 from cyberspace_cli import chains
 from cyberspace_cli.helptext import HELP_TEXT
 from cyberspace_cli.nostr_event import make_hop_event, make_spawn_event
-from cyberspace_cli.parsing import normalize_hex_32
+from cyberspace_cli.parsing import normalize_hex_32, parse_destination_xyz_or_coord
 from cyberspace_cli.nostr_keys import (
     encode_nsec,
     encode_npub,
@@ -305,7 +305,7 @@ def cantor(
             root = dbg.root
         else:
             typer.echo(f"  tree_levels: omitted (height {height} > --max-height {max_height})")
-            root = compute_axis_cantor(v1, v2)
+            root = compute_axis_cantor(v1, v2, max_compute_height=max_compute_height)
 
         typer.echo(f"  cantor_root_hex={int_to_hex_be_min(root)}")
         typer.echo(f"  cantor_root_bytes={len(int_to_bytes_be_min(root))}")
@@ -333,8 +333,17 @@ def cantor(
 
 @app.command()
 def move(
-    to: str = typer.Option(None, "--to", help="Absolute xyz[,plane] as comma-separated ints."),
+    to: str = typer.Option(
+        None,
+        "--to",
+        help="Destination as x,y,z[,plane] OR 256-bit coord hex (0x...; leading zeros optional).",
+    ),
     by: str = typer.Option(None, "--by", help="Relative dx,dy,dz as comma-separated ints."),
+    max_lca_height: int = typer.Option(
+        20,
+        "--max-lca-height",
+        help="Refuse moves if any axis LCA height exceeds this (moves must be broken into smaller hops).",
+    ),
 ) -> None:
     """Move locally by appending a hop event to the active chain."""
     state = _require_state()
@@ -356,11 +365,12 @@ def move(
         raise typer.Exit(code=2)
 
     if to is not None:
-        vals = _parse_csv_ints(to)
-        if len(vals) not in (3, 4):
-            raise typer.BadParameter("--to expects x,y,z or x,y,z,plane")
-        x2, y2, z2 = vals[0], vals[1], vals[2]
-        plane2 = vals[3] if len(vals) == 4 else plane1
+        try:
+            dest = parse_destination_xyz_or_coord(to, default_plane=plane1)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
+
+        x2, y2, z2, plane2 = dest.x, dest.y, dest.z, dest.plane
     else:
         vals = _parse_csv_ints(by or "")
         if len(vals) != 3:
@@ -381,9 +391,27 @@ def move(
         )
         raise typer.Exit(code=2)
 
+    # Guard against absurd hops: LCA height drives O(2^h) compute.
+    hx = find_lca_height(x1, x2)
+    hy = find_lca_height(y1, y2)
+    hz = find_lca_height(z1, z2)
+    if max(hx, hy, hz) > max_lca_height:
+        typer.echo(
+            "Move is too large for a single hop. "
+            f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
+            f"limit={max_lca_height}. "
+            "Use smaller hops (or raise --max-lca-height if you really intend to do an expensive hop).",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
     coord_hex = _coord_hex_from_xyz(x2, y2, z2, plane2)
 
-    proof = compute_movement_proof_xyz(x1, y1, z1, x2, y2, z2)
+    try:
+        proof = compute_movement_proof_xyz(x1, y1, z1, x2, y2, z2, max_compute_height=max_lca_height)
+    except ValueError as e:
+        typer.echo(f"Failed to compute movement proof: {e}", err=True)
+        raise typer.Exit(code=2)
 
     created_at = int(time.time())
     hop_event = make_hop_event(

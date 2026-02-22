@@ -56,7 +56,15 @@ cyberspace chain status
 # Tip: keep comma-lists unspaced (or quote them) so negatives don’t get parsed as flags.
 cyberspace move --by -1,0,0
 cyberspace move --by "-1, 0, 0"
+
+# Destination can be xyz or a 256-bit coord hex (leading zeros optional)
 cyberspace move --to x,y,z
+cyberspace move --to 0x2b50e88
+
+# Very large hops are rejected by default because proof computation is O(2^h)
+# where h is the per-axis LCA height. You can override (not recommended):
+cyberspace move --to 0x2b50e88 --max-lca-height 25
+
 cyberspace history --limit 50
 cyberspace history --json
 

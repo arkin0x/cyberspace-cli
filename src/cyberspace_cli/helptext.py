@@ -43,7 +43,7 @@ Commands (high-level)
 - cyberspace spawn [--from-key <nsec|hex>] [--chain <label>]
 - cyberspace whereami
 - cyberspace sector
-- cyberspace move (--by dx,dy,dz | --to x,y,z[,plane])
+- cyberspace move (--by dx,dy,dz | --to x,y,z[,plane] | --to 0x<coord256>) [--max-lca-height N]
   Tip: if you include spaces, quote the comma-list: cyberspace move --by "-1, 0, 0"
 - cyberspace gps <lat,lon>
   (or: cyberspace gps --lat <lat> --lon <lon>)

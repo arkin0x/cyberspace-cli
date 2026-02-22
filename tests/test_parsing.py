@@ -1,9 +1,20 @@
 import unittest
 
-from cyberspace_cli.parsing import normalize_hex_32
+from cyberspace_cli.parsing import normalize_hex_32, parse_destination_xyz_or_coord
 
 
 class TestParsing(unittest.TestCase):
+    def test_parse_destination_xyz(self) -> None:
+        d = parse_destination_xyz_or_coord("1,2,3", default_plane=0)
+        self.assertEqual((d.x, d.y, d.z, d.plane, d.kind), (1, 2, 3, 0, "xyz"))
+
+        d2 = parse_destination_xyz_or_coord("1,2,3,1", default_plane=0)
+        self.assertEqual((d2.x, d2.y, d2.z, d2.plane, d2.kind), (1, 2, 3, 1, "xyz"))
+
+    def test_parse_destination_coord_hex(self) -> None:
+        # Coordinate corresponds to xyz=(100,200,300, plane=0)
+        d = parse_destination_xyz_or_coord("0x2b50e80", default_plane=1)
+        self.assertEqual((d.x, d.y, d.z, d.plane, d.kind), (100, 200, 300, 0, "coord"))
     def test_normalize_hex_32_accepts_short(self) -> None:
         self.assertEqual(normalize_hex_32("0x1"), "0" * 63 + "1")
         self.assertEqual(normalize_hex_32("1"), "0" * 63 + "1")

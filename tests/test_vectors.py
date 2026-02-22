@@ -130,6 +130,14 @@ class TestVectors(unittest.TestCase):
         self.assertEqual(encryption_key, "d1ed6818770b37a3d68c97fd65cd07d3af24a705ef8eb681fea99172b8eadf0d")
         self.assertEqual(discovery_id, "7b67be1e49962882683bc3b3a1be728136754c9fbe9b9a75c4a3e2a629c2d97a")
 
+    def test_axis_cantor_refuses_huge_height(self) -> None:
+        from cyberspace_core.movement import compute_axis_cantor
+
+        # 0 -> 2^30 implies an LCA height of 31, which is intentionally too large
+        # for a single hop under a small max_compute_height.
+        with self.assertRaises(ValueError):
+            compute_axis_cantor(0, 1 << 30, max_compute_height=20)
+
     def test_nostr_event_id_vectors(self) -> None:
         # These lock our NIP-01 serialization + tag ordering.
         pubkey = "00" * 32
