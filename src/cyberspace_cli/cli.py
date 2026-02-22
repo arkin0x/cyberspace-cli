@@ -16,8 +16,10 @@ from cyberspace_cli.nostr_keys import (
     pubkey_hex_from_privkey,
 )
 from cyberspace_cli.state import CyberspaceState, STATE_VERSION, load_state, save_state
+from cyberspace_core.cantor import sha256, sha256_int_hex
 from cyberspace_core.coords import AXIS_MAX, coord_to_xyz, gps_to_dataspace_coord, xyz_to_coord
-from cyberspace_core.movement import compute_movement_proof_xyz
+from cyberspace_core.movement import compute_axis_cantor, compute_movement_proof_xyz, find_lca_height
+from cyberspace_core.movement_debug import axis_cantor_debug
 
 app = typer.Typer(no_args_is_help=True)
 chain_app = typer.Typer(no_args_is_help=True)
@@ -50,6 +52,16 @@ def _coord_hex_from_pubkey_hex(pubkey_hex: str) -> str:
 def _parse_csv_ints(s: str) -> List[int]:
     parts = [p.strip() for p in s.split(",") if p.strip()]
     return [int(p, 0) for p in parts]
+
+
+def _parse_coord_hex(s: str) -> str:
+    s = s.strip().lower()
+    s = s.removeprefix("0x")
+    if len(s) != 64:
+        raise typer.BadParameter("expected 32-byte (64 hex chars) coordinate")
+    # validate hex
+    bytes.fromhex(s)
+    return s
 
 
 def _coord_hex_from_xyz(x: int, y: int, z: int, plane: int) -> str:
@@ -187,6 +199,136 @@ def gps(
 
 
 @app.command()
+def cantor(
+    from_coord: Optional[str] = typer.Option(None, "--from-coord", help="256-bit coord hex (64 hex chars, with optional 0x)."),
+    to_coord: Optional[str] = typer.Option(None, "--to-coord", help="256-bit coord hex (64 hex chars, with optional 0x)."),
+    from_xyz: Optional[str] = typer.Option(None, "--from-xyz", help="x,y,z (u85 integers)."),
+    to_xyz: Optional[str] = typer.Option(None, "--to-xyz", help="x,y,z (u85 integers)."),
+    plane: int = typer.Option(0, "--plane", help="Plane bit (only used with --from-xyz/--to-xyz)."),
+    max_height: int = typer.Option(8, "--max-height", help="Max LCA height to print full Cantor tree levels."),
+    max_compute_height: int = typer.Option(
+        20,
+        "--max-compute-height",
+        help="Refuse to compute Cantor roots if any axis LCA height exceeds this (O(2^h)).",
+    ),
+) -> None:
+    """Debug Cantor movement/encryption numbers between two coordinates.
+
+    Prints, per axis:
+    - LCA height
+    - aligned subtree base/range
+    - the full Cantor pairing tree up to the LCA root (for small heights)
+
+    Also prints:
+    - combined 3D Cantor number
+    - encryption key = sha256(cantor_number)  (single hash)
+    - discovery id   = sha256(encryption_key) (double hash)
+
+    Notes:
+    - This is O(2^h) per axis for height h; use small coordinates or a small --max-height.
+    """
+
+    using_coords = from_coord is not None or to_coord is not None
+    using_xyz = from_xyz is not None or to_xyz is not None
+    if using_coords and using_xyz:
+        typer.echo("Use either --from-coord/--to-coord OR --from-xyz/--to-xyz (not both).", err=True)
+        raise typer.Exit(code=2)
+
+    if using_coords:
+        if from_coord is None or to_coord is None:
+            typer.echo("Both --from-coord and --to-coord are required.", err=True)
+            raise typer.Exit(code=2)
+        fc_hex = _parse_coord_hex(from_coord)
+        tc_hex = _parse_coord_hex(to_coord)
+
+        fc_int = int.from_bytes(bytes.fromhex(fc_hex), "big")
+        tc_int = int.from_bytes(bytes.fromhex(tc_hex), "big")
+
+        x1, y1, z1, p1 = coord_to_xyz(fc_int)
+        x2, y2, z2, p2 = coord_to_xyz(tc_int)
+        if p1 != p2:
+            typer.echo("Plane mismatch: from/to are in different planes.", err=True)
+            raise typer.Exit(code=2)
+        plane = p1
+    else:
+        if from_xyz is None or to_xyz is None:
+            typer.echo("Both --from-xyz and --to-xyz are required.", err=True)
+            raise typer.Exit(code=2)
+
+        a = _parse_csv_ints(from_xyz)
+        b = _parse_csv_ints(to_xyz)
+        if len(a) != 3 or len(b) != 3:
+            raise typer.BadParameter("--from-xyz/--to-xyz expect x,y,z")
+        x1, y1, z1 = a
+        x2, y2, z2 = b
+
+        if plane not in (0, 1):
+            raise typer.BadParameter("--plane must be 0 or 1")
+
+        fc_hex = _coord_hex_from_xyz(x1, y1, z1, plane)
+        tc_hex = _coord_hex_from_xyz(x2, y2, z2, plane)
+
+    if any(v < 0 for v in (x1, y1, z1, x2, y2, z2)):
+        typer.echo("Axis values must be non-negative (u85).", err=True)
+        raise typer.Exit(code=2)
+
+    typer.echo("from:")
+    typer.echo(f"  coord: 0x{fc_hex}")
+    typer.echo(f"  xyz:   x={x1} y={y1} z={z1} plane={plane}")
+    typer.echo("to:")
+    typer.echo(f"  coord: 0x{tc_hex}")
+    typer.echo(f"  xyz:   x={x2} y={y2} z={z2} plane={plane}")
+
+    def _print_axis(name: str, v1: int, v2: int) -> int:
+        height = find_lca_height(v1, v2)
+        base = (v1 >> height) << height
+        leaf_count = 1 << height
+        leaf_min = base
+        leaf_max = base + leaf_count - 1
+
+        if height > max_compute_height:
+            typer.echo(
+                f"axis {name}: lca_height={height} exceeds --max-compute-height={max_compute_height}; refusing to compute root.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+        typer.echo(f"axis {name}:")
+        typer.echo(f"  v1={v1} v2={v2}")
+        typer.echo(f"  lca_height={height}")
+        typer.echo(f"  subtree_base={base}")
+        typer.echo(f"  subtree_range=[{leaf_min}..{leaf_max}] leaves={leaf_count}")
+
+        if height <= max_height:
+            dbg = axis_cantor_debug(v1, v2, max_height=max_height)
+            for level, values in enumerate(dbg.levels):
+                typer.echo(f"  level_{level} ({len(values)} nodes): {values}")
+            root = dbg.root
+        else:
+            typer.echo(f"  tree_levels: omitted (height {height} > --max-height {max_height})")
+            root = compute_axis_cantor(v1, v2)
+
+        typer.echo(f"  cantor_root={root}")
+        return root
+
+    cx = _print_axis("X", x1, x2)
+    cy = _print_axis("Y", y1, y2)
+    cz = _print_axis("Z", z1, z2)
+
+    # Combine in 3D.
+    from cyberspace_core.cantor import cantor_pair
+
+    combined = cantor_pair(cantor_pair(cx, cy), cz)
+    encryption_key_hex = sha256_int_hex(combined)
+    discovery_id_hex = sha256(bytes.fromhex(encryption_key_hex)).hex()
+
+    typer.echo("combined:")
+    typer.echo(f"  cantor_number={combined}")
+    typer.echo(f"  encryption_key_sha256={encryption_key_hex}")
+    typer.echo(f"  discovery_id_sha256_sha256={discovery_id_hex}")
+
+
+@app.command()
 def move(
     to: str = typer.Option(None, "--to", help="Absolute xyz[,plane] as comma-separated ints."),
     by: str = typer.Option(None, "--by", help="Relative dx,dy,dz as comma-separated ints."),
@@ -261,18 +403,35 @@ def move(
 
 
 @app.command()
-def history(limit: int = typer.Option(50, "--limit", help="Max events to print.")) -> None:
-    """Show the active chain (local JSON events)."""
+def history(
+    limit: int = typer.Option(50, "--limit", help="Max events to print."),
+    json_out: bool = typer.Option(False, "--json", help="Print raw event JSON objects (one per line)."),
+) -> None:
+    """Show the active chain.
+
+    By default this prints a human-readable summary.
+
+    Use `--json` to print the full underlying Nostr-style event objects (JSON), one per line.
+    """
+    import json
+
     state = _require_state()
     label = _require_active_chain_label(state)
 
     events = chains.read_events(label)
     if not events:
-        typer.echo(f"(empty chain) {label}")
+        if not json_out:
+            typer.echo(f"(empty chain) {label}")
         return
 
     if limit > 0:
         events = events[-limit:]
+
+    if json_out:
+        # Machine-friendly: print exactly the events, nothing else.
+        for ev in events:
+            typer.echo(json.dumps(ev, separators=(",", ":"), ensure_ascii=False))
+        return
 
     typer.echo(f"chain: {label} (showing {len(events)} events)")
     for i, ev in enumerate(events):

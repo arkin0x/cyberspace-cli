@@ -24,6 +24,7 @@ Quick start
   # inspect chain
   cyberspace chain status
   cyberspace history
+  cyberspace history --json
 
 Core ideas
 - Your Nostr pubkey (32-byte x-only hex) is your spawn coordinate.
@@ -46,7 +47,8 @@ Commands (high-level)
   Tip: if you include spaces, quote the comma-list: cyberspace move --by "-1, 0, 0"
 - cyberspace gps <lat,lon>
   (or: cyberspace gps --lat <lat> --lon <lon>)
-- cyberspace history [--limit N]
+- cyberspace cantor (--from-xyz x,y,z --to-xyz x,y,z | --from-coord <hex> --to-coord <hex>)
+- cyberspace history [--limit N] [--json]
 - cyberspace chain list
 - cyberspace chain use <label>
 - cyberspace chain status

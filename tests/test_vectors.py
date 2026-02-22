@@ -1,6 +1,7 @@
 import unittest
 
 from cyberspace_core.coords import gps_to_dataspace_coord
+from cyberspace_core.cantor import sha256, sha256_int_hex
 from cyberspace_core.movement import compute_movement_proof_xyz
 from cyberspace_cli.nostr_event import make_hop_event, make_spawn_event
 
@@ -48,6 +49,15 @@ class TestVectors(unittest.TestCase):
         self.assertEqual(
             proof.proof_hash,
             "9306cfcf163adfa9a1f34933091a445bbbc77de02a1e504eba9d6bcd5950b414",
+        )
+
+        # Location-based encryption lookup id: sha256(sha256(cantor_number))
+        encryption_key = sha256_int_hex(proof.combined)
+        discovery_id = sha256(bytes.fromhex(encryption_key)).hex()
+        self.assertEqual(encryption_key, proof.proof_hash)
+        self.assertEqual(
+            discovery_id,
+            "1247b1caeb69145100d6adbb52943c36d72023b10a0f5f434d41311d0b0b339c",
         )
 
     def test_nostr_event_id_vectors(self) -> None:

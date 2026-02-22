@@ -58,6 +58,7 @@ cyberspace move --by -1,0,0
 cyberspace move --by "-1, 0, 0"
 cyberspace move --to x,y,z
 cyberspace history --limit 50
+cyberspace history --json
 
 # position utilities
 cyberspace whereami
@@ -65,6 +66,9 @@ cyberspace sector
 cyberspace gps 37.7749,-122.4194
 # or
 cyberspace gps --lat 37.7749 --lon -122.4194
+
+# cantor + encryption/debug (prints LCA heights, Cantor roots, and 1-hash/2-hash ids)
+cyberspace cantor --from-xyz 0,0,0 --to-xyz 3,2,1
 ```
 
 ## Local storage
