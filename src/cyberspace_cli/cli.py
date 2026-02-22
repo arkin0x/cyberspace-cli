@@ -9,6 +9,7 @@ from cyberspace_cli import chains
 from cyberspace_cli.helptext import HELP_TEXT
 from cyberspace_cli.nostr_event import make_hop_event, make_spawn_event
 from cyberspace_cli.parsing import normalize_hex_32, parse_destination_xyz_or_coord
+from cyberspace_cli.toward import choose_next_hop_xyz
 from cyberspace_cli.nostr_keys import (
     encode_nsec,
     encode_npub,
@@ -151,7 +152,7 @@ def spawn(
     typer.echo(f"coord: 0x{coord_hex}")
     _coord_int = int.from_bytes(bytes.fromhex(coord_hex), "big")
     _x, _y, _z, _plane = coord_to_xyz(_coord_int)
-    typer.echo(f"      plane={_plane} {_plane_label(_plane)}")
+    typer.echo(f"plane={_plane} {_plane_label(_plane)}")
 
 
 @app.command()
@@ -377,10 +378,20 @@ def move(
         help="Destination as x,y,z[,plane] OR 256-bit coord hex (0x...; leading zeros optional).",
     ),
     by: str = typer.Option(None, "--by", help="Relative dx,dy,dz as comma-separated ints."),
+    toward: str = typer.Option(
+        None,
+        "--toward",
+        help="Continuously make hops toward a destination (x,y,z[,plane] or 256-bit coord hex).",
+    ),
     max_lca_height: int = typer.Option(
         20,
         "--max-lca-height",
         help="Refuse moves if any axis LCA height exceeds this (moves must be broken into smaller hops).",
+    ),
+    max_hops: int = typer.Option(
+        0,
+        "--max-hops",
+        help="Stop after this many hops when using --toward (0 means until reached).",
     ),
 ) -> None:
     """Move locally by appending a hop event to the active chain."""
@@ -398,9 +409,117 @@ def move(
     prev_coord_int = int.from_bytes(bytes.fromhex(state.coord_hex), "big")
     x1, y1, z1, plane1 = coord_to_xyz(prev_coord_int)
 
-    if (to is None and by is None) or (to is not None and by is not None):
-        typer.echo("Specify exactly one of --to or --by.", err=True)
+    if (to is None and by is None and toward is None) or sum(v is not None for v in (to, by, toward)) != 1:
+        typer.echo("Specify exactly one of --to, --by, or --toward.", err=True)
         raise typer.Exit(code=2)
+
+    def _do_single_hop(*, x2: int, y2: int, z2: int, plane2: int) -> str:
+        nonlocal x1, y1, z1, plane1, prev_event_id
+
+        if plane2 != plane1:
+            typer.echo("Plane changes are not supported yet (must remain in same plane).", err=True)
+            raise typer.Exit(code=2)
+
+        if not (0 <= x2 <= AXIS_MAX and 0 <= y2 <= AXIS_MAX and 0 <= z2 <= AXIS_MAX):
+            typer.echo(
+                "Destination is out of u85 range. "
+                f"dest=(x={x2}, y={y2}, z={z2}) must be within [0, {AXIS_MAX}]. "
+                f"current=(x={x1}, y={y1}, z={z1}).",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+        # Guard against absurd hops: LCA height drives O(2^h) compute.
+        hx = find_lca_height(x1, x2)
+        hy = find_lca_height(y1, y2)
+        hz = find_lca_height(z1, z2)
+        if max(hx, hy, hz) > max_lca_height:
+            typer.echo(
+                "Move is too large for a single hop. "
+                f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
+                f"limit={max_lca_height}. "
+                "Use smaller hops (or raise --max-lca-height if you really intend to do an expensive hop).",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+        coord_hex = _coord_hex_from_xyz(x2, y2, z2, plane2)
+
+        try:
+            proof = compute_movement_proof_xyz(x1, y1, z1, x2, y2, z2, max_compute_height=max_lca_height)
+        except ValueError as e:
+            typer.echo(f"Failed to compute movement proof: {e}", err=True)
+            raise typer.Exit(code=2)
+
+        created_at = int(time.time())
+        hop_event = make_hop_event(
+            pubkey_hex=state.pubkey_hex,
+            created_at=created_at,
+            genesis_event_id=genesis_id,
+            previous_event_id=prev_event_id,
+            prev_coord_hex=state.coord_hex,
+            coord_hex=coord_hex,
+            proof_hash_hex=proof.proof_hash,
+        )
+        chains.append_event(label, hop_event)
+
+        state.coord_hex = coord_hex
+        save_state(state)
+
+        prev_event_id = hop_event["id"]
+        x1, y1, z1, plane1 = x2, y2, z2, plane2
+
+        typer.echo(f"Moved. chain={label} len={chains.chain_length(label)}")
+        typer.echo(f"coord: 0x{coord_hex}")
+        typer.echo(f"proof: {proof.proof_hash}")
+
+        return coord_hex
+
+    if toward is not None:
+        try:
+            target = parse_destination_xyz_or_coord(toward, default_plane=plane1)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
+
+        if target.plane != plane1:
+            typer.echo("Plane changes are not supported yet (must remain in same plane).", err=True)
+            raise typer.Exit(code=2)
+
+        tx, ty, tz = target.x, target.y, target.z
+
+        hops = 0
+        try:
+            while True:
+                if (x1, y1, z1) == (tx, ty, tz):
+                    typer.echo("Arrived.")
+                    typer.echo(f"coord: 0x{state.coord_hex}")
+                    return
+
+                if max_hops and hops >= max_hops:
+                    typer.echo(f"Stopped after max_hops={max_hops}.")
+                    typer.echo(f"coord: 0x{state.coord_hex}")
+                    return
+
+                try:
+                    next_hop = choose_next_hop_xyz(
+                        x=x1,
+                        y=y1,
+                        z=z1,
+                        tx=tx,
+                        ty=ty,
+                        tz=tz,
+                        max_lca_height=max_lca_height,
+                    )
+                except ValueError as e:
+                    typer.echo(f"Cannot continue toward target: {e}", err=True)
+                    raise typer.Exit(code=2)
+
+                _do_single_hop(x2=next_hop.x.next, y2=next_hop.y.next, z2=next_hop.z.next, plane2=plane1)
+                hops += 1
+        except KeyboardInterrupt:
+            typer.echo(f"Interrupted after hops={hops}.", err=True)
+            typer.echo(f"coord: 0x{state.coord_hex}")
+            raise typer.Exit(code=130)
 
     if to is not None:
         try:
@@ -408,67 +527,15 @@ def move(
         except ValueError as e:
             raise typer.BadParameter(str(e)) from e
 
-        x2, y2, z2, plane2 = dest.x, dest.y, dest.z, dest.plane
-    else:
-        vals = _parse_csv_ints(by or "")
-        if len(vals) != 3:
-            raise typer.BadParameter("--by expects dx,dy,dz")
-        dx, dy, dz = vals
-        x2, y2, z2, plane2 = x1 + dx, y1 + dy, z1 + dz, plane1
+        _do_single_hop(x2=dest.x, y2=dest.y, z2=dest.z, plane2=dest.plane)
+        return
 
-    if plane2 != plane1:
-        typer.echo("Plane changes are not supported yet (must remain in same plane).", err=True)
-        raise typer.Exit(code=2)
-
-    if not (0 <= x2 <= AXIS_MAX and 0 <= y2 <= AXIS_MAX and 0 <= z2 <= AXIS_MAX):
-        typer.echo(
-            "Destination is out of u85 range. "
-            f"dest=(x={x2}, y={y2}, z={z2}) must be within [0, {AXIS_MAX}]. "
-            f"current=(x={x1}, y={y1}, z={z1}).",
-            err=True,
-        )
-        raise typer.Exit(code=2)
-
-    # Guard against absurd hops: LCA height drives O(2^h) compute.
-    hx = find_lca_height(x1, x2)
-    hy = find_lca_height(y1, y2)
-    hz = find_lca_height(z1, z2)
-    if max(hx, hy, hz) > max_lca_height:
-        typer.echo(
-            "Move is too large for a single hop. "
-            f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
-            f"limit={max_lca_height}. "
-            "Use smaller hops (or raise --max-lca-height if you really intend to do an expensive hop).",
-            err=True,
-        )
-        raise typer.Exit(code=2)
-
-    coord_hex = _coord_hex_from_xyz(x2, y2, z2, plane2)
-
-    try:
-        proof = compute_movement_proof_xyz(x1, y1, z1, x2, y2, z2, max_compute_height=max_lca_height)
-    except ValueError as e:
-        typer.echo(f"Failed to compute movement proof: {e}", err=True)
-        raise typer.Exit(code=2)
-
-    created_at = int(time.time())
-    hop_event = make_hop_event(
-        pubkey_hex=state.pubkey_hex,
-        created_at=created_at,
-        genesis_event_id=genesis_id,
-        previous_event_id=prev_event_id,
-        prev_coord_hex=state.coord_hex,
-        coord_hex=coord_hex,
-        proof_hash_hex=proof.proof_hash,
-    )
-    chains.append_event(label, hop_event)
-
-    state.coord_hex = coord_hex
-    save_state(state)
-
-    typer.echo(f"Moved. chain={label} len={chains.chain_length(label)}")
-    typer.echo(f"coord: 0x{coord_hex}")
-    typer.echo(f"proof: {proof.proof_hash}")
+    # by
+    vals = _parse_csv_ints(by or "")
+    if len(vals) != 3:
+        raise typer.BadParameter("--by expects dx,dy,dz")
+    dx, dy, dz = vals
+    _do_single_hop(x2=x1 + dx, y2=y1 + dy, z2=z1 + dz, plane2=plane1)
 
 
 @app.command()

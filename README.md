@@ -64,6 +64,9 @@ cyberspace move --by "-1, 0, 0"
 cyberspace move --to x,y,z
 cyberspace move --to 0x2b50e88
 
+# Move continuously toward a destination (each hop is appended immediately; Ctrl+C keeps progress)
+cyberspace move --toward 0x2b50e88
+
 # Very large hops are rejected by default because proof computation is O(2^h)
 # where h is the per-axis LCA height. You can override (not recommended):
 cyberspace move --to 0x2b50e88 --max-lca-height 25
