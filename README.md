@@ -27,6 +27,13 @@ For the extended guide (also available offline):
 cyberspace help
 ```
 
+For the full CLI / subcommand help:
+```bash
+cyberspace --help
+cyberspace move --help
+cyberspace target --help
+```
+
 Typical flow:
 ```bash
 # create identity + genesis event (also selects this chain as active)
@@ -44,6 +51,9 @@ cyberspace history
 ```bash
 # open the upstream spec
 cyberspace spec
+
+# show built-in extended help
+cyberspace help
 
 # identity + chain genesis
 cyberspace spawn
@@ -69,11 +79,18 @@ cyberspace move --by "-1, 0, 0"
 cyberspace move --by 0,0,0,1
 
 # Destination can be xyz or a 256-bit coord hex (leading zeros optional)
+# Note: plane is optional; defaults to your current plane.
 cyberspace move --to x,y,z
+cyberspace move --to x,y,z,1
 cyberspace move --to 0x2b50e88
 
 # Move continuously toward a destination (each hop is appended immediately; Ctrl+C keeps progress)
+# --toward supports a target in a different plane: it will do a final plane-switch hop when xyz matches.
+# While running, it prints per-hop progress.
 cyberspace move --toward 0x2b50e88
+
+# If no destination is provided, `cyberspace move` defaults to moving `--toward` the current target.
+cyberspace move
 
 # Very large hops are rejected by default because proof computation is O(2^h)
 # where h is the per-axis LCA height.
@@ -97,6 +114,10 @@ cyberspace sector
 # open the built-in 3D visualizer (optional deps)
 cyberspace 3d
 
+# plot LCA spikes + 2^h boundaries around your current axis value (optional deps)
+cyberspace lcaplot
+cyberspace lcaplot --axis z --span 2048 --max-lca-height 17
+
 cyberspace gps 37.7749,-122.4194
 # or
 cyberspace gps --lat 37.7749 --lon -122.4194
@@ -104,6 +125,14 @@ cyberspace gps --lat 37.7749 --lon -122.4194
 # cantor + encryption/debug (prints LCA heights, Cantor roots, and 1-hash/2-hash ids)
 cyberspace cantor --from-xyz 0,0,0 --to-xyz 3,2,1
 ```
+
+## Optional GUI dependencies
+The `cyberspace 3d` and `cyberspace lcaplot` commands require extra dependencies:
+```bash
+pip install 'cyberspace-cli[visualizer]'
+```
+
+On Linux you may also need `python3-tk` for Tkinter.
 
 ## Local storage
 - State: `~/.cyberspace/state.json`
