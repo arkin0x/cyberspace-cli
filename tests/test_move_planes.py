@@ -39,6 +39,8 @@ class TestMovePlanes(unittest.TestCase):
                         pubkey_hex=pubkey_hex,
                         coord_hex=c0,
                         active_chain_label=label,
+                        targets=[],
+                        active_target_label="",
                     )
                 )
 
@@ -80,6 +82,8 @@ class TestMovePlanes(unittest.TestCase):
                         pubkey_hex=pubkey_hex,
                         coord_hex=c0,
                         active_chain_label=label,
+                        targets=[],
+                        active_target_label="",
                     )
                 )
 

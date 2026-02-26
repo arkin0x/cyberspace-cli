@@ -6,6 +6,8 @@ from typing import List, Optional, Sequence, Tuple
 import typer
 
 from cyberspace_cli import chains
+from cyberspace_cli import targets
+from cyberspace_cli.config import load_config, save_config
 from cyberspace_cli.helptext import HELP_TEXT
 from cyberspace_cli.nostr_event import make_hop_event, make_spawn_event
 from cyberspace_cli.parsing import normalize_hex_32, parse_destination_xyz_or_coord
@@ -25,7 +27,11 @@ from cyberspace_core.movement_debug import axis_cantor_debug
 
 app = typer.Typer(no_args_is_help=True)
 chain_app = typer.Typer(no_args_is_help=True)
+config_app = typer.Typer(no_args_is_help=True)
+target_app = typer.Typer(no_args_is_help=True)
 app.add_typer(chain_app, name="chain")
+app.add_typer(config_app, name="config")
+app.add_typer(target_app, name="target")
 
 
 def _plane_label(plane: int) -> str:
@@ -81,6 +87,66 @@ def _get_tag(event: dict, key: str) -> Optional[str]:
         if isinstance(t, list) and len(t) >= 2 and t[0] == key:
             return t[1]
     return None
+
+
+@config_app.command("show")
+def config_show() -> None:
+    """Show persisted CLI config."""
+    cfg = load_config()
+    typer.echo(f"default_max_lca_height: {cfg.default_max_lca_height}")
+
+
+@config_app.command("set")
+def config_set(
+    max_lca_height: int = typer.Option(
+        ...,  # required
+        "--max-lca-height",
+        min=0,
+        help="Persist default for move/toward. 0 disables large hops entirely (not recommended).",
+    ),
+) -> None:
+    """Persist CLI settings so flags are not needed on every command."""
+    cfg = load_config()
+    cfg.default_max_lca_height = int(max_lca_height)
+    save_config(cfg)
+    typer.echo("Saved.")
+    typer.echo(f"default_max_lca_height: {cfg.default_max_lca_height}")
+
+
+@target_app.callback(invoke_without_command=True)
+def target(
+    ctx: typer.Context,
+    coord: Optional[str] = typer.Argument(None, help="256-bit coord hex (0x... optional; leading zeros optional)."),
+    label: Optional[str] = typer.Option(None, "--label", help="Human label for this target (default: unnamed_N)."),
+) -> None:
+    """Manage named local movement targets (stored locally in state.json)."""
+    if ctx.invoked_subcommand is not None:
+        return
+
+    if coord is None:
+        typer.echo(ctx.get_help())
+        raise typer.Exit(code=0)
+
+    state = _require_state()
+    try:
+        tgt_label, coord_hex = targets.set_target(state, coord, label=label)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+
+    save_state(state)
+    typer.echo(f"(current) {tgt_label} 0x{coord_hex}")
+
+
+@target_app.command("list")
+def target_list() -> None:
+    """List known targets (and show which is current)."""
+    state = _require_state()
+    lines = targets.format_target_list(state)
+    if not lines:
+        typer.echo("(no targets yet)")
+        return
+    for line in lines:
+        typer.echo(line)
 
 
 @app.command()
@@ -142,6 +208,8 @@ def spawn(
         pubkey_hex=pub_hex,
         coord_hex=coord_hex,
         active_chain_label=chains.normalize_label(label),
+        targets=[],
+        active_target_label="",
     )
     save_state(state)
 
@@ -191,6 +259,89 @@ def sector() -> None:
     typer.echo(f"Z={sz}")
     typer.echo(f"plane={plane} {_plane_label(plane)}")
     typer.echo(f"S tag: {sx}-{sy}-{sz}")
+
+
+def _bench_worker(height: int, q) -> None:  # pragma: no cover
+    """Child process target for `cyberspace bench`.
+
+    This isolates expensive / long-running proof computation so we can enforce a timeout.
+    """
+    try:
+        # LCA height h can be forced by moving 0 -> (2^h - 1).
+        x2 = (1 << height) - 1 if height > 0 else 0
+        compute_movement_proof_xyz(0, 0, 0, x2, x2, x2, max_compute_height=height)
+        q.put({"ok": True})
+    except Exception as e:
+        q.put({"ok": False, "error": str(e)})
+
+
+@app.command()
+def bench(
+    timeout_s: int = typer.Option(60, "--timeout", help="Cancel a single LCA benchmark if it exceeds this many seconds."),
+    target_s: float = typer.Option(2.0, "--target", help="Target seconds for selecting the 'Optimal Speed' LCA."),
+    max_height: int = typer.Option(22, "--max-height", help="Safety cap on heights to attempt."),
+) -> None:
+    """Benchmark movement proof compute time by LCA height.
+
+    Runs LCA heights from 0 upward until a height exceeds the timeout.
+
+    Notes:
+    - Proof computation is O(2^h) per axis; big heights get expensive fast.
+    - The chosen "Optimal Speed" is the height whose runtime is closest to --target.
+    """
+    import multiprocessing as mp
+    import time as _time
+
+    cfg = load_config()
+
+    typer.echo("bench: movement proof runtime by LCA height")
+    typer.echo(f"timeout_s={timeout_s} target_s={target_s}")
+    typer.echo(f"current_default_max_lca_height={cfg.default_max_lca_height}")
+
+    results: List[Tuple[int, float]] = []
+
+    for h in range(0, max_height + 1):
+        q: mp.Queue = mp.Queue()
+        p = mp.Process(target=_bench_worker, args=(h, q))
+
+        start = _time.perf_counter()
+        p.start()
+        p.join(timeout_s)
+
+        if p.is_alive():
+            p.terminate()
+            p.join(5)
+            typer.echo(f"lca_height={h}: >{timeout_s:.0f}s (cancelled)")
+            break
+
+        elapsed = _time.perf_counter() - start
+
+        msg = None
+        try:
+            if not q.empty():
+                msg = q.get_nowait()
+        except Exception:
+            msg = None
+
+        if isinstance(msg, dict) and not msg.get("ok", True):
+            typer.echo(f"lca_height={h}: error: {msg.get('error','unknown')}")
+            break
+
+        results.append((h, elapsed))
+        typer.echo(f"lca_height={h}: {elapsed:.3f}s")
+
+    if not results:
+        typer.echo("No benchmark results.", err=True)
+        raise typer.Exit(code=1)
+
+    # Pick height closest to target_s.
+    optimal_h, optimal_t = min(results, key=lambda it: abs(it[1] - target_s))
+
+    typer.echo("---")
+    typer.echo(f"Optimal Speed LCA: {optimal_h} ({optimal_t:.3f}s)")
+    typer.echo(f"Recommendation: set --max-lca-height to {optimal_h} for interactive speed.")
+    typer.echo(f"Persist: cyberspace config set --max-lca-height {optimal_h}")
+    typer.echo(f"Per-command override: cyberspace move --max-lca-height {optimal_h} ...")
 
 
 @app.command("3d")
@@ -454,10 +605,10 @@ def move(
         "--toward",
         help="Continuously make hops toward a destination (x,y,z[,plane] or 256-bit coord hex).",
     ),
-    max_lca_height: int = typer.Option(
-        20,
+    max_lca_height: Optional[int] = typer.Option(
+        None,
         "--max-lca-height",
-        help="Refuse moves if any axis LCA height exceeds this (moves must be broken into smaller hops).",
+        help="Refuse moves if any axis LCA height exceeds this (default: config value; see `cyberspace config show`).",
     ),
     max_hops: int = typer.Option(
         0,
@@ -468,6 +619,9 @@ def move(
     """Move locally by appending a hop event to the active chain."""
     state = _require_state()
     label = _require_active_chain_label(state)
+
+    cfg = load_config()
+    effective_max_lca_height = int(max_lca_height) if max_lca_height is not None else int(cfg.default_max_lca_height)
 
     events = chains.read_events(label)
     if not events:
@@ -480,7 +634,19 @@ def move(
     prev_coord_int = int.from_bytes(bytes.fromhex(state.coord_hex), "big")
     x1, y1, z1, plane1 = coord_to_xyz(prev_coord_int)
 
-    if (to is None and by is None and toward is None) or sum(v is not None for v in (to, by, toward)) != 1:
+    # If no explicit destination is provided, fall back to the current target.
+    if to is None and by is None and toward is None:
+        t = targets.get_current_target(state)
+        if t and t.get("coord_hex"):
+            toward = f"0x{t['coord_hex']}"
+        else:
+            typer.echo(
+                "Specify exactly one of --to, --by, or --toward (or set a target with `cyberspace target <coord>`).",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+
+    if sum(v is not None for v in (to, by, toward)) != 1:
         typer.echo("Specify exactly one of --to, --by, or --toward.", err=True)
         raise typer.Exit(code=2)
 
@@ -504,11 +670,11 @@ def move(
         hx = find_lca_height(x1, x2)
         hy = find_lca_height(y1, y2)
         hz = find_lca_height(z1, z2)
-        if max(hx, hy, hz) > max_lca_height:
+        if max(hx, hy, hz) > effective_max_lca_height:
             typer.echo(
                 "Move is too large for a single hop. "
                 f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
-                f"limit={max_lca_height}. "
+                f"limit={effective_max_lca_height}. "
                 "Use smaller hops (or raise --max-lca-height if you really intend to do an expensive hop).",
                 err=True,
             )
@@ -517,7 +683,15 @@ def move(
         coord_hex = _coord_hex_from_xyz(x2, y2, z2, plane2)
 
         try:
-            proof = compute_movement_proof_xyz(x1, y1, z1, x2, y2, z2, max_compute_height=max_lca_height)
+            proof = compute_movement_proof_xyz(
+                x1,
+                y1,
+                z1,
+                x2,
+                y2,
+                z2,
+                max_compute_height=effective_max_lca_height,
+            )
         except ValueError as e:
             typer.echo(f"Failed to compute movement proof: {e}", err=True)
             raise typer.Exit(code=2)
@@ -579,7 +753,7 @@ def move(
                         tx=tx,
                         ty=ty,
                         tz=tz,
-                        max_lca_height=max_lca_height,
+                        max_lca_height=effective_max_lca_height,
                     )
                 except ValueError as e:
                     typer.echo(f"Cannot continue toward target: {e}", err=True)

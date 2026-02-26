@@ -21,3 +21,7 @@ def state_path() -> Path:
 
 def chains_dir() -> Path:
     return cyberspace_home() / "chains"
+
+
+def config_path() -> Path:
+    return cyberspace_home() / "config.json"

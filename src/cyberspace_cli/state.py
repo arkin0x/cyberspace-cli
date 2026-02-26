@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from cyberspace_cli.paths import state_path
 
-STATE_VERSION = "2026-02-22-cli-state-v2"
+STATE_VERSION = "2026-02-26-cli-state-v3"
 
 
 def default_state_path() -> Path:
@@ -23,14 +23,32 @@ class CyberspaceState:
     coord_hex: str
     active_chain_label: str
 
+    # Target management (purely local convenience; not part of the movement chain).
+    # Stored as a list to preserve insertion order.
+    targets: List[Dict[str, str]]
+    active_target_label: str
+
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "CyberspaceState":
+        raw_targets = d.get("targets")
+        targets: List[Dict[str, str]] = []
+        if isinstance(raw_targets, list):
+            for t in raw_targets:
+                if not isinstance(t, dict):
+                    continue
+                label = str(t.get("label", "")).strip()
+                coord_hex = str(t.get("coord_hex", "")).strip().lower()
+                if label and coord_hex:
+                    targets.append({"label": label, "coord_hex": coord_hex})
+
         return CyberspaceState(
             version=str(d.get("version", "")),
             privkey_hex=str(d.get("privkey_hex", "")),
             pubkey_hex=str(d.get("pubkey_hex", "")),
             coord_hex=str(d.get("coord_hex", "")),
             active_chain_label=str(d.get("active_chain_label", "")),
+            targets=targets,
+            active_target_label=str(d.get("active_target_label", "")),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -40,6 +58,8 @@ class CyberspaceState:
             "pubkey_hex": self.pubkey_hex,
             "coord_hex": self.coord_hex,
             "active_chain_label": self.active_chain_label,
+            "targets": self.targets,
+            "active_target_label": self.active_target_label,
         }
 
 

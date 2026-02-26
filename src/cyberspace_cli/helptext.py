@@ -46,9 +46,19 @@ Commands (high-level)
 - cyberspace sector
 - cyberspace 3d
   (optional GUI; install: pip install 'cyberspace-cli[visualizer]' and you may need python3-tk)
+- cyberspace target <coord256> [--label <name>]
+  Set the current movement target (stored locally in state.json).
+- cyberspace target list
+  List targets and show which is current.
 - cyberspace move (--by dx,dy,dz | --by 0,0,0,plane | --to x,y,z[,plane] | --to 0x<coord256> | --toward <dest>) [--max-lca-height N]
+  Default --max-lca-height comes from config (see: cyberspace config show).
+  If no destination is provided, `cyberspace move` defaults to moving `--toward` the current target.
   Tip: if you include spaces, quote the comma-list: cyberspace move --by "-1, 0, 0"
   Plane switch: cyberspace move --by 0,0,0,1  (ideaspace)
+- cyberspace bench
+  (benchmarks proof compute time by LCA height and recommends a max-lca-height)
+- cyberspace config show
+- cyberspace config set --max-lca-height N
 - cyberspace gps <lat,lon>
   (or: cyberspace gps --lat <lat> --lon <lon>)
 - cyberspace cantor (--from-xyz x,y,z --to-xyz x,y,z | --from-coord <hex> --to-coord <hex>)

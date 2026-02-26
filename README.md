@@ -71,8 +71,16 @@ cyberspace move --to 0x2b50e88
 cyberspace move --toward 0x2b50e88
 
 # Very large hops are rejected by default because proof computation is O(2^h)
-# where h is the per-axis LCA height. You can override (not recommended):
+# where h is the per-axis LCA height.
+# You can override per-command:
 cyberspace move --to 0x2b50e88 --max-lca-height 25
+
+# Or persist a default so you don't need the flag every time:
+cyberspace config show
+cyberspace config set --max-lca-height 16
+
+# Benchmark your machine and get a recommended default ("Optimal Speed" near ~2 seconds):
+cyberspace bench
 
 cyberspace history --limit 50
 cyberspace history --json
