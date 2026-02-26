@@ -77,6 +77,10 @@ cyberspace history --json
 # position utilities
 cyberspace whereami
 cyberspace sector
+
+# open the built-in 3D visualizer (optional deps)
+cyberspace 3d
+
 cyberspace gps 37.7749,-122.4194
 # or
 cyberspace gps --lat 37.7749 --lon -122.4194

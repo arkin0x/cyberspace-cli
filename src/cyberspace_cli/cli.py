@@ -193,6 +193,82 @@ def sector() -> None:
     typer.echo(f"S tag: {sx}-{sy}-{sz}")
 
 
+@app.command("3d")
+def three_d(
+    coord: Optional[str] = typer.Option(
+        None,
+        "--coord",
+        help="Override the current coord hex (256-bit; optional 0x prefix; leading zeros optional).",
+    ),
+    spawn_coord: Optional[str] = typer.Option(
+        None,
+        "--spawn-coord",
+        help="Override the spawn coord hex (256-bit; optional 0x prefix; leading zeros optional).",
+    ),
+    scale: float = typer.Option(0.5, "--scale", help="Render scaling multiplier (default 0.5)."),
+    grid_lines: int = typer.Option(4, "--grid-lines", help="Wireframe grid density (default 4)."),
+    show_spawn: bool = typer.Option(True, "--spawn/--no-spawn", help="Show spawn marker (default: on)."),
+    show_current: bool = typer.Option(True, "--current/--no-current", help="Show current marker (default: on)."),
+) -> None:
+    """Open the 3D visualizer with your current coordinate (and spawn, if available)."""
+
+    state = _require_state()
+
+    # Current coordinate (from state unless overridden)
+    cur_hex_norm = normalize_hex_32(coord or state.coord_hex)
+    cur_int = int.from_bytes(bytes.fromhex(cur_hex_norm), "big")
+    _, _, _, cur_plane = coord_to_xyz(cur_int)
+    if cur_plane != 0:
+        typer.echo(
+            f"3D visualizer only supports dataspace plane=0 (got plane={cur_plane} {_plane_label(cur_plane)}).",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+
+    cur_hex = f"0x{cur_hex_norm}" if show_current else None
+
+    # Spawn coordinate (best effort)
+    spawn_hex_norm = ""
+    if spawn_coord:
+        spawn_hex_norm = normalize_hex_32(spawn_coord)
+    else:
+        label = (state.active_chain_label or "").strip()
+        if label:
+            try:
+                events = chains.read_events(label)
+            except Exception:
+                events = []
+            if events:
+                c = _get_tag(events[0], "C")
+                if c:
+                    try:
+                        spawn_hex_norm = normalize_hex_32(c)
+                    except ValueError:
+                        spawn_hex_norm = ""
+
+    if not spawn_hex_norm:
+        # Fallback: spawn is pubkey interpreted as a 256-bit coord.
+        spawn_hex_norm = _coord_hex_from_pubkey_hex(state.pubkey_hex)
+
+    spawn_hex = f"0x{spawn_hex_norm}" if show_spawn else None
+
+    # Import lazily so heavy deps (matplotlib/numpy) are only required when invoking this command.
+    try:
+        from cyberspace_cli.visualizer.app import run_app  # type: ignore
+    except Exception as e:
+        typer.echo("3D visualizer dependencies are not installed.", err=True)
+        typer.echo("Install extras: pip install 'cyberspace-cli[visualizer]'", err=True)
+        typer.echo("System deps: you may also need python3-tk.", err=True)
+        typer.echo(f"Import error: {e}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        run_app(current_coord_hex=cur_hex, spawn_coord_hex=spawn_hex, scale=scale, grid_lines=grid_lines)
+    except Exception as e:
+        typer.echo(f"Failed to launch visualizer: {e}", err=True)
+        raise typer.Exit(code=1)
+
+
 @app.command()
 def gps(
     at: Optional[str] = typer.Argument(

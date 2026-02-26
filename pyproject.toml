@@ -15,6 +15,14 @@ dependencies = [
   "coincurve>=20.0.0",
 ]
 
+[project.optional-dependencies]
+# Optional GUI visualizer for `cyberspace 3d`.
+# Note: `tkinter` is a system package on many Linux distros (e.g. python3-tk).
+visualizer = [
+  "matplotlib>=3.8",
+  "numpy>=1.26",
+]
+
 [project.scripts]
 cyberspace = "cyberspace_cli.cli:app"
 

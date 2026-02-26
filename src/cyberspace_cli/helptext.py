@@ -44,6 +44,8 @@ Commands (high-level)
 - cyberspace spawn [--from-key <nsec|hex>] [--chain <label>]
 - cyberspace whereami
 - cyberspace sector
+- cyberspace 3d
+  (optional GUI; install: pip install 'cyberspace-cli[visualizer]' and you may need python3-tk)
 - cyberspace move (--by dx,dy,dz | --to x,y,z[,plane] | --to 0x<coord256> | --toward <dest>) [--max-lca-height N]
   Tip: if you include spaces, quote the comma-list: cyberspace move --by "-1, 0, 0"
 - cyberspace gps <lat,lon>
