@@ -1,7 +1,9 @@
-"""Optional 3D visualizer for Cyberspace coordinates.
+"""Optional GUI visualizers for Cyberspace.
 
-This subpackage is only used by the `cyberspace 3d` command.
+Used by:
+- `cyberspace 3d`
+- `cyberspace lcaplot`
 
-It intentionally imports heavy GUI deps (tkinter/matplotlib/numpy) only when
-invoked, so the rest of the CLI stays lightweight.
+This subpackage intentionally imports heavy GUI deps (tkinter/matplotlib/numpy)
+only when invoked, so the rest of the CLI stays lightweight.
 """

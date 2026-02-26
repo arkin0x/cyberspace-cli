@@ -46,6 +46,9 @@ Commands (high-level)
 - cyberspace sector
 - cyberspace 3d
   (optional GUI; install: pip install 'cyberspace-cli[visualizer]' and you may need python3-tk)
+- cyberspace lcaplot
+  (optional GUI; plots lca_height(v, v±1) spikes + 2^h block boundaries; install extras as above)
+  Default center: your current coordinate’s selected axis value (if you have local state), else 0.
 - cyberspace target <coord256> [--label <name>]
   Set the current movement target (stored locally in state.json).
 - cyberspace target list

@@ -11,7 +11,7 @@ from cyberspace_cli.config import load_config, save_config
 from cyberspace_cli.helptext import HELP_TEXT
 from cyberspace_cli.nostr_event import make_hop_event, make_spawn_event
 from cyberspace_cli.parsing import normalize_hex_32, parse_destination_xyz_or_coord
-from cyberspace_cli.toward import choose_next_hop_xyz
+from cyberspace_cli.toward import choose_next_axis_value_toward
 from cyberspace_cli.nostr_keys import (
     encode_nsec,
     encode_npub,
@@ -29,9 +29,9 @@ app = typer.Typer(no_args_is_help=True)
 chain_app = typer.Typer(no_args_is_help=True)
 config_app = typer.Typer(no_args_is_help=True)
 target_app = typer.Typer(no_args_is_help=True)
-app.add_typer(chain_app, name="chain")
-app.add_typer(config_app, name="config")
-app.add_typer(target_app, name="target")
+app.add_typer(chain_app, name="chain", help="Manage local movement chains.")
+app.add_typer(config_app, name="config", help="Show/set persisted CLI defaults.")
+app.add_typer(target_app, name="target", help="Manage saved movement targets.")
 
 
 def _plane_label(plane: int) -> str:
@@ -352,6 +352,101 @@ def bench(
     typer.echo(f"Per-command override: cyberspace move --max-lca-height {optimal_h} ...")
 
 
+@app.command()
+def lcaplot(
+    axis: str = typer.Option(
+        "x",
+        "--axis",
+        help="Axis to plot: x, y, or z (used for labeling and for picking the default --center from your current coord).",
+    ),
+    center: Optional[int] = typer.Option(
+        None,
+        "--center",
+        help="Center axis value (u85 int). Default: current coord's axis value if available, else 0.",
+    ),
+    span: int = typer.Option(
+        256,
+        "--span",
+        help="Half-window size: plots v in [center-span .. center+span] (clamped to axis range).",
+    ),
+    direction: str = typer.Option(
+        "+1",
+        "--direction",
+        help="Adjacent direction to plot: +1 or -1 (plots lca_height(v, v±1)).",
+    ),
+    max_lca_height: int = typer.Option(
+        17,
+        "--max-lca-height",
+        help="Reference max LCA height: draws a horizontal line at h and optionally overlays 2^h block boundaries.",
+    ),
+) -> None:
+    """Open an interactive GUI plot of adjacent-hop LCA heights along one axis.
+
+    This visualizes spikes in lca_height(v, v±1) which correspond to binary carry/borrow boundaries.
+
+    Requires optional dependencies: pip install 'cyberspace-cli[visualizer]' (and you may need python3-tk).
+    """
+
+    axis_n = (axis or "x").strip().lower()
+    if axis_n not in ("x", "y", "z"):
+        typer.echo("--axis must be one of: x, y, z", err=True)
+        raise typer.Exit(code=2)
+
+    d = (direction or "+1").strip().lower()
+    if d in ("+", "+1", "1"):
+        dir_int = 1
+    elif d in ("-", "-1"):
+        dir_int = -1
+    else:
+        typer.echo("--direction must be +1 or -1", err=True)
+        raise typer.Exit(code=2)
+
+    # Best-effort: use current coord as a default center if available.
+    st = load_state()
+    curx = cury = curz = None
+    if st:
+        try:
+            coord_int = int.from_bytes(bytes.fromhex(st.coord_hex), "big")
+            curx, cury, curz, _plane = coord_to_xyz(coord_int)
+        except Exception:
+            curx = cury = curz = None
+
+    if center is None:
+        if axis_n == "x" and curx is not None:
+            center = curx
+        elif axis_n == "y" and cury is not None:
+            center = cury
+        elif axis_n == "z" and curz is not None:
+            center = curz
+        else:
+            center = 0
+
+    # Import lazily so heavy deps (tkinter/matplotlib) are only required when invoking this command.
+    try:
+        from cyberspace_cli.visualizer.lcaplot_app import run_app  # type: ignore
+    except Exception as e:
+        typer.echo("LCA plot dependencies are not installed.", err=True)
+        typer.echo("Install extras: pip install 'cyberspace-cli[visualizer]'", err=True)
+        typer.echo("System deps: you may also need python3-tk.", err=True)
+        typer.echo(f"Import error: {e}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        run_app(
+            axis=axis_n,
+            center=int(center),
+            span=int(span),
+            direction=dir_int,
+            max_lca_height=int(max_lca_height),
+            current_x=curx,
+            current_y=cury,
+            current_z=curz,
+        )
+    except Exception as e:
+        typer.echo(f"Failed to launch lcaplot: {e}", err=True)
+        raise typer.Exit(code=1)
+
+
 @app.command("3d")
 def three_d(
     coord: Optional[str] = typer.Option(
@@ -658,7 +753,10 @@ def move(
         typer.echo("Specify exactly one of --to, --by, or --toward.", err=True)
         raise typer.Exit(code=2)
 
-    def _do_single_hop(*, x2: int, y2: int, z2: int, plane2: int) -> str:
+    def _plane_name(p: int) -> str:
+        return "dataspace" if p == 0 else "ideaspace"
+
+    def _do_single_hop(*, x2: int, y2: int, z2: int, plane2: int, max_compute_height: int) -> str:
         nonlocal x1, y1, z1, plane1, prev_event_id
 
         if plane2 not in (0, 1):
@@ -678,11 +776,11 @@ def move(
         hx = find_lca_height(x1, x2)
         hy = find_lca_height(y1, y2)
         hz = find_lca_height(z1, z2)
-        if max(hx, hy, hz) > effective_max_lca_height:
+        if max(hx, hy, hz) > max_compute_height:
             typer.echo(
                 "Move is too large for a single hop. "
                 f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
-                f"limit={effective_max_lca_height}. "
+                f"limit={max_compute_height}. "
                 "Use smaller hops (or raise --max-lca-height if you really intend to do an expensive hop).",
                 err=True,
             )
@@ -698,7 +796,7 @@ def move(
                 x2,
                 y2,
                 z2,
-                max_compute_height=effective_max_lca_height,
+                max_compute_height=max_compute_height,
             )
         except ValueError as e:
             typer.echo(f"Failed to compute movement proof: {e}", err=True)
@@ -752,27 +850,76 @@ def move(
 
                 # If we've reached the target xyz but we're in the wrong plane, the last hop is a plane switch.
                 if (x1, y1, z1) == (tx, ty, tz) and plane1 != target_plane:
-                    _do_single_hop(x2=x1, y2=y1, z2=z1, plane2=target_plane)
+                    _do_single_hop(
+                        x2=x1,
+                        y2=y1,
+                        z2=z1,
+                        plane2=target_plane,
+                        max_compute_height=effective_max_lca_height,
+                    )
                     hops += 1
+
+                    typer.echo(f"hop: {hops}")
+                    typer.echo(f"x={x1}")
+                    typer.echo(f"y={y1}")
+                    typer.echo(f"z={z1}")
+                    typer.echo(f"plane={plane1} {_plane_name(plane1)}")
                     continue
 
+                def _axis_step(axis: str, current: int, target: int) -> Tuple[int, int, bool]:
+                    try:
+                        r = choose_next_axis_value_toward(
+                            current=current, target=target, max_lca_height=effective_max_lca_height
+                        )
+                        return r.next, r.lca_height, False
+                    except ValueError as e:
+                        msg = str(e)
+                        if not msg.startswith("cannot progress from"):
+                            raise
+
+                        # We're pinned at a 2^h block edge. Cross the boundary using a 1-step hop,
+                        # temporarily allowing one higher LCA height.
+                        nxt = current + 1 if target > current else current - 1
+                        if not (0 <= nxt <= AXIS_MAX):
+                            raise
+
+                        needed = find_lca_height(current, nxt)
+                        if needed != effective_max_lca_height + 1:
+                            raise ValueError(
+                                f"{msg} (boundary crossing would require max_lca_height={needed}; "
+                                f"rerun with --max-lca-height {needed})"
+                            )
+                        return nxt, needed, True
+
                 try:
-                    next_hop = choose_next_hop_xyz(
-                        x=x1,
-                        y=y1,
-                        z=z1,
-                        tx=tx,
-                        ty=ty,
-                        tz=tz,
-                        max_lca_height=effective_max_lca_height,
-                    )
+                    x2, hx, bx = _axis_step("X", x1, tx)
+                    y2, hy, by_ = _axis_step("Y", y1, ty)
+                    z2, hz, bz = _axis_step("Z", z1, tz)
                 except ValueError as e:
                     typer.echo(f"Cannot continue toward target: {e}", err=True)
                     raise typer.Exit(code=2)
 
+                hop_limit = effective_max_lca_height
+                boundary_axes = [a for a, used in (('X', bx), ('Y', by_), ('Z', bz)) if used]
+                if boundary_axes:
+                    hop_limit = effective_max_lca_height + 1
+                    typer.echo(
+                        "LCA boundary encountered on axis "
+                        + ",".join(boundary_axes)
+                        + f"; temporarily increasing max_lca_height from {effective_max_lca_height} to {hop_limit} for this hop.",
+                        err=True,
+                    )
+
                 # Intermediate hops can be in either plane; we keep the current plane until we need to switch.
-                _do_single_hop(x2=next_hop.x.next, y2=next_hop.y.next, z2=next_hop.z.next, plane2=plane1)
+                _do_single_hop(x2=x2, y2=y2, z2=z2, plane2=plane1, max_compute_height=hop_limit)
                 hops += 1
+
+                typer.echo(f"hop: {hops}")
+                typer.echo(f"x={x1} remaining={tx - x1}")
+                typer.echo(f"y={y1} remaining={ty - y1}")
+                typer.echo(f"z={z1} remaining={tz - z1}")
+                typer.echo(f"plane={plane1} {_plane_name(plane1)}")
+                typer.echo(f"lca_height: X={hx} Y={hy} Z={hz} limit={hop_limit}")
         except KeyboardInterrupt:
             typer.echo(f"Interrupted after hops={hops}.", err=True)
             typer.echo(f"coord: 0x{state.coord_hex}")
@@ -784,7 +931,13 @@ def move(
         except ValueError as e:
             raise typer.BadParameter(str(e)) from e
 
-        _do_single_hop(x2=dest.x, y2=dest.y, z2=dest.z, plane2=dest.plane)
+        _do_single_hop(
+            x2=dest.x,
+            y2=dest.y,
+            z2=dest.z,
+            plane2=dest.plane,
+            max_compute_height=effective_max_lca_height,
+        )
         return
 
     # by
@@ -794,7 +947,13 @@ def move(
 
     if len(vals) == 3:
         dx, dy, dz = vals
-        _do_single_hop(x2=x1 + dx, y2=y1 + dy, z2=z1 + dz, plane2=plane1)
+        _do_single_hop(
+            x2=x1 + dx,
+            y2=y1 + dy,
+            z2=z1 + dz,
+            plane2=plane1,
+            max_compute_height=effective_max_lca_height,
+        )
         return
 
     dx, dy, dz, plane2 = vals
@@ -803,7 +962,13 @@ def move(
     if plane2 not in (0, 1):
         raise typer.BadParameter("plane must be 0 (dataspace) or 1 (ideaspace)")
 
-    _do_single_hop(x2=x1, y2=y1, z2=z1, plane2=plane2)
+    _do_single_hop(
+        x2=x1,
+        y2=y1,
+        z2=z1,
+        plane2=plane2,
+        max_compute_height=effective_max_lca_height,
+    )
 
 
 @app.command()
