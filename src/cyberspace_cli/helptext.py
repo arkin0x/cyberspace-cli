@@ -66,6 +66,9 @@ Commands (high-level)
 - cyberspace chain list
 - cyberspace chain use <label>
 - cyberspace chain status
+- cyberspace target list
+- cyberspace target set <coord_hex> [--label <label>]
+- cyberspace target use <label>
 
 Security note
 This prototype stores the private key locally in plaintext. Treat it like a hot

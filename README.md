@@ -55,6 +55,11 @@ cyberspace chain list
 cyberspace chain use mychain
 cyberspace chain status
 
+# targets (purely local convenience)
+cyberspace target list
+cyberspace target set 0x2b50e88 --label mytarget
+cyberspace target use mytarget
+
 # movement (local-only)
 # Tip: keep comma-lists unspaced (or quote them) so negatives don’t get parsed as flags.
 cyberspace move --by -1,0,0

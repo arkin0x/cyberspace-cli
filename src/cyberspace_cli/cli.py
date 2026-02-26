@@ -113,20 +113,12 @@ def config_set(
     typer.echo(f"default_max_lca_height: {cfg.default_max_lca_height}")
 
 
-@target_app.callback(invoke_without_command=True)
-def target(
-    ctx: typer.Context,
-    coord: Optional[str] = typer.Argument(None, help="256-bit coord hex (0x... optional; leading zeros optional)."),
+@target_app.command("set")
+def target_set(
+    coord: str = typer.Argument(..., help="256-bit coord hex (0x... optional; leading zeros optional)."),
     label: Optional[str] = typer.Option(None, "--label", help="Human label for this target (default: unnamed_N)."),
 ) -> None:
-    """Manage named local movement targets (stored locally in state.json)."""
-    if ctx.invoked_subcommand is not None:
-        return
-
-    if coord is None:
-        typer.echo(ctx.get_help())
-        raise typer.Exit(code=0)
-
+    """Add/update a target and set it as current."""
     state = _require_state()
     try:
         tgt_label, coord_hex = targets.set_target(state, coord, label=label)
@@ -135,6 +127,22 @@ def target(
 
     save_state(state)
     typer.echo(f"(current) {tgt_label} 0x{coord_hex}")
+
+
+@target_app.command("use")
+def target_use(label: str = typer.Argument(..., help="Target label to select as current.")) -> None:
+    """Select an existing target label as current."""
+    state = _require_state()
+    label = chains.normalize_label(label)
+    for t in state.targets or []:
+        if t.get("label") == label:
+            state.active_target_label = label
+            save_state(state)
+            typer.echo(f"active_target: {label}")
+            return
+
+    typer.echo(f"Unknown target label: {label}", err=True)
+    raise typer.Exit(code=1)
 
 
 @target_app.command("list")
@@ -726,16 +734,13 @@ def move(
         except ValueError as e:
             raise typer.BadParameter(str(e)) from e
 
-        if target.plane != plane1:
-            typer.echo("Plane changes are not supported yet with --toward (must remain in same plane).", err=True)
-            raise typer.Exit(code=2)
-
-        tx, ty, tz = target.x, target.y, target.z
+        tx, ty, tz, target_plane = target.x, target.y, target.z, target.plane
 
         hops = 0
         try:
             while True:
-                if (x1, y1, z1) == (tx, ty, tz):
+                # Only the *final* state must match the target plane.
+                if (x1, y1, z1, plane1) == (tx, ty, tz, target_plane):
                     typer.echo("Arrived.")
                     typer.echo(f"coord: 0x{state.coord_hex}")
                     return
@@ -744,6 +749,12 @@ def move(
                     typer.echo(f"Stopped after max_hops={max_hops}.")
                     typer.echo(f"coord: 0x{state.coord_hex}")
                     return
+
+                # If we've reached the target xyz but we're in the wrong plane, the last hop is a plane switch.
+                if (x1, y1, z1) == (tx, ty, tz) and plane1 != target_plane:
+                    _do_single_hop(x2=x1, y2=y1, z2=z1, plane2=target_plane)
+                    hops += 1
+                    continue
 
                 try:
                     next_hop = choose_next_hop_xyz(
@@ -759,6 +770,7 @@ def move(
                     typer.echo(f"Cannot continue toward target: {e}", err=True)
                     raise typer.Exit(code=2)
 
+                # Intermediate hops can be in either plane; we keep the current plane until we need to switch.
                 _do_single_hop(x2=next_hop.x.next, y2=next_hop.y.next, z2=next_hop.z.next, plane2=plane1)
                 hops += 1
         except KeyboardInterrupt:
