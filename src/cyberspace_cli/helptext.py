@@ -46,8 +46,9 @@ Commands (high-level)
 - cyberspace sector
 - cyberspace 3d
   (optional GUI; install: pip install 'cyberspace-cli[visualizer]' and you may need python3-tk)
-- cyberspace move (--by dx,dy,dz | --to x,y,z[,plane] | --to 0x<coord256> | --toward <dest>) [--max-lca-height N]
+- cyberspace move (--by dx,dy,dz | --by 0,0,0,plane | --to x,y,z[,plane] | --to 0x<coord256> | --toward <dest>) [--max-lca-height N]
   Tip: if you include spaces, quote the comma-list: cyberspace move --by "-1, 0, 0"
+  Plane switch: cyberspace move --by 0,0,0,1  (ideaspace)
 - cyberspace gps <lat,lon>
   (or: cyberspace gps --lat <lat> --lon <lon>)
 - cyberspace cantor (--from-xyz x,y,z --to-xyz x,y,z | --from-coord <hex> --to-coord <hex>)

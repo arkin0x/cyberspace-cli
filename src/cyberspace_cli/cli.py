@@ -216,15 +216,6 @@ def three_d(
 
     # Current coordinate (from state unless overridden)
     cur_hex_norm = normalize_hex_32(coord or state.coord_hex)
-    cur_int = int.from_bytes(bytes.fromhex(cur_hex_norm), "big")
-    _, _, _, cur_plane = coord_to_xyz(cur_int)
-    if cur_plane != 0:
-        typer.echo(
-            f"3D visualizer only supports dataspace plane=0 (got plane={cur_plane} {_plane_label(cur_plane)}).",
-            err=True,
-        )
-        raise typer.Exit(code=2)
-
     cur_hex = f"0x{cur_hex_norm}" if show_current else None
 
     # Spawn coordinate (best effort)
@@ -453,7 +444,11 @@ def move(
         "--to",
         help="Destination as x,y,z[,plane] OR 256-bit coord hex (0x...; leading zeros optional).",
     ),
-    by: str = typer.Option(None, "--by", help="Relative dx,dy,dz as comma-separated ints."),
+    by: str = typer.Option(
+        None,
+        "--by",
+        help="Relative dx,dy,dz as comma-separated ints. For plane switches, use 0,0,0,<plane> (plane is 0 or 1).",
+    ),
     toward: str = typer.Option(
         None,
         "--toward",
@@ -492,8 +487,8 @@ def move(
     def _do_single_hop(*, x2: int, y2: int, z2: int, plane2: int) -> str:
         nonlocal x1, y1, z1, plane1, prev_event_id
 
-        if plane2 != plane1:
-            typer.echo("Plane changes are not supported yet (must remain in same plane).", err=True)
+        if plane2 not in (0, 1):
+            typer.echo("Destination plane must be 0 (dataspace) or 1 (ideaspace).", err=True)
             raise typer.Exit(code=2)
 
         if not (0 <= x2 <= AXIS_MAX and 0 <= y2 <= AXIS_MAX and 0 <= z2 <= AXIS_MAX):
@@ -558,7 +553,7 @@ def move(
             raise typer.BadParameter(str(e)) from e
 
         if target.plane != plane1:
-            typer.echo("Plane changes are not supported yet (must remain in same plane).", err=True)
+            typer.echo("Plane changes are not supported yet with --toward (must remain in same plane).", err=True)
             raise typer.Exit(code=2)
 
         tx, ty, tz = target.x, target.y, target.z
@@ -608,10 +603,21 @@ def move(
 
     # by
     vals = _parse_csv_ints(by or "")
-    if len(vals) != 3:
-        raise typer.BadParameter("--by expects dx,dy,dz")
-    dx, dy, dz = vals
-    _do_single_hop(x2=x1 + dx, y2=y1 + dy, z2=z1 + dz, plane2=plane1)
+    if len(vals) not in (3, 4):
+        raise typer.BadParameter("--by expects dx,dy,dz (or 0,0,0,plane for plane switches)")
+
+    if len(vals) == 3:
+        dx, dy, dz = vals
+        _do_single_hop(x2=x1 + dx, y2=y1 + dy, z2=z1 + dz, plane2=plane1)
+        return
+
+    dx, dy, dz, plane2 = vals
+    if (dx, dy, dz) != (0, 0, 0):
+        raise typer.BadParameter("--by with an explicit plane only supports 0,0,0,plane")
+    if plane2 not in (0, 1):
+        raise typer.BadParameter("plane must be 0 (dataspace) or 1 (ideaspace)")
+
+    _do_single_hop(x2=x1, y2=y1, z2=z1, plane2=plane2)
 
 
 @app.command()

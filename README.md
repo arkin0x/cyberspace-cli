@@ -60,6 +60,9 @@ cyberspace chain status
 cyberspace move --by -1,0,0
 cyberspace move --by "-1, 0, 0"
 
+# switch planes (0=dataspace, 1=ideaspace)
+cyberspace move --by 0,0,0,1
+
 # Destination can be xyz or a 256-bit coord hex (leading zeros optional)
 cyberspace move --to x,y,z
 cyberspace move --to 0x2b50e88

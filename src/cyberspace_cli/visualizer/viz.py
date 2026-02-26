@@ -65,15 +65,16 @@ def coord_to_dataspace_km(coord: int) -> Tuple[float, float, float]:
     - +Y points toward the North Pole ("up")
     - +Z points toward (lat=0, lon=+90E) ("east"; black sun reference is placed on +Z boundary)
 
+    Note: the plane bit (dataspace=0 / ideaspace=1) does not affect XYZ decoding.
+    This visualizer renders both planes on the same geometry.
+
     Note: matplotlib's mplot3d treats its Z axis as the camera "up" axis.
     For an intuitive render where cyberspace +Y is visually "up", we map:
       (X_cs, Y_cs, Z_cs) -> (X_mpl, Z_mpl, Y_mpl)
     inside draw_scene().
     """
 
-    x_u, y_u, z_u, plane = coord_to_xyz(coord)
-    if plane != 0:
-        raise ValueError(f"expected dataspace plane bit 0, got {plane}")
+    x_u, y_u, z_u, _plane = coord_to_xyz(coord)
     return (
         _axis_u85_to_km_from_center(x_u),
         _axis_u85_to_km_from_center(y_u),
@@ -215,7 +216,16 @@ def draw_scene(
     for m in markers or []:
         x_cs, y_cs, z_cs = m.position_km
         px, py, pz = cs_to_mpl(x_cs * s, y_cs * s, z_cs * s)
-        ax.scatter([px], [py], [pz], color=m.color, s=m.size)
+        ax.scatter(
+            [px],
+            [py],
+            [pz],
+            color=m.color,
+            s=m.size,
+            depthshade=False,
+            edgecolors="#FFFFFF",
+            linewidths=0.6,
+        )
         if m.label:
             ax.text(px, py, pz, f" {m.label}", color=m.color)
 

@@ -16,7 +16,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolb
 from matplotlib.figure import Figure  # noqa: E402
 
 from cyberspace_cli.parsing import normalize_hex_32
-from cyberspace_core.coords import gps_to_dataspace_coord
+from cyberspace_core.coords import coord_to_xyz, gps_to_dataspace_coord
 
 from .viz import Marker, SceneConfig, coord_to_dataspace_km, draw_scene
 
@@ -232,8 +232,9 @@ class CyberspaceVisualizerApp:
     def _parse_coord_hex_to_marker(self, coord_hex: str, *, color: str, label: str) -> Marker:
         h = normalize_hex_32(coord_hex)
         coord_int = int.from_bytes(bytes.fromhex(h), "big")
+        _x, _y, _z, plane = coord_to_xyz(coord_int)
         pos_km = coord_to_dataspace_km(coord_int)
-        return Marker(position_km=pos_km, color=color, label=label)
+        return Marker(position_km=pos_km, color=color, label=f"{label} (plane={plane})")
 
     def on_city_selected(self, _evt=None) -> None:
         city = self.city_var.get().strip()
@@ -255,23 +256,33 @@ class CyberspaceVisualizerApp:
 
     def on_render_spawn_current(self) -> None:
         markers = []
+        errors = []
 
-        try:
-            if self.show_spawn_var.get() and self.spawn_coord_hex:
+        if self.show_spawn_var.get() and self.spawn_coord_hex:
+            try:
                 markers.append(self._parse_coord_hex_to_marker(self.spawn_coord_hex, color="#00FF88", label="spawn"))
+            except Exception as e:
+                errors.append(f"spawn: {e}")
 
-            if self.show_current_var.get() and self.current_coord_hex:
+        if self.show_current_var.get() and self.current_coord_hex:
+            try:
                 markers.append(self._parse_coord_hex_to_marker(self.current_coord_hex, color="#FF0000", label="current"))
+            except Exception as e:
+                errors.append(f"current: {e}")
 
-            if not markers:
-                self._set_status("No spawn/current coords to render.")
-                self._render_scene(markers=[])
-                return
+        if not markers:
+            msg = "No spawn/current coords to render."
+            if errors:
+                msg += " (" + "; ".join(errors) + ")"
+            self._set_status(msg)
+            self._render_scene(markers=[])
+            return
 
-            self._render_scene(markers=markers)
+        self._render_scene(markers=markers)
+        if errors:
+            self._set_status("Rendered with warnings: " + "; ".join(errors))
+        else:
             self._set_status("Rendered spawn/current.")
-        except Exception as e:
-            self._set_status(f"Error: {e}")
 
     def on_render_gps(self) -> None:
         try:
