@@ -42,6 +42,11 @@ class SceneConfig:
 
 @dataclass(frozen=True)
 class Marker:
+    # Position in scene units.
+    #
+    # In dataspace mode this is interpreted as (X_cs, Y_cs, Z_cs) kilometers from center.
+    # In sector mode this is interpreted as sector-local normalized coordinates in [-0.5, +0.5)
+    # along each axis (still in cyberspace axis orientation).
     position_km: Tuple[float, float, float]
     color: str
     label: str = ""
@@ -250,9 +255,108 @@ def draw_scene(
     ax.set_zticks([])
 
 
+def draw_sector_scene(
+    ax,
+    *,
+    cfg: SceneConfig,
+    markers: Optional[List[Marker]] = None,
+    sector_label: str = "",
+) -> None:
+    """Draw a sector-local cube scene into a provided 3D matplotlib axis.
+
+    Marker positions are interpreted as sector-local normalized cyberspace coords in
+    [-0.5, +0.5) along each axis. The scene is a cube; no Earth or other global
+    geometry is rendered.
+    """
+
+    def cs_to_mpl(x_cs: float, y_cs: float, z_cs: float) -> Tuple[float, float, float]:
+        return (x_cs, z_cs, y_cs)
+
+    ax.clear()
+
+    s = float(cfg.scale)
+    half = 0.5 * s
+
+    # Sector cube wireframe (all 6 faces).
+    n = max(3, int(cfg.grid_lines))
+    v = np.linspace(-half, half, n)
+    A, B = np.meshgrid(v, v)
+
+    def wf_x(x0: float) -> None:
+        Y = A
+        Z = B
+        X = np.full_like(Y, x0)
+        ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1, color=cfg.grid_color, linewidth=0.6, alpha=0.8)
+
+    def wf_y(y0: float) -> None:
+        X = A
+        Z = B
+        Y = np.full_like(X, y0)
+        ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1, color=cfg.grid_color, linewidth=0.6, alpha=0.8)
+
+    def wf_z(z0: float) -> None:
+        X = A
+        Y = B
+        Z = np.full_like(X, z0)
+        ax.plot_wireframe(X, Y, Z, rstride=1, cstride=1, color=cfg.grid_color, linewidth=0.6, alpha=0.8)
+
+    wf_x(-half)
+    wf_x(+half)
+    wf_y(-half)
+    wf_y(+half)
+    wf_z(-half)
+    wf_z(+half)
+
+    # Axis direction markers
+    a = half * 0.55
+    ax.quiver(0, 0, 0, a, 0, 0, color="#FFFFFF", linewidth=1.2)
+    ax.quiver(0, 0, 0, 0, a, 0, color="#FFFFFF", linewidth=1.2)
+    ax.quiver(0, 0, 0, 0, 0, a, color="#FFFFFF", linewidth=1.2)
+    ax.text(a, 0, 0, "+X", color="#FFFFFF")
+    ax.text(0, a, 0, "+Z", color="#FFFFFF")
+    ax.text(0, 0, a, "+Y", color="#FFFFFF")
+
+    # Markers
+    for m in markers or []:
+        x_cs, y_cs, z_cs = m.position_km
+        px, py, pz = cs_to_mpl(x_cs * s, y_cs * s, z_cs * s)
+        ax.scatter(
+            [px],
+            [py],
+            [pz],
+            color=m.color,
+            s=m.size,
+            depthshade=False,
+            edgecolors="#FFFFFF",
+            linewidths=0.6,
+        )
+        if m.label:
+            ax.text(px, py, pz, f" {m.label}", color=m.color)
+
+    ax.set_xlabel("X (sector-local)")
+    ax.set_ylabel("Z (sector-local)")
+    ax.set_zlabel("Y (sector-local)")
+
+    title = "Cyberspace Sector"
+    if sector_label:
+        title += f"  S={sector_label}"
+    ax.set_title(title)
+
+    ax.view_init(elev=cfg.elev_deg, azim=cfg.azim_deg)
+    ax.set_xlim(-half, half)
+    ax.set_ylim(-half, half)
+    ax.set_zlim(-half, half)
+    _set_axes_equal(ax)
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
+
+
 __all__ = [
     "Marker",
     "SceneConfig",
     "coord_to_dataspace_km",
     "draw_scene",
+    "draw_sector_scene",
 ]

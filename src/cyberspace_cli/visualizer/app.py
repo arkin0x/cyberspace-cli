@@ -17,8 +17,9 @@ from matplotlib.figure import Figure  # noqa: E402
 
 from cyberspace_cli.parsing import normalize_hex_32
 from cyberspace_core.coords import coord_to_xyz, gps_to_dataspace_coord
+from cyberspace_core.sector import SECTOR_BITS_DEFAULT, coord_to_sector_id, coord_to_sector_local_centered
 
-from .viz import Marker, SceneConfig, coord_to_dataspace_km, draw_scene
+from .viz import Marker, SceneConfig, coord_to_dataspace_km, draw_scene, draw_sector_scene
 
 
 @dataclass
@@ -35,9 +36,18 @@ class CyberspaceVisualizerApp:
         initial_spawn_coord_hex: Optional[str] = None,
         initial_scale: float = 0.5,
         initial_grid_lines: int = 4,
+        mode: str = "dataspace",
+        sector_bits: int = SECTOR_BITS_DEFAULT,
     ) -> None:
         self.root = root
-        root.title("Cyberspace 3D")
+
+        self.mode = (mode or "dataspace").strip().lower()
+        if self.mode not in ("dataspace", "sector"):
+            self.mode = "dataspace"
+        self.sector_bits = int(sector_bits)
+
+        title = "Cyberspace 3D" if self.mode == "dataspace" else "Cyberspace 3D (Sector)"
+        root.title(title)
         root.geometry("1150x740")
 
         self.state = AppState()
@@ -165,7 +175,7 @@ class CyberspaceVisualizerApp:
         self._update_cli_coord_texts()
 
         # initial scene
-        self._render_scene(markers=[])
+        self._render_scene(markers=[], sector_label="")
 
         # Auto-render if we were given coords from the CLI.
         if self.spawn_coord_hex or self.current_coord_hex:
@@ -211,9 +221,12 @@ class CyberspaceVisualizerApp:
             show_midplane=bool(self.show_midplane_var.get()),
         )
 
-    def _render_scene(self, *, markers) -> None:
+    def _render_scene(self, *, markers, sector_label: str = "") -> None:
         cfg = self._get_scene_config()
-        draw_scene(self.ax, cfg=cfg, markers=markers)
+        if self.mode == "sector":
+            draw_sector_scene(self.ax, cfg=cfg, markers=markers, sector_label=sector_label)
+        else:
+            draw_scene(self.ax, cfg=cfg, markers=markers)
         self.canvas.draw_idle()
         self.last_markers = markers
 
@@ -233,6 +246,12 @@ class CyberspaceVisualizerApp:
         h = normalize_hex_32(coord_hex)
         coord_int = int.from_bytes(bytes.fromhex(h), "big")
         _x, _y, _z, plane = coord_to_xyz(coord_int)
+
+        if self.mode == "sector":
+            _sid, _plane2, (lx, ly, lz) = coord_to_sector_local_centered(coord=coord_int, sector_bits=self.sector_bits)
+            # Keep the Marker dataclass unchanged; in sector mode position is normalized scene units.
+            return Marker(position_km=(lx, ly, lz), color=color, label=f"{label} (plane={plane})")
+
         pos_km = coord_to_dataspace_km(coord_int)
         return Marker(position_km=pos_km, color=color, label=f"{label} (plane={plane})")
 
@@ -258,9 +277,34 @@ class CyberspaceVisualizerApp:
         markers = []
         errors = []
 
+        sector_label = ""
+        anchor_sid = None
+        if self.mode == "sector":
+            # Sector framing always uses the current coord if present (even if hidden),
+            # falling back to spawn if that's all we have.
+            anchor_hex = (self.current_coord_hex or "") or (self.spawn_coord_hex or "")
+            if anchor_hex:
+                try:
+                    h = normalize_hex_32(anchor_hex)
+                    coord_int = int.from_bytes(bytes.fromhex(h), "big")
+                    anchor_sid, _plane = coord_to_sector_id(coord=coord_int, sector_bits=self.sector_bits)
+                    sector_label = anchor_sid.tag()
+                except Exception:
+                    anchor_sid = None
+                    sector_label = ""
+
         if self.show_spawn_var.get() and self.spawn_coord_hex:
             try:
-                markers.append(self._parse_coord_hex_to_marker(self.spawn_coord_hex, color="#00FF88", label="spawn"))
+                if self.mode == "sector" and anchor_sid is not None:
+                    h = normalize_hex_32(self.spawn_coord_hex)
+                    spawn_int = int.from_bytes(bytes.fromhex(h), "big")
+                    spawn_sid, _plane = coord_to_sector_id(coord=spawn_int, sector_bits=self.sector_bits)
+                    if spawn_sid != anchor_sid:
+                        errors.append(f"spawn: different sector (S={spawn_sid.tag()})")
+                    else:
+                        markers.append(self._parse_coord_hex_to_marker(self.spawn_coord_hex, color="#00FF88", label="spawn"))
+                else:
+                    markers.append(self._parse_coord_hex_to_marker(self.spawn_coord_hex, color="#00FF88", label="spawn"))
             except Exception as e:
                 errors.append(f"spawn: {e}")
 
@@ -275,10 +319,10 @@ class CyberspaceVisualizerApp:
             if errors:
                 msg += " (" + "; ".join(errors) + ")"
             self._set_status(msg)
-            self._render_scene(markers=[])
+            self._render_scene(markers=[], sector_label=sector_label)
             return
 
-        self._render_scene(markers=markers)
+        self._render_scene(markers=markers, sector_label=sector_label)
         if errors:
             self._set_status("Rendered with warnings: " + "; ".join(errors))
         else:
@@ -330,7 +374,20 @@ class CyberspaceVisualizerApp:
 
     def on_reset_view(self) -> None:
         self._ensure_rotate_mode()
-        self._render_scene(markers=self.last_markers)
+
+        sector_label = ""
+        if self.mode == "sector":
+            anchor_hex = (self.current_coord_hex or "") or (self.spawn_coord_hex or "")
+            if anchor_hex:
+                try:
+                    h = normalize_hex_32(anchor_hex)
+                    coord_int = int.from_bytes(bytes.fromhex(h), "big")
+                    sid, _plane = coord_to_sector_id(coord=coord_int, sector_bits=self.sector_bits)
+                    sector_label = sid.tag()
+                except Exception:
+                    sector_label = ""
+
+        self._render_scene(markers=self.last_markers, sector_label=sector_label)
         self._set_status("View reset.")
 
     def on_rotate_mode(self) -> None:
@@ -353,6 +410,8 @@ def run_app(
     spawn_coord_hex: Optional[str] = None,
     scale: float = 0.5,
     grid_lines: int = 4,
+    mode: str = "dataspace",
+    sector_bits: int = SECTOR_BITS_DEFAULT,
 ) -> int:
     root = tk.Tk()
     _ = CyberspaceVisualizerApp(
@@ -361,6 +420,8 @@ def run_app(
         initial_spawn_coord_hex=spawn_coord_hex,
         initial_scale=scale,
         initial_grid_lines=grid_lines,
+        mode=mode,
+        sector_bits=sector_bits,
     )
     root.mainloop()
     return 0
@@ -372,6 +433,7 @@ def main(argv: list[str]) -> int:
     spawn = None
     scale = 0.5
     grid = 4
+    mode = "dataspace"
 
     it = iter(argv[1:])
     for a in it:
@@ -387,8 +449,10 @@ def main(argv: list[str]) -> int:
             v = next(it, None)
             if v is not None:
                 grid = int(v)
+        elif a == "--sector":
+            mode = "sector"
 
-    return run_app(current_coord_hex=current, spawn_coord_hex=spawn, scale=scale, grid_lines=grid)
+    return run_app(current_coord_hex=current, spawn_coord_hex=spawn, scale=scale, grid_lines=grid, mode=mode)
 
 
 if __name__ == "__main__":

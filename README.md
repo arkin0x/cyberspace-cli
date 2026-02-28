@@ -114,6 +114,9 @@ cyberspace sector
 # open the built-in 3D visualizer (optional deps)
 cyberspace 3d
 
+# sector-local 3D view (renders only the current sector cube; spawn renders only if in the same sector)
+cyberspace 3d --sector
+
 # plot LCA spikes + 2^h boundaries around your current axis value (optional deps)
 cyberspace lcaplot
 cyberspace lcaplot --axis z --span 2048 --max-lca-height 17

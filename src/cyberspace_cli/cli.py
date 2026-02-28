@@ -459,8 +459,13 @@ def three_d(
         "--spawn-coord",
         help="Override the spawn coord hex (256-bit; optional 0x prefix; leading zeros optional).",
     ),
-    scale: float = typer.Option(0.5, "--scale", help="Render scaling multiplier (default 0.5)."),
-    grid_lines: int = typer.Option(4, "--grid-lines", help="Wireframe grid density (default 4)."),
+    sector: bool = typer.Option(
+        False,
+        "--sector",
+        help="Render only the current sector cube (2^30 axis-units per sector). In this mode spawn is only rendered if it's in the same sector.",
+    ),
+    scale: Optional[float] = typer.Option(None, "--scale", help="Render scaling multiplier."),
+    grid_lines: Optional[int] = typer.Option(None, "--grid-lines", help="Wireframe grid density."),
     show_spawn: bool = typer.Option(True, "--spawn/--no-spawn", help="Show spawn marker (default: on)."),
     show_current: bool = typer.Option(True, "--current/--no-current", help="Show current marker (default: on)."),
 ) -> None:
@@ -507,8 +512,17 @@ def three_d(
         typer.echo(f"Import error: {e}", err=True)
         raise typer.Exit(code=1)
 
+    effective_scale = float(scale) if scale is not None else (1.0 if sector else 0.5)
+    effective_grid_lines = int(grid_lines) if grid_lines is not None else (6 if sector else 4)
+
     try:
-        run_app(current_coord_hex=cur_hex, spawn_coord_hex=spawn_hex, scale=scale, grid_lines=grid_lines)
+        run_app(
+            current_coord_hex=cur_hex,
+            spawn_coord_hex=spawn_hex,
+            scale=effective_scale,
+            grid_lines=effective_grid_lines,
+            mode=("sector" if sector else "dataspace"),
+        )
     except Exception as e:
         typer.echo(f"Failed to launch visualizer: {e}", err=True)
         raise typer.Exit(code=1)
