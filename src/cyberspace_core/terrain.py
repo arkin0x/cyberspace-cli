@@ -2,29 +2,33 @@ from __future__ import annotations
 
 """Deterministic per-coordinate "terrain" utilities.
 
-This module is experimental / non-consensus.
+This module defines the terrain-derived temporal height K used for hop
+proof freshness (spec §5.4.2.1).
 
 Goal:
-- Derive a small integer K in [0, 32] from a destination coordinate.
-- Have K follow a bell curve centered around 16 (binomial distribution).
+- Derive a small integer K in [0, 16] from a destination coordinate.
+- Have K follow a bell curve centered around 8 (binomial distribution).
 - Add spatial correlation so neighboring coordinates tend to have similar K ("hills").
 
-Design (current prototype):
+Design:
 - For each of 4 cell scales (cell_bits), align the destination to that cell.
 - Hash the aligned coord256 with domain separation.
-- Take 1 byte from each hash (4 bytes total = 32 bits).
-- K = popcount(32-bit word) -> Binomial(n=32, p=0.5).
+- Take the low 4 bits (nibble) of the first byte from each hash (4 nibbles = 16 bits).
+- K = popcount(16-bit word) -> Binomial(n=16, p=0.5).
 
-This produces a stable global distribution with mean 16 and max/min at 32/0.
+This produces a stable global distribution with mean 8 and max 16.
+The worst-case temporal computation is 2^16 = 65,536 Cantor pairs (~100 ms).
 """
 
-from typing import Iterable, Tuple
+from typing import Tuple
 
 from cyberspace_core.cantor import sha256
 from cyberspace_core.coords import xyz_to_coord
 
 
-TERRAIN_DOMAIN_V1 = b"CYBERSPACE_TERRAIN_K_V1"
+# Domain string (consensus-critical).  Bumped from V1 → V2 when the
+# extraction changed from full byte (32 bits) to low nibble (16 bits).
+TERRAIN_DOMAIN_V2 = b"CYBERSPACE_TERRAIN_K_V2"
 
 
 def _aligned(v: int, cell_bits: int) -> int:
@@ -33,7 +37,7 @@ def _aligned(v: int, cell_bits: int) -> int:
     return (v >> cell_bits) << cell_bits
 
 
-def terrain_k_popcount32(
+def terrain_k(
     *,
     x: int,
     y: int,
@@ -41,17 +45,19 @@ def terrain_k_popcount32(
     plane: int,
     cell_bits: Tuple[int, int, int, int] = (3, 7, 9, 11),
 ) -> int:
-    """Return a deterministic K in [0, 32] for a destination coordinate.
+    """Return a deterministic K in [0, 16] for a destination coordinate.
 
     `cell_bits` MUST contain exactly 4 integers.
 
-    Notes:
-    - K is the popcount of 32 pseudorandom bits => bell curve centered at 16.
-    - Spatial correlation comes from aligning coords to cells at multiple scales.
+    For each cell scale the low 4 bits of digest[0] are used (one nibble
+    per scale, 16 pseudorandom bits total).  K is the popcount of the
+    resulting 16-bit word → Binomial(n=16, p=0.5), mean 8.
+
+    Spatial correlation comes from aligning coords to cells at multiple scales.
     """
 
     if len(cell_bits) != 4:
-        raise ValueError("cell_bits must have exactly 4 entries (4 bytes => 32 bits)")
+        raise ValueError("cell_bits must have exactly 4 entries (4 nibbles => 16 bits)")
 
     if plane not in (0, 1):
         raise ValueError("plane must be 0 or 1")
@@ -70,13 +76,43 @@ def terrain_k_popcount32(
         coord_bytes = coord.to_bytes(32, "big")
 
         # Domain-separate by including the cell_bits byte.
-        digest = sha256(TERRAIN_DOMAIN_V1 + bytes([bits]) + coord_bytes)
-        b0 = digest[0]
+        digest = sha256(TERRAIN_DOMAIN_V2 + bytes([bits]) + coord_bytes)
+        nibble = digest[0] & 0x0F  # low 4 bits only
 
-        word = (word << 8) | b0
+        word = (word << 4) | nibble
 
     # int.bit_count() counts 1-bits in the binary representation.
     return int(word).bit_count()
+
+
+def terrain_k_from_coord256(
+    *,
+    coord: int,
+    cell_bits: Tuple[int, int, int, int] = (3, 7, 9, 11),
+) -> int:
+    """Same as terrain_k but takes a coord256 int."""
+
+    from cyberspace_core.coords import coord_to_xyz
+
+    x, y, z, plane = coord_to_xyz(coord)
+    return terrain_k(x=x, y=y, z=z, plane=plane, cell_bits=cell_bits)
+
+
+# ------------------------------------------------------------------
+# Backwards compatibility shims (deprecated; use terrain_k instead)
+# ------------------------------------------------------------------
+TERRAIN_DOMAIN_V1 = b"CYBERSPACE_TERRAIN_K_V1"
+
+def terrain_k_popcount32(
+    *,
+    x: int,
+    y: int,
+    z: int,
+    plane: int,
+    cell_bits: Tuple[int, int, int, int] = (3, 7, 9, 11),
+) -> int:
+    """Deprecated: alias for terrain_k."""
+    return terrain_k(x=x, y=y, z=z, plane=plane, cell_bits=cell_bits)
 
 
 def terrain_k_popcount32_from_coord256(
@@ -84,18 +120,15 @@ def terrain_k_popcount32_from_coord256(
     coord: int,
     cell_bits: Tuple[int, int, int, int] = (3, 7, 9, 11),
 ) -> int:
-    """Same as terrain_k_popcount32 but takes a coord256 int.
-
-    Note: this treats the provided coord as the destination and aligns it in XYZ space.
-    """
-
-    from cyberspace_core.coords import coord_to_xyz
-
-    x, y, z, plane = coord_to_xyz(coord)
-    return terrain_k_popcount32(x=x, y=y, z=z, plane=plane, cell_bits=cell_bits)
+    """Deprecated: alias for terrain_k_from_coord256."""
+    return terrain_k_from_coord256(coord=coord, cell_bits=cell_bits)
 
 
 __all__ = [
+    "TERRAIN_DOMAIN_V2",
+    "terrain_k",
+    "terrain_k_from_coord256",
+    # deprecated
     "TERRAIN_DOMAIN_V1",
     "terrain_k_popcount32",
     "terrain_k_popcount32_from_coord256",

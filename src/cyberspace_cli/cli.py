@@ -22,7 +22,7 @@ from cyberspace_cli.nostr_keys import (
 from cyberspace_cli.state import CyberspaceState, STATE_VERSION, load_state, save_state
 from cyberspace_core.cantor import int_to_bytes_be_min, int_to_hex_be_min, sha256, sha256_int_hex
 from cyberspace_core.coords import AXIS_MAX, coord_to_xyz, gps_to_dataspace_coord, xyz_to_coord
-from cyberspace_core.movement import compute_axis_cantor, compute_movement_proof_xyz, find_lca_height
+from cyberspace_core.movement import compute_axis_cantor, compute_hop_proof, compute_movement_proof_xyz, find_lca_height
 from cyberspace_core.movement_debug import axis_cantor_debug
 
 app = typer.Typer(no_args_is_help=True)
@@ -770,7 +770,7 @@ def move(
     def _plane_name(p: int) -> str:
         return "dataspace" if p == 0 else "ideaspace"
 
-    def _do_single_hop(*, x2: int, y2: int, z2: int, plane2: int, max_compute_height: int) -> str:
+    def _do_single_hop(*, x2: int, y2: int, z2: int, plane2: int, max_compute_height: int):
         nonlocal x1, y1, z1, plane1, prev_event_id
 
         if plane2 not in (0, 1):
@@ -803,13 +803,15 @@ def move(
         coord_hex = _coord_hex_from_xyz(x2, y2, z2, plane2)
 
         try:
-            proof = compute_movement_proof_xyz(
+            proof = compute_hop_proof(
                 x1,
                 y1,
                 z1,
                 x2,
                 y2,
                 z2,
+                plane=plane2,
+                previous_event_id_hex=prev_event_id,
                 max_compute_height=max_compute_height,
             )
         except ValueError as e:
@@ -837,8 +839,9 @@ def move(
         typer.echo(f"Moved. chain={label} len={chains.chain_length(label)}")
         typer.echo(f"coord: 0x{coord_hex}")
         typer.echo(f"proof: {proof.proof_hash}")
+        typer.echo(f"terrain_k: {proof.terrain_k}")
 
-        return coord_hex
+        return proof
 
     if toward is not None:
         try:
@@ -925,7 +928,7 @@ def move(
                     )
 
                 # Intermediate hops can be in either plane; we keep the current plane until we need to switch.
-                _do_single_hop(x2=x2, y2=y2, z2=z2, plane2=plane1, max_compute_height=hop_limit)
+                hop_proof = _do_single_hop(x2=x2, y2=y2, z2=z2, plane2=plane1, max_compute_height=hop_limit)
                 hops += 1
 
                 typer.echo(f"hop: {hops}")
@@ -934,6 +937,7 @@ def move(
                 typer.echo(f"z={z1} remaining={tz - z1}")
                 typer.echo(f"plane={plane1} {_plane_name(plane1)}")
                 typer.echo(f"lca_height: X={hx} Y={hy} Z={hz} limit={hop_limit}")
+                typer.echo(f"terrain_k: {hop_proof.terrain_k}")
         except KeyboardInterrupt:
             typer.echo(f"Interrupted after hops={hops}.", err=True)
             typer.echo(f"coord: 0x{state.coord_hex}")

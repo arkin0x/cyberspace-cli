@@ -2,7 +2,7 @@ import unittest
 
 from cyberspace_core.coords import gps_to_dataspace_coord
 from cyberspace_core.cantor import sha256, sha256_int_hex
-from cyberspace_core.movement import compute_movement_proof_xyz
+from cyberspace_core.movement import compute_hop_proof, compute_movement_proof_xyz
 from cyberspace_cli.nostr_event import make_hop_event, make_spawn_event
 
 
@@ -129,6 +129,24 @@ class TestVectors(unittest.TestCase):
 
         self.assertEqual(encryption_key, "d1ed6818770b37a3d68c97fd65cd07d3af24a705ef8eb681fea99172b8eadf0d")
         self.assertEqual(discovery_id, "7b67be1e49962882683bc3b3a1be728136754c9fbe9b9a75c4a3e2a629c2d97a")
+
+    def test_hop_proof_spec_vector_4104(self) -> None:
+        """Spec §5.6.1: (0,0,0)→(4104,0,0) with prev_id=zeros.
+
+        This tests the full 4D proof (spatial + temporal).
+        """
+        proof = compute_hop_proof(
+            0, 0, 0,
+            4104, 0, 0,
+            plane=0,
+            previous_event_id_hex="0" * 64,
+            max_compute_height=20,
+        )
+        self.assertEqual(proof.terrain_k, 11)
+        self.assertEqual(
+            proof.proof_hash,
+            "ed9d09ca697b2da29c9d042207ac8ef7aab40f6dde550e6467452aa0e2e8cac6",
+        )
 
     def test_axis_cantor_refuses_huge_height(self) -> None:
         from cyberspace_core.movement import compute_axis_cantor
