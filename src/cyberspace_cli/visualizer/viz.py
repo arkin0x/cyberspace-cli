@@ -68,14 +68,15 @@ def coord_to_dataspace_km(coord: int) -> Tuple[float, float, float]:
     Returned axes are *cyberspace* axes (not matplotlib axes):
     - +X points to (lat=0, lon=0) on the equator (prime meridian reference)
     - +Y points toward the North Pole ("up")
-    - +Z points toward (lat=0, lon=+90E) ("east"; black sun reference is placed on +Z boundary)
+    - +Z points toward (lat=0, lon=+90E) ("east"; black sun reference is placed on -Z boundary)
 
     Note: the plane bit (dataspace=0 / ideaspace=1) does not affect XYZ decoding.
     This visualizer renders both planes on the same geometry.
 
     Note: matplotlib's mplot3d treats its Z axis as the camera "up" axis.
-    For an intuitive render where cyberspace +Y is visually "up", we map:
-      (X_cs, Y_cs, Z_cs) -> (X_mpl, Z_mpl, Y_mpl)
+    For an intuitive render where cyberspace +Y is visually "up" AND where
+    the canonical "face black sun" view makes +X appear screen-right, we map:
+      (X_cs, Y_cs, Z_cs) -> (X_mpl, Y_mpl, Z_mpl) = (-X_cs, Z_cs, Y_cs)
     inside draw_scene().
     """
 
@@ -117,12 +118,13 @@ def draw_scene(
     """Draw the dataspace scene into a provided 3D matplotlib axis.
 
     Markers positions are interpreted as (X_cs, Y_cs, Z_cs) kilometers from center.
-    Internally we map to matplotlib coordinates so that +Y_cs is visually "up":
-      (X_cs, Y_cs, Z_cs) -> (X_mpl, Y_mpl, Z_mpl) = (X_cs, Z_cs, Y_cs)
+    Internally we map to matplotlib coordinates so that +Y_cs is visually "up" and
+    the canonical view is not mirrored left/right:
+      (X_cs, Y_cs, Z_cs) -> (X_mpl, Y_mpl, Z_mpl) = (-X_cs, Z_cs, Y_cs)
     """
 
     def cs_to_mpl(x_cs: float, y_cs: float, z_cs: float) -> Tuple[float, float, float]:
-        return (x_cs, z_cs, y_cs)
+        return (-x_cs, z_cs, y_cs)
 
     ax.clear()
 
@@ -189,9 +191,9 @@ def draw_scene(
     # In mpl coordinates, Z_cs maps to Y.
     ax.plot(r_e * np.cos(t), np.zeros_like(t), r_e * np.sin(t), color="#7FD3FF", linewidth=1.0)
 
-    # Black sun: reference point for +Z_cs.
-    # In mpl coords, +Z_cs is +Y.
-    black_sun_center = (0.0, half, 0.0)
+    # Black sun: reference point for -Z_cs (canonical facing direction).
+    # In mpl coords, Z_cs maps to Y.
+    black_sun_center = (0.0, -half, 0.0)
     black_sun_radius_km = earth_radius_km * 2.2 * s
     r_b = float(black_sun_radius_km)
 
@@ -210,11 +212,13 @@ def draw_scene(
 
     # Axis direction markers (helps disambiguate + and -)
     a = half * 0.22
-    ax.quiver(0, 0, 0, a, 0, 0, color="#FFFFFF", linewidth=1.2)
-    ax.quiver(0, 0, 0, 0, a, 0, color="#FFFFFF", linewidth=1.2)
+    # +X_cs maps to -X_mpl due to cs_to_mpl() (render-only flip to avoid mirroring).
+    ax.quiver(0, 0, 0, -a, 0, 0, color="#FFFFFF", linewidth=1.2)
+    # -Z (black sun) is rendered along mpl +Y (since mpl Y == Z_cs) but with a negative sign.
+    ax.quiver(0, 0, 0, 0, -a, 0, color="#FFFFFF", linewidth=1.2)
     ax.quiver(0, 0, 0, 0, 0, a, color="#FFFFFF", linewidth=1.2)
-    ax.text(a, 0, 0, "+X", color="#FFFFFF")
-    ax.text(0, a, 0, "+Z", color="#FFFFFF")
+    ax.text(-a, 0, 0, "+X", color="#FFFFFF")
+    ax.text(0, -a, 0, "-Z (black sun)", color="#FFFFFF")
     ax.text(0, 0, a, "+Y", color="#FFFFFF")
 
     # Markers
@@ -270,7 +274,7 @@ def draw_sector_scene(
     """
 
     def cs_to_mpl(x_cs: float, y_cs: float, z_cs: float) -> Tuple[float, float, float]:
-        return (x_cs, z_cs, y_cs)
+        return (-x_cs, z_cs, y_cs)
 
     ax.clear()
 
@@ -309,11 +313,11 @@ def draw_sector_scene(
 
     # Axis direction markers
     a = half * 0.55
-    ax.quiver(0, 0, 0, a, 0, 0, color="#FFFFFF", linewidth=1.2)
-    ax.quiver(0, 0, 0, 0, a, 0, color="#FFFFFF", linewidth=1.2)
+    ax.quiver(0, 0, 0, -a, 0, 0, color="#FFFFFF", linewidth=1.2)
+    ax.quiver(0, 0, 0, 0, -a, 0, color="#FFFFFF", linewidth=1.2)
     ax.quiver(0, 0, 0, 0, 0, a, color="#FFFFFF", linewidth=1.2)
-    ax.text(a, 0, 0, "+X", color="#FFFFFF")
-    ax.text(0, a, 0, "+Z", color="#FFFFFF")
+    ax.text(-a, 0, 0, "+X", color="#FFFFFF")
+    ax.text(0, -a, 0, "-Z", color="#FFFFFF")
     ax.text(0, 0, a, "+Y", color="#FFFFFF")
 
     # Markers

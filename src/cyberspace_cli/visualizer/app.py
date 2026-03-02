@@ -132,6 +132,7 @@ class CyberspaceVisualizerApp:
 
         ttk.Button(controls, text="Convert GPS + Render", command=self.on_render_gps).pack(fill=tk.X, pady=(10, 0))
         ttk.Button(controls, text="Reset view", command=self.on_reset_view).pack(fill=tk.X, pady=(6, 0))
+        ttk.Button(controls, text="Face black sun", command=self.on_face_black_sun).pack(fill=tk.X, pady=(6, 0))
         ttk.Button(controls, text="Rotate mode", command=self.on_rotate_mode).pack(fill=tk.X, pady=(6, 0))
 
         ttk.Separator(controls).pack(fill=tk.X, pady=10)
@@ -168,6 +169,10 @@ class CyberspaceVisualizerApp:
         self.toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.last_markers = []
+
+        # Camera preset state (used to populate SceneConfig)
+        self.elev_deg = SceneConfig().elev_deg
+        self.azim_deg = SceneConfig().azim_deg
 
         # Ensure the default interaction is rotate (no active toolbar tool)
         self._ensure_rotate_mode()
@@ -219,6 +224,8 @@ class CyberspaceVisualizerApp:
             scale=scale,
             grid_lines=grid_lines,
             show_midplane=bool(self.show_midplane_var.get()),
+            elev_deg=float(getattr(self, "elev_deg", SceneConfig().elev_deg)),
+            azim_deg=float(getattr(self, "azim_deg", SceneConfig().azim_deg)),
         )
 
     def _render_scene(self, *, markers, sector_label: str = "") -> None:
@@ -375,6 +382,10 @@ class CyberspaceVisualizerApp:
     def on_reset_view(self) -> None:
         self._ensure_rotate_mode()
 
+        # Back to default view.
+        self.elev_deg = SceneConfig().elev_deg
+        self.azim_deg = SceneConfig().azim_deg
+
         sector_label = ""
         if self.mode == "sector":
             anchor_hex = (self.current_coord_hex or "") or (self.spawn_coord_hex or "")
@@ -389,6 +400,31 @@ class CyberspaceVisualizerApp:
 
         self._render_scene(markers=self.last_markers, sector_label=sector_label)
         self._set_status("View reset.")
+
+    def on_face_black_sun(self) -> None:
+        """Set a deterministic view that faces the black sun (canonical -Z forward)."""
+        self._ensure_rotate_mode()
+
+        # In draw_scene(), Cyberspace axes are mapped to mpl as:
+        #   (X_cs, Y_cs, Z_cs) -> (X_mpl, Y_mpl, Z_mpl) = (X_cs, Z_cs, Y_cs)
+        # So to look toward -Z_cs, we want to view from +Y_mpl.
+        self.elev_deg = 15.0
+        self.azim_deg = 90.0
+
+        sector_label = ""
+        if self.mode == "sector":
+            anchor_hex = (self.current_coord_hex or "") or (self.spawn_coord_hex or "")
+            if anchor_hex:
+                try:
+                    h = normalize_hex_32(anchor_hex)
+                    coord_int = int.from_bytes(bytes.fromhex(h), "big")
+                    sid, _plane = coord_to_sector_id(coord=coord_int, sector_bits=self.sector_bits)
+                    sector_label = sid.tag()
+                except Exception:
+                    sector_label = ""
+
+        self._render_scene(markers=self.last_markers, sector_label=sector_label)
+        self._set_status("View: facing black sun (-Z forward).")
 
     def on_rotate_mode(self) -> None:
         self._ensure_rotate_mode()
