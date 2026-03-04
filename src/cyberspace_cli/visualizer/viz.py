@@ -5,6 +5,7 @@ from decimal import Decimal
 from typing import List, Optional, Tuple
 
 import numpy as np
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
 from cyberspace_core.coords import (
     AXIS_CENTER,
@@ -51,6 +52,24 @@ class Marker:
     color: str
     label: str = ""
     size: int = 30
+    shape: str = "o"
+    edge_color: str = "#FFFFFF"
+    edge_width: float = 0.6
+    label_color: Optional[str] = None
+
+
+# Canonical visualization sanity vectors (spec: visualization_vectors.json), plane=0.
+# These are intentionally the major axis directions plus center, useful for visual
+# orientation checks in the GUI.
+_GOLDEN_VECTOR_COORD_HEX: Tuple[Tuple[str, str], ...] = (
+    ("GV center", "e000000000000000000000000000000000000000000000000000000000000000"),
+    ("GV +X", "e200000000000000000000000000000000000000000000000000000000000000"),
+    ("GV -X", "7200000000000000000000000000000000000000000000000000000000000000"),
+    ("GV +Y", "e100000000000000000000000000000000000000000000000000000000000000"),
+    ("GV -Y", "a900000000000000000000000000000000000000000000000000000000000000"),
+    ("GV +Z", "e080000000000000000000000000000000000000000000000000000000000000"),
+    ("GV -Z", "c480000000000000000000000000000000000000000000000000000000000000"),
+)
 
 
 def _axis_u85_to_km_from_center(u85: int) -> float:
@@ -68,15 +87,14 @@ def coord_to_dataspace_km(coord: int) -> Tuple[float, float, float]:
     Returned axes are *cyberspace* axes (not matplotlib axes):
     - +X points to (lat=0, lon=0) on the equator (prime meridian reference)
     - +Y points toward the North Pole ("up")
-    - +Z points toward (lat=0, lon=+90E) ("east"; black sun reference is placed on -Z boundary)
+    - +Z points toward (lat=0, lon=+90E) ("east"; black sun reference is placed on +Z boundary)
 
     Note: the plane bit (dataspace=0 / ideaspace=1) does not affect XYZ decoding.
     This visualizer renders both planes on the same geometry.
 
     Note: matplotlib's mplot3d treats its Z axis as the camera "up" axis.
-    For an intuitive render where cyberspace +Y is visually "up" AND where
-    the canonical "face black sun" view makes +X appear screen-right, we map:
-      (X_cs, Y_cs, Z_cs) -> (X_mpl, Y_mpl, Z_mpl) = (-X_cs, Z_cs, Y_cs)
+    For semantic correctness (no axis mirroring), we map:
+      (X_cs, Y_cs, Z_cs) -> (X_mpl, Y_mpl, Z_mpl) = (X_cs, Z_cs, Y_cs)
     inside draw_scene().
     """
 
@@ -86,6 +104,49 @@ def coord_to_dataspace_km(coord: int) -> Tuple[float, float, float]:
         _axis_u85_to_km_from_center(y_u),
         _axis_u85_to_km_from_center(z_u),
     )
+
+
+def cyberspace_to_mpl(x_cs: float, y_cs: float, z_cs: float) -> Tuple[float, float, float]:
+    """Map cyberspace axis coordinates to matplotlib 3D axis coordinates.
+
+    This mapping preserves semantics:
+    - +X_cs remains +X (prime meridian direction)
+    - +Z_cs maps to +Y_mpl (east / black sun direction)
+    - +Y_cs maps to +Z_mpl (up)
+    """
+
+    return (x_cs, z_cs, y_cs)
+
+
+def black_sun_circle_center_mpl(half_extent: float, radius: float) -> Tuple[float, float, float]:
+    """Return black sun circle center in mpl coords, tangent to +Z boundary.
+
+    The +Z_cs boundary maps to +Y_mpl = half_extent.
+    To make the circle tangent to that boundary in the +Z direction, place
+    the center at +Y_mpl = half_extent + radius.
+    """
+
+    return (0.0, half_extent + radius, 0.0)
+
+
+def golden_vector_markers() -> List[Marker]:
+    """Return canonical orientation-check markers for dataspace rendering."""
+    markers: List[Marker] = []
+    for label, coord_hex in _GOLDEN_VECTOR_COORD_HEX:
+        coord = int(coord_hex, 16)
+        markers.append(
+            Marker(
+                position_km=coord_to_dataspace_km(coord),
+                color="#FFD700",
+                label=label,
+                size=95,
+                shape="^",
+                edge_color="#8B7500",
+                edge_width=0.9,
+                label_color="#000000",
+            )
+        )
+    return markers
 
 
 def _set_axes_equal(ax) -> None:
@@ -118,13 +179,9 @@ def draw_scene(
     """Draw the dataspace scene into a provided 3D matplotlib axis.
 
     Markers positions are interpreted as (X_cs, Y_cs, Z_cs) kilometers from center.
-    Internally we map to matplotlib coordinates so that +Y_cs is visually "up" and
-    the canonical view is not mirrored left/right:
-      (X_cs, Y_cs, Z_cs) -> (X_mpl, Y_mpl, Z_mpl) = (-X_cs, Z_cs, Y_cs)
+    Internally we map to matplotlib coordinates without mirroring:
+      (X_cs, Y_cs, Z_cs) -> (X_mpl, Y_mpl, Z_mpl) = (X_cs, Z_cs, Y_cs)
     """
-
-    def cs_to_mpl(x_cs: float, y_cs: float, z_cs: float) -> Tuple[float, float, float]:
-        return (-x_cs, z_cs, y_cs)
 
     ax.clear()
 
@@ -143,7 +200,7 @@ def draw_scene(
 
     def grid_at_cs_y(y_cs_km: float) -> None:
         # constant mpl z
-        _, _, z_mpl = cs_to_mpl(0.0, y_cs_km * s, 0.0)
+        _, _, z_mpl = cyberspace_to_mpl(0.0, y_cs_km * s, 0.0)
         Z = np.full_like(X, z_mpl)
         ax.plot_wireframe(
             X,
@@ -191,52 +248,55 @@ def draw_scene(
     # In mpl coordinates, Z_cs maps to Y.
     ax.plot(r_e * np.cos(t), np.zeros_like(t), r_e * np.sin(t), color="#7FD3FF", linewidth=1.0)
 
-    # Black sun: reference point for -Z_cs (canonical facing direction).
+    # Black sun: reference marker for +Z_cs (east direction).
     # In mpl coords, Z_cs maps to Y.
-    black_sun_center = (0.0, -half, 0.0)
     black_sun_radius_km = earth_radius_km * 2.2 * s
     r_b = float(black_sun_radius_km)
+    black_sun_center = black_sun_circle_center_mpl(half_extent=half, radius=r_b)
 
-    xb = black_sun_center[0] + r_b * np.outer(np.cos(u), np.sin(v))
-    yb = black_sun_center[1] + r_b * np.outer(np.sin(u), np.sin(v))
-    zb = black_sun_center[2] + r_b * np.outer(np.ones_like(u), np.cos(v))
-    ax.plot_surface(
-        xb,
-        yb,
-        zb,
-        color=cfg.black_sun_color,
-        alpha=cfg.black_sun_alpha,
-        linewidth=0,
-        shade=True,
+    # Draw the black sun as a filled circle (disk) tangent to the +Z boundary.
+    t_circle = np.linspace(0, 2 * np.pi, 180)
+    xb = black_sun_center[0] + r_b * np.cos(t_circle)
+    yb = np.full_like(xb, black_sun_center[1])
+    zb = black_sun_center[2] + r_b * np.sin(t_circle)
+    disk_verts = [list(zip(xb, yb, zb))]
+    ax.add_collection3d(
+        Poly3DCollection(
+            disk_verts,
+            facecolors=cfg.black_sun_color,
+            edgecolors=cfg.black_sun_color,
+            linewidths=1.0,
+            alpha=cfg.black_sun_alpha,
+        )
     )
+    ax.plot(xb, yb, zb, color=cfg.black_sun_color, linewidth=1.2, alpha=min(1.0, cfg.black_sun_alpha + 0.25))
 
     # Axis direction markers (helps disambiguate + and -)
     a = half * 0.22
-    # +X_cs maps to -X_mpl due to cs_to_mpl() (render-only flip to avoid mirroring).
-    ax.quiver(0, 0, 0, -a, 0, 0, color="#FFFFFF", linewidth=1.2)
-    # -Z (black sun) is rendered along mpl +Y (since mpl Y == Z_cs) but with a negative sign.
-    ax.quiver(0, 0, 0, 0, -a, 0, color="#FFFFFF", linewidth=1.2)
+    ax.quiver(0, 0, 0, a, 0, 0, color="#FFFFFF", linewidth=1.2)
+    ax.quiver(0, 0, 0, 0, a, 0, color="#FFFFFF", linewidth=1.2)
     ax.quiver(0, 0, 0, 0, 0, a, color="#FFFFFF", linewidth=1.2)
-    ax.text(-a, 0, 0, "+X", color="#FFFFFF")
-    ax.text(0, -a, 0, "-Z (black sun)", color="#FFFFFF")
+    ax.text(a, 0, 0, "+X", color="#FFFFFF")
+    ax.text(0, a, 0, "+Z (black sun / east)", color="#FFFFFF")
     ax.text(0, 0, a, "+Y", color="#FFFFFF")
 
     # Markers
     for m in markers or []:
         x_cs, y_cs, z_cs = m.position_km
-        px, py, pz = cs_to_mpl(x_cs * s, y_cs * s, z_cs * s)
+        px, py, pz = cyberspace_to_mpl(x_cs * s, y_cs * s, z_cs * s)
         ax.scatter(
             [px],
             [py],
             [pz],
             color=m.color,
             s=m.size,
+            marker=m.shape,
             depthshade=False,
-            edgecolors="#FFFFFF",
-            linewidths=0.6,
+            edgecolors=m.edge_color,
+            linewidths=m.edge_width,
         )
         if m.label:
-            ax.text(px, py, pz, f" {m.label}", color=m.color)
+            ax.text(px, py, pz, f" {m.label}", color=(m.label_color or m.color))
 
     # Labels reflect cyberspace axes, even though mpl axes are permuted.
     ax.set_xlabel("X (prime meridian)")
@@ -273,8 +333,6 @@ def draw_sector_scene(
     geometry is rendered.
     """
 
-    def cs_to_mpl(x_cs: float, y_cs: float, z_cs: float) -> Tuple[float, float, float]:
-        return (-x_cs, z_cs, y_cs)
 
     ax.clear()
 
@@ -313,17 +371,17 @@ def draw_sector_scene(
 
     # Axis direction markers
     a = half * 0.55
-    ax.quiver(0, 0, 0, -a, 0, 0, color="#FFFFFF", linewidth=1.2)
-    ax.quiver(0, 0, 0, 0, -a, 0, color="#FFFFFF", linewidth=1.2)
+    ax.quiver(0, 0, 0, a, 0, 0, color="#FFFFFF", linewidth=1.2)
+    ax.quiver(0, 0, 0, 0, a, 0, color="#FFFFFF", linewidth=1.2)
     ax.quiver(0, 0, 0, 0, 0, a, color="#FFFFFF", linewidth=1.2)
-    ax.text(-a, 0, 0, "+X", color="#FFFFFF")
-    ax.text(0, -a, 0, "-Z", color="#FFFFFF")
+    ax.text(a, 0, 0, "+X", color="#FFFFFF")
+    ax.text(0, a, 0, "+Z", color="#FFFFFF")
     ax.text(0, 0, a, "+Y", color="#FFFFFF")
 
     # Markers
     for m in markers or []:
         x_cs, y_cs, z_cs = m.position_km
-        px, py, pz = cs_to_mpl(x_cs * s, y_cs * s, z_cs * s)
+        px, py, pz = cyberspace_to_mpl(x_cs * s, y_cs * s, z_cs * s)
         ax.scatter(
             [px],
             [py],
@@ -331,11 +389,11 @@ def draw_sector_scene(
             color=m.color,
             s=m.size,
             depthshade=False,
-            edgecolors="#FFFFFF",
-            linewidths=0.6,
+            edgecolors=m.edge_color,
+            linewidths=m.edge_width,
         )
         if m.label:
-            ax.text(px, py, pz, f" {m.label}", color=m.color)
+            ax.text(px, py, pz, f" {m.label}", color=(m.label_color or m.color))
 
     ax.set_xlabel("X (sector-local)")
     ax.set_ylabel("Z (sector-local)")
@@ -361,6 +419,9 @@ __all__ = [
     "Marker",
     "SceneConfig",
     "coord_to_dataspace_km",
+    "cyberspace_to_mpl",
+    "black_sun_circle_center_mpl",
     "draw_scene",
     "draw_sector_scene",
+    "golden_vector_markers",
 ]

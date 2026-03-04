@@ -19,7 +19,7 @@ from cyberspace_cli.parsing import normalize_hex_32
 from cyberspace_core.coords import coord_to_xyz, gps_to_dataspace_coord
 from cyberspace_core.sector import SECTOR_BITS_DEFAULT, coord_to_sector_id, coord_to_sector_local_centered
 
-from .viz import Marker, SceneConfig, coord_to_dataspace_km, draw_scene, draw_sector_scene
+from .viz import Marker, SceneConfig, coord_to_dataspace_km, draw_scene, draw_sector_scene, golden_vector_markers
 
 
 @dataclass
@@ -28,6 +28,8 @@ class AppState:
 
 
 class CyberspaceVisualizerApp:
+    FACE_BLACK_SUN_ELEV_DEG = 15.0
+    FACE_BLACK_SUN_AZIM_DEG = -90.0
     def __init__(
         self,
         root: tk.Tk,
@@ -133,6 +135,7 @@ class CyberspaceVisualizerApp:
         ttk.Button(controls, text="Convert GPS + Render", command=self.on_render_gps).pack(fill=tk.X, pady=(10, 0))
         ttk.Button(controls, text="Reset view", command=self.on_reset_view).pack(fill=tk.X, pady=(6, 0))
         ttk.Button(controls, text="Face black sun", command=self.on_face_black_sun).pack(fill=tk.X, pady=(6, 0))
+        ttk.Button(controls, text="Toggle golden vectors", command=self.on_toggle_golden_vectors).pack(fill=tk.X, pady=(6, 0))
         ttk.Button(controls, text="Rotate mode", command=self.on_rotate_mode).pack(fill=tk.X, pady=(6, 0))
 
         ttk.Separator(controls).pack(fill=tk.X, pady=10)
@@ -169,10 +172,16 @@ class CyberspaceVisualizerApp:
         self.toolbar.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.last_markers = []
+        self.show_golden_vectors = False
+        self.golden_markers = golden_vector_markers()
 
         # Camera preset state (used to populate SceneConfig)
         self.elev_deg = SceneConfig().elev_deg
         self.azim_deg = SceneConfig().azim_deg
+        if self.mode == "dataspace":
+            # Canonical default: face +Z (east / black sun) with +Y up.
+            self.elev_deg = self.FACE_BLACK_SUN_ELEV_DEG
+            self.azim_deg = self.FACE_BLACK_SUN_AZIM_DEG
 
         # Ensure the default interaction is rotate (no active toolbar tool)
         self._ensure_rotate_mode()
@@ -230,12 +239,16 @@ class CyberspaceVisualizerApp:
 
     def _render_scene(self, *, markers, sector_label: str = "") -> None:
         cfg = self._get_scene_config()
+        base_markers = list(markers or [])
+        scene_markers = list(base_markers)
+        if self.mode == "dataspace" and self.show_golden_vectors:
+            scene_markers.extend(self.golden_markers)
         if self.mode == "sector":
-            draw_sector_scene(self.ax, cfg=cfg, markers=markers, sector_label=sector_label)
+            draw_sector_scene(self.ax, cfg=cfg, markers=scene_markers, sector_label=sector_label)
         else:
-            draw_scene(self.ax, cfg=cfg, markers=markers)
+            draw_scene(self.ax, cfg=cfg, markers=scene_markers)
         self.canvas.draw_idle()
-        self.last_markers = markers
+        self.last_markers = base_markers
 
     def _update_text_widget(self, widget: tk.Text, value: str) -> None:
         widget.configure(state="normal")
@@ -385,6 +398,9 @@ class CyberspaceVisualizerApp:
         # Back to default view.
         self.elev_deg = SceneConfig().elev_deg
         self.azim_deg = SceneConfig().azim_deg
+        if self.mode == "dataspace":
+            self.elev_deg = self.FACE_BLACK_SUN_ELEV_DEG
+            self.azim_deg = self.FACE_BLACK_SUN_AZIM_DEG
 
         sector_label = ""
         if self.mode == "sector":
@@ -402,14 +418,14 @@ class CyberspaceVisualizerApp:
         self._set_status("View reset.")
 
     def on_face_black_sun(self) -> None:
-        """Set a deterministic view that faces the black sun (canonical -Z forward)."""
+        """Set a deterministic view that faces the black sun (+Z / east)."""
         self._ensure_rotate_mode()
 
         # In draw_scene(), Cyberspace axes are mapped to mpl as:
         #   (X_cs, Y_cs, Z_cs) -> (X_mpl, Y_mpl, Z_mpl) = (X_cs, Z_cs, Y_cs)
-        # So to look toward -Z_cs, we want to view from +Y_mpl.
-        self.elev_deg = 15.0
-        self.azim_deg = 90.0
+        # So to look toward +Z_cs (east / black sun), view from -Y_mpl.
+        self.elev_deg = self.FACE_BLACK_SUN_ELEV_DEG
+        self.azim_deg = self.FACE_BLACK_SUN_AZIM_DEG
 
         sector_label = ""
         if self.mode == "sector":
@@ -424,7 +440,21 @@ class CyberspaceVisualizerApp:
                     sector_label = ""
 
         self._render_scene(markers=self.last_markers, sector_label=sector_label)
-        self._set_status("View: facing black sun (-Z forward).")
+        self._set_status("View: facing black sun (+Z east).")
+
+    def on_toggle_golden_vectors(self) -> None:
+        self._ensure_rotate_mode()
+
+        if self.mode != "dataspace":
+            self._set_status("Golden vectors are only available in dataspace mode.")
+            return
+
+        self.show_golden_vectors = not self.show_golden_vectors
+        self._render_scene(markers=self.last_markers, sector_label="")
+        if self.show_golden_vectors:
+            self._set_status("Golden vectors shown.")
+        else:
+            self._set_status("Golden vectors hidden.")
 
     def on_rotate_mode(self) -> None:
         self._ensure_rotate_mode()
