@@ -2,6 +2,11 @@ import json
 import unittest
 from decimal import Decimal
 from pathlib import Path
+from cyberspace_cli.visualizer.viz import (
+    black_sun_circle_center_mpl,
+    cyberspace_to_mpl,
+    golden_vector_markers,
+)
 
 from cyberspace_core.coords import AXIS_CENTER, AXIS_UNITS, DATASPACE_AXIS_KM, coord_to_xyz
 
@@ -38,6 +43,42 @@ class TestVisualizationVectors(unittest.TestCase):
             self.assertAlmostEqual(u85_to_km_from_center(x), float(v["x_km_from_center"]), places=3, msg=f"{name}: x_km")
             self.assertAlmostEqual(u85_to_km_from_center(y), float(v["y_km_from_center"]), places=3, msg=f"{name}: y_km")
             self.assertAlmostEqual(u85_to_km_from_center(z), float(v["z_km_from_center"]), places=3, msg=f"{name}: z_km")
+
+    def test_golden_vector_overlay_markers(self) -> None:
+        markers = golden_vector_markers()
+        by_label = {m.label: m for m in markers}
+
+        self.assertEqual(
+            set(by_label.keys()),
+            {"GV center", "GV +X", "GV -X", "GV +Y", "GV -Y", "GV +Z", "GV -Z"},
+        )
+
+        self.assertEqual(by_label["GV +X"].shape, "^")
+        self.assertEqual(by_label["GV +X"].color, "#FFD700")
+        self.assertEqual(by_label["GV +X"].label_color, "#000000")
+
+        self.assertAlmostEqual(by_label["GV center"].position_km[0], 0.0, places=3)
+        self.assertAlmostEqual(by_label["GV center"].position_km[1], 0.0, places=3)
+        self.assertAlmostEqual(by_label["GV center"].position_km[2], 0.0, places=3)
+
+        self.assertAlmostEqual(by_label["GV +X"].position_km[0], 12007.0, places=3)
+        self.assertAlmostEqual(by_label["GV -X"].position_km[0], -12007.0, places=3)
+        self.assertAlmostEqual(by_label["GV +Y"].position_km[1], 12007.0, places=3)
+        self.assertAlmostEqual(by_label["GV -Y"].position_km[1], -12007.0, places=3)
+        self.assertAlmostEqual(by_label["GV +Z"].position_km[2], 12007.0, places=3)
+        self.assertAlmostEqual(by_label["GV -Z"].position_km[2], -12007.0, places=3)
+
+    def test_semantic_axis_mapping_and_black_sun_circle_tangent(self) -> None:
+        self.assertEqual(cyberspace_to_mpl(1.0, 0.0, 0.0), (1.0, 0.0, 0.0))
+        self.assertEqual(cyberspace_to_mpl(0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+        self.assertEqual(cyberspace_to_mpl(0.0, 0.0, 1.0), (0.0, 1.0, 0.0))
+
+        half_extent = 10.0
+        radius = 2.5
+        center = black_sun_circle_center_mpl(half_extent=half_extent, radius=radius)
+        self.assertEqual(center, (0.0, 12.5, 0.0))
+        # Tangency to +Z boundary (mapped to +Y_mpl = half_extent).
+        self.assertAlmostEqual(center[1] - radius, half_extent, places=7)
 
 
 if __name__ == "__main__":
