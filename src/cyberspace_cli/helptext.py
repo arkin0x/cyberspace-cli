@@ -64,6 +64,7 @@ Commands (high-level)
 - cyberspace config set --max-lca-height N
 - cyberspace gps <lat,lon>
   (or: cyberspace gps --lat <lat> --lon <lon>)
+  (or: cyberspace gps --coord <coord256>  # derive lat/lon/alt)
 - cyberspace cantor (--from-xyz x,y,z --to-xyz x,y,z | --from-coord <hex> --to-coord <hex>)
 - cyberspace history [--limit N] [--json]
 - cyberspace chain list

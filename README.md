@@ -124,6 +124,8 @@ cyberspace lcaplot --axis z --span 2048 --max-lca-height 17
 cyberspace gps 37.7749,-122.4194
 # or
 cyberspace gps --lat 37.7749 --lon -122.4194
+# reverse: coord256 -> gps (lat/lon/alt)
+cyberspace gps --coord 0xc4943fa01bb22b95946ec1605717047a3b79bd717d5d84e35a12cb56df76134a
 
 # cantor + encryption/debug (prints LCA heights, Cantor roots, and 1-hash/2-hash ids)
 cyberspace cantor --from-xyz 0,0,0 --to-xyz 3,2,1
