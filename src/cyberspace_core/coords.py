@@ -356,3 +356,49 @@ def gps_to_dataspace_coord(
         clamp_to_surface=clamp_to_surface,
     )
     return xyz_to_coord(x, y, z, plane=PLANE_DATASPACE)
+
+
+def _axis_u_to_km(u: int) -> float:
+    units_per_km = float(AXIS_UNITS) / float(DATASPACE_AXIS_KM)
+    return (float(u) - float(AXIS_CENTER)) / units_per_km
+
+
+def _ecef_m_to_geodetic_deg(x_m: float, y_m: float, z_m: float) -> Tuple[float, float, float]:
+    # Standard iterative WGS84 inversion.
+    a = float(WGS84_A_M)
+    e2 = float(WGS84_E2)
+    b = a * math.sqrt(1.0 - e2)
+    ep2 = (a * a - b * b) / (b * b)
+
+    p = math.sqrt(x_m * x_m + y_m * y_m)
+    lon = math.atan2(y_m, x_m)
+
+    theta = math.atan2(z_m * a, p * b)
+    st = math.sin(theta)
+    ct = math.cos(theta)
+    lat = math.atan2(z_m + ep2 * b * st * st * st, p - e2 * a * ct * ct * ct)
+
+    for _ in range(5):
+        sin_lat = math.sin(lat)
+        n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
+        alt = (p / math.cos(lat)) - n
+        lat = math.atan2(z_m, p * (1.0 - e2 * (n / (n + alt))))
+
+    sin_lat = math.sin(lat)
+    n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
+    alt = (p / math.cos(lat)) - n
+    return (math.degrees(lat), math.degrees(lon), alt)
+
+
+def dataspace_coord_to_gps(coord: int) -> Tuple[float, float, float, int]:
+    """Convert a dataspace coord256 into (lat_deg, lon_deg, altitude_m, plane)."""
+    x_u, y_u, z_u, plane = coord_to_xyz(coord)
+
+    # Inverse Cyberspace axis permutation (§4.2):
+    # X_cs = X_ecef, Y_cs = Z_ecef, Z_cs = Y_ecef
+    x_km = _axis_u_to_km(x_u)
+    y_km = _axis_u_to_km(z_u)  # Y_ecef
+    z_km = _axis_u_to_km(y_u)  # Z_ecef
+
+    lat_deg, lon_deg, alt_m = _ecef_m_to_geodetic_deg(x_km * 1000.0, y_km * 1000.0, z_km * 1000.0)
+    return (lat_deg, lon_deg, alt_m, plane)

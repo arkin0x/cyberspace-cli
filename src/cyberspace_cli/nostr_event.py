@@ -92,6 +92,27 @@ def make_spawn_event(*, pubkey_hex: str, created_at: int, coord_hex: str, kind: 
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
 
 
+def make_encrypted_content_event(
+    *,
+    pubkey_hex: str,
+    created_at: int,
+    lookup_id_hex: str,
+    algorithm: str,
+    ciphertext_b64: str,
+    version: str = "2",
+    height_hint: int | None = None,
+    kind: int = 33334,
+) -> Dict[str, Any]:
+    tags: List[List[str]] = [
+        ["d", lookup_id_hex],
+        ["encrypted", algorithm, ciphertext_b64],
+        ["version", version],
+    ]
+    if height_hint is not None:
+        tags.append(["h", str(int(height_hint))])
+    return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
+
+
 def make_hop_event(
     *,
     pubkey_hex: str,

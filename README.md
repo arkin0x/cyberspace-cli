@@ -127,6 +127,13 @@ cyberspace gps --lat 37.7749 --lon -122.4194
 
 # cantor + encryption/debug (prints LCA heights, Cantor roots, and 1-hash/2-hash ids)
 cyberspace cantor --from-xyz 0,0,0 --to-xyz 3,2,1
+
+# location-encrypted content events
+cyberspace encrypt --text "hello nearby avatars" --height 8
+cyberspace encrypt --text "hello nearby avatars" --height 8 --publish-height
+cyberspace decrypt --event-file ./event.json
+cyberspace scan --min-height 1 --max-height 12
+cyberspace scan --events-file ./events.jsonl
 ```
 
 ## Optional GUI dependencies
