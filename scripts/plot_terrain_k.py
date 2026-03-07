@@ -7,8 +7,8 @@
 #   --step 1 \
 #   --base-x 0 --base-y 0 \
 #   --z 0 --plane 0 \
-#   --cell-bits 3,5,7,9 \
-#   --out-dir out/terrain-k/demo_3579
+#   --cell-bits 3,7,9,11 \
+#   --out-dir out/terrain-k/demo_16b_8k_3_7_9_11_protocol
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ import numpy as np
 
 from cyberspace_core.cantor import sha256
 from cyberspace_core.coords import xyz_to_coord
-from cyberspace_core.terrain import TERRAIN_DOMAIN_V1
+from cyberspace_core.terrain import TERRAIN_DOMAIN_V2
 
 
 def _aligned(v: int, cell_bits: int) -> int:
@@ -56,7 +56,7 @@ def _fmt_cell_size(bits: int) -> str:
     return f"2^{bits}≈{float(n):.3e}"
 
 
-def _terrain_byte(*, x: int, y: int, z: int, plane: int, cell_bits: int, cache: dict[tuple[int, int, int, int, int], int]) -> int:
+def _terrain_nibble(*, x: int, y: int, z: int, plane: int, cell_bits: int, cache: dict[tuple[int, int, int, int, int], int]) -> int:
     bx = _aligned(x, cell_bits)
     by = _aligned(y, cell_bits)
     bz = _aligned(z, cell_bits)
@@ -67,10 +67,10 @@ def _terrain_byte(*, x: int, y: int, z: int, plane: int, cell_bits: int, cache: 
 
     coord = xyz_to_coord(bx, by, bz, plane=plane)
     coord_bytes = coord.to_bytes(32, "big")
-    digest = sha256(TERRAIN_DOMAIN_V1 + bytes([cell_bits]) + coord_bytes)
-    b0 = digest[0]
-    cache[key] = b0
-    return b0
+    digest = sha256(TERRAIN_DOMAIN_V2 + bytes([cell_bits]) + coord_bytes)
+    n0 = digest[0] & 0x0F
+    cache[key] = n0
+    return n0
 
 
 def terrain_k_grid(
@@ -92,12 +92,12 @@ def terrain_k_grid(
         for ix in range(size):
             x = base_x + ix * step
 
-            word = 0
+            word16 = 0
             for bits in cell_bits:
-                b0 = _terrain_byte(x=x, y=y, z=z, plane=plane, cell_bits=bits, cache=cache)
-                word = (word << 8) | b0
+                n0 = _terrain_nibble(x=x, y=y, z=z, plane=plane, cell_bits=bits, cache=cache)
+                word16 = (word16 << 4) | n0
 
-            k[iy, ix] = int(word).bit_count()
+            k[iy, ix] = int(word16).bit_count()
 
     return k
 
@@ -112,7 +112,7 @@ def expected_binomial_counts(*, n: int, total: int) -> np.ndarray:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="Plot a deterministic Cyberspace terrain K field (0..32).")
+    p = argparse.ArgumentParser(description="Plot a deterministic Cyberspace terrain K field (0..16).")
     p.add_argument("--size", type=int, default=512, help="Grid width/height in pixels.")
     p.add_argument("--step", type=int, default=1, help="Axis step per pixel.")
     p.add_argument("--base-x", type=int, default=0, help="X origin (u85 int) for the plotted window.")
@@ -152,7 +152,7 @@ def main() -> int:
     )
 
     total = int(k.size)
-    hist = np.bincount(k.reshape(-1), minlength=33)[:33]
+    hist = np.bincount(k.reshape(-1), minlength=17)[:17]
 
     mean = float(k.mean())
     std = float(k.std())
@@ -160,7 +160,7 @@ def main() -> int:
     cell_sizes = ", ".join(_fmt_cell_size(b) for b in bits)
 
     title = (
-        f"terrain K (popcount32)  size={args.size} step={args.step} "
+        f"terrain K (popcount16)  size={args.size} step={args.step} "
         f"base=({args.base_x},{args.base_y},{args.z}) plane={args.plane}\n"
         f"cell_bits={bits}  cell_sizes=[{cell_sizes}] (axis units per cell)\n"
         f"mean={mean:.3f} std={std:.3f}"
@@ -168,7 +168,7 @@ def main() -> int:
 
     # --- Heatmap ---
     plt.figure(figsize=(8, 7), dpi=150)
-    plt.imshow(k, origin="lower", interpolation="nearest", cmap="terrain", vmin=0, vmax=32)
+    plt.imshow(k, origin="lower", interpolation="nearest", cmap="terrain", vmin=0, vmax=16)
     plt.colorbar(label="K")
     plt.title(title)
     plt.xlabel("x offset")
@@ -179,13 +179,13 @@ def main() -> int:
     plt.close()
 
     # --- Histogram ---
-    exp = expected_binomial_counts(n=32, total=total)
+    exp = expected_binomial_counts(n=16, total=total)
 
-    xs = np.arange(33)
+    xs = np.arange(17)
 
     plt.figure(figsize=(9, 5), dpi=150)
     plt.bar(xs, hist, alpha=0.85, label="observed")
-    plt.plot(xs, exp, color="#cc0000", linewidth=2.0, label="expected binomial(n=32,p=0.5)")
+    plt.plot(xs, exp, color="#cc0000", linewidth=2.0, label="expected binomial(n=16,p=0.5)")
     plt.title("K distribution\n" + f"cell_bits={bits}  cell_sizes=[{cell_sizes}] (axis units per cell)")
     plt.xlabel("K")
     plt.ylabel("count")

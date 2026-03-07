@@ -3,6 +3,7 @@
 This module provides:
 - Bit-interleaved 256-bit coordinates (X,Y,Z are 85-bit unsigned ints + 1 plane bit)
 - Dataspace mapping from GPS (WGS84 lat/lon[/alt]) into the 85-bit axis space
+- Inverse mapping from dataspace coord/xyz back to WGS84 GPS (lat/lon/alt)
 
 Axis orientation for the GPS mapping starts from the standard Earth-Centered,
 Earth-Fixed (ECEF) frame, then permutes axes to match the *cyberspace* naming
@@ -358,47 +359,90 @@ def gps_to_dataspace_coord(
     return xyz_to_coord(x, y, z, plane=PLANE_DATASPACE)
 
 
-def _axis_u_to_km(u: int) -> float:
-    units_per_km = float(AXIS_UNITS) / float(DATASPACE_AXIS_KM)
-    return (float(u) - float(AXIS_CENTER)) / units_per_km
+def _axis_u_to_km(axis_u: int) -> Decimal:
+    """Map an unsigned 85-bit axis value back to centered kilometers."""
+    if not (0 <= int(axis_u) <= AXIS_MAX):
+        raise ValueError(f"axis value {axis_u} is out of range [0, {AXIS_MAX}]")
+
+    with localcontext() as ctx:
+        ctx.prec = DECIMAL_PREC
+        ctx.rounding = ROUND_HALF_EVEN
+
+        km_per_unit = DATASPACE_AXIS_KM / Decimal(AXIS_UNITS)
+        return (Decimal(int(axis_u)) - Decimal(AXIS_CENTER)) * km_per_unit
 
 
-def _ecef_m_to_geodetic_deg(x_m: float, y_m: float, z_m: float) -> Tuple[float, float, float]:
-    # Standard iterative WGS84 inversion.
+def dataspace_xyz_to_ecef_km(x: int, y: int, z: int) -> Tuple[Decimal, Decimal, Decimal]:
+    """Convert dataspace xyz (u85) back to ECEF kilometers.
+
+    This applies the inverse axis permutation used by `ecef_km_to_dataspace_xyz`:
+      X_ecef = X_cs
+      Y_ecef = Z_cs
+      Z_ecef = Y_cs
+    """
+    x_cs_km = _axis_u_to_km(x)
+    y_cs_km = _axis_u_to_km(y)
+    z_cs_km = _axis_u_to_km(z)
+
+    x_ecef_km = x_cs_km
+    y_ecef_km = z_cs_km
+    z_ecef_km = y_cs_km
+    return (x_ecef_km, y_ecef_km, z_ecef_km)
+
+
+def ecef_m_to_geodetic_float(x_m: float, y_m: float, z_m: float) -> Tuple[float, float, float]:
+    """Convert ECEF meters to WGS84 geodetic (lat_deg, lon_deg, alt_m) using floats."""
     a = float(WGS84_A_M)
+    f = float(WGS84_F)
     e2 = float(WGS84_E2)
-    b = a * math.sqrt(1.0 - e2)
+    b = a * (1.0 - f)
     ep2 = (a * a - b * b) / (b * b)
 
-    p = math.sqrt(x_m * x_m + y_m * y_m)
+    p = math.hypot(x_m, y_m)
+    if p < 1e-9:
+        lat = math.pi / 2.0 if z_m >= 0.0 else -math.pi / 2.0
+        lon = 0.0
+        alt = abs(z_m) - b
+        return (math.degrees(lat), lon, alt)
+
     lon = math.atan2(y_m, x_m)
+    theta = math.atan2(a * z_m, b * p)
+    sin_t = math.sin(theta)
+    cos_t = math.cos(theta)
 
-    theta = math.atan2(z_m * a, p * b)
-    st = math.sin(theta)
-    ct = math.cos(theta)
-    lat = math.atan2(z_m + ep2 * b * st * st * st, p - e2 * a * ct * ct * ct)
-
-    for _ in range(5):
-        sin_lat = math.sin(lat)
-        n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
-        alt = (p / math.cos(lat)) - n
-        lat = math.atan2(z_m, p * (1.0 - e2 * (n / (n + alt))))
-
+    lat = math.atan2(z_m + ep2 * b * sin_t * sin_t * sin_t, p - e2 * a * cos_t * cos_t * cos_t)
     sin_lat = math.sin(lat)
+    cos_lat = math.cos(lat)
+
     n = a / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
-    alt = (p / math.cos(lat)) - n
-    return (math.degrees(lat), math.degrees(lon), alt)
+    if abs(cos_lat) < 1e-12:
+        alt = abs(z_m) - b
+    else:
+        alt = p / cos_lat - n
+
+    lat_deg = math.degrees(lat)
+    lon_deg = math.degrees(lon)
+    lon_deg = ((lon_deg + 180.0) % 360.0) - 180.0
+    return (lat_deg, lon_deg, alt)
+
+
+def dataspace_xyz_to_gps(x: int, y: int, z: int) -> Tuple[float, float, float]:
+    """Convert dataspace xyz (u85) to WGS84 geodetic (lat_deg, lon_deg, alt_m)."""
+    x_km, y_km, z_km = dataspace_xyz_to_ecef_km(x, y, z)
+
+    km_to_m = Decimal(1000)
+    x_m = float(x_km * km_to_m)
+    y_m = float(y_km * km_to_m)
+    z_m = float(z_km * km_to_m)
+
+    return ecef_m_to_geodetic_float(x_m, y_m, z_m)
 
 
 def dataspace_coord_to_gps(coord: int) -> Tuple[float, float, float, int]:
-    """Convert a dataspace coord256 into (lat_deg, lon_deg, altitude_m, plane)."""
-    x_u, y_u, z_u, plane = coord_to_xyz(coord)
+    """Convert an interleaved 256-bit coordinate to GPS + plane.
 
-    # Inverse Cyberspace axis permutation (§4.2):
-    # X_cs = X_ecef, Y_cs = Z_ecef, Z_cs = Y_ecef
-    x_km = _axis_u_to_km(x_u)
-    y_km = _axis_u_to_km(z_u)  # Y_ecef
-    z_km = _axis_u_to_km(y_u)  # Z_ecef
-
-    lat_deg, lon_deg, alt_m = _ecef_m_to_geodetic_deg(x_km * 1000.0, y_km * 1000.0, z_km * 1000.0)
+    Returns `(lat_deg, lon_deg, alt_m, plane)`.
+    """
+    x, y, z, plane = coord_to_xyz(coord)
+    lat_deg, lon_deg, alt_m = dataspace_xyz_to_gps(x, y, z)
     return (lat_deg, lon_deg, alt_m, plane)

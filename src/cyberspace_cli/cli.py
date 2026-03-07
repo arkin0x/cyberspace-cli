@@ -603,6 +603,11 @@ def three_d(
 
 @app.command()
 def gps(
+    coord: Optional[str] = typer.Option(
+        None,
+        "--coord",
+        help="Cyberspace coord256 hex to convert to GPS (lat/lon/alt).",
+    ),
     at: Optional[str] = typer.Argument(
         None,
         help="Either 'lat,lon' (recommended, works with negative lon) or omit and use --lat/--lon.",
@@ -612,13 +617,36 @@ def gps(
     altitude_m: str = typer.Option("0", "--alt", help="Altitude in meters (default 0)."),
     clamp_to_surface: bool = typer.Option(True, "--clamp/--no-clamp", help="Clamp altitude to WGS84 surface."),
 ) -> None:
-    """Convert GPS to a dataspace coordinate.
+    """Convert between GPS and dataspace coord256.
 
     Note: many CLIs treat a negative positional like `-122.4194` as an option flag.
     To avoid that, this command supports either:
     - `cyberspace gps 37.7749,-122.4194`
     - `cyberspace gps --lat 37.7749 --lon -122.4194`
+    - `cyberspace gps --coord 0x<coord256>`
     """
+
+    if coord is not None:
+        if at is not None or lat is not None or lon is not None:
+            typer.echo("Use either --coord OR ('lat,lon' / --lat --lon).", err=True)
+            raise typer.Exit(code=2)
+        if altitude_m != "0" or not clamp_to_surface:
+            typer.echo("--alt/--clamp only apply when converting GPS -> coord.", err=True)
+            raise typer.Exit(code=2)
+
+        try:
+            coord_hex = normalize_hex_32(coord)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
+
+        coord_int = int.from_bytes(bytes.fromhex(coord_hex), "big")
+        x, y, z, plane = coord_to_xyz(coord_int)
+        lat_deg, lon_deg, alt_m, _plane = dataspace_coord_to_gps(coord_int)
+
+        typer.echo(f"coord: 0x{coord_hex}")
+        typer.echo(f"xyz(u85): x={x} y={y} z={z} plane={plane} {_plane_label(plane)}")
+        typer.echo(f"gps: lat={lat_deg:.10f} lon={lon_deg:.10f} alt_m={alt_m:.3f}")
+        return
 
     if at is not None:
         if lat is not None or lon is not None:
