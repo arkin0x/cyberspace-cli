@@ -10,3 +10,4 @@ build/
 
 # CLI local state (if kept in-repo during dev)
 .cyberspace/
+scripts/logs/

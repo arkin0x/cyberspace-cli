@@ -1,4 +1,7 @@
 from __future__ import annotations
+import base64
+import json
+import secrets
 
 import time
 from typing import List, Optional, Sequence, Tuple
@@ -9,7 +12,7 @@ from cyberspace_cli import chains
 from cyberspace_cli import targets
 from cyberspace_cli.config import load_config, save_config
 from cyberspace_cli.helptext import HELP_TEXT
-from cyberspace_cli.nostr_event import make_hop_event, make_spawn_event
+from cyberspace_cli.nostr_event import make_encrypted_content_event, make_hop_event, make_spawn_event
 from cyberspace_cli.parsing import normalize_hex_32, parse_destination_xyz_or_coord
 from cyberspace_cli.toward import choose_next_axis_value_toward
 from cyberspace_cli.nostr_keys import (
@@ -22,6 +25,13 @@ from cyberspace_cli.nostr_keys import (
 from cyberspace_cli.state import CyberspaceState, STATE_VERSION, load_state, save_state
 from cyberspace_core.cantor import int_to_bytes_be_min, int_to_hex_be_min, sha256, sha256_int_hex
 from cyberspace_core.coords import AXIS_MAX, coord_to_xyz, dataspace_coord_to_gps, gps_to_dataspace_coord, xyz_to_coord
+from cyberspace_core.location_encryption import (
+    DEFAULT_SCAN_MAX_HEIGHT,
+    decrypt_with_location_key,
+    derive_region_key_material_for_height,
+    derive_region_key_material_scan,
+    encrypt_with_location_key,
+)
 from cyberspace_core.movement import compute_axis_cantor, compute_hop_proof, compute_movement_proof_xyz, find_lca_height
 from cyberspace_core.movement_debug import axis_cantor_debug
 
@@ -87,6 +97,69 @@ def _get_tag(event: dict, key: str) -> Optional[str]:
         if isinstance(t, list) and len(t) >= 2 and t[0] == key:
             return t[1]
     return None
+
+
+def _get_tag_record(event: dict, key: str) -> Optional[List[str]]:
+    for t in event.get("tags", []):
+        if isinstance(t, list) and len(t) >= 2 and t[0] == key:
+            return t
+    return None
+
+
+def _require_coord_xyz(coord: Optional[str]) -> Tuple[int, int, int, int]:
+    if coord is None:
+        state = _require_state()
+        coord_hex = state.coord_hex
+    else:
+        coord_hex = normalize_hex_32(coord)
+    coord_int = int.from_bytes(bytes.fromhex(coord_hex), "big")
+    return coord_to_xyz(coord_int)
+
+
+def _load_event_from_input(*, event_json: Optional[str], event_file: Optional[str]) -> dict:
+    if (event_json is None and event_file is None) or (event_json is not None and event_file is not None):
+        typer.echo("Specify exactly one of --event-json or --event-file.", err=True)
+        raise typer.Exit(code=2)
+
+    raw = ""
+    if event_json is not None:
+        raw = event_json.strip()
+    else:
+        try:
+            with open(event_file or "", "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+        except OSError as e:
+            typer.echo(f"Failed to read event file: {e}", err=True)
+            raise typer.Exit(code=1)
+
+    try:
+        event = json.loads(raw)
+    except json.JSONDecodeError as e:
+        typer.echo(f"Invalid JSON: {e}", err=True)
+        raise typer.Exit(code=2)
+
+    if not isinstance(event, dict):
+        typer.echo("Event JSON must be an object.", err=True)
+        raise typer.Exit(code=2)
+    return event
+
+
+def _parse_encrypted_payload_tag(event: dict) -> Tuple[str, bytes]:
+    encrypted_tag = _get_tag_record(event, "encrypted")
+    if not encrypted_tag or len(encrypted_tag) < 3:
+        typer.echo("Event is missing required encrypted tag.", err=True)
+        raise typer.Exit(code=2)
+    alg = encrypted_tag[1]
+    ct_b64 = encrypted_tag[2]
+    if not isinstance(alg, str) or not isinstance(ct_b64, str):
+        typer.echo("Encrypted tag must be [\"encrypted\", <alg>, <ciphertext_b64>].", err=True)
+        raise typer.Exit(code=2)
+    try:
+        payload = base64.b64decode(ct_b64, validate=True)
+    except Exception:
+        typer.echo("Encrypted tag ciphertext must be valid base64.", err=True)
+        raise typer.Exit(code=2)
+    return alg, payload
 
 
 @config_app.command("show")
@@ -731,6 +804,224 @@ def cantor(
     typer.echo(f"  cantor_number_bytes={len(combined_bytes)}")
     typer.echo(f"  encryption_key_sha256={encryption_key_hex}")
     typer.echo(f"  discovery_id_sha256_sha256={discovery_id_hex}")
+
+@app.command()
+def encrypt(
+    text: Optional[str] = typer.Option(None, "--text", help="Plaintext content to encrypt."),
+    file: Optional[str] = typer.Option(None, "--file", help="Path to plaintext file to encrypt."),
+    height: int = typer.Option(
+        ...,
+        "--height",
+        min=0,
+        help="Aligned region height used for key derivation (higher = larger discovery radius).",
+    ),
+    coord: Optional[str] = typer.Option(
+        None,
+        "--coord",
+        help="Override coordinate used for key derivation (defaults to current coord from local state).",
+    ),
+    publish_height: bool = typer.Option(
+        False,
+        "--publish-height",
+        help="Publish h tag in the encrypted event (disabled by default).",
+    ),
+    kind: int = typer.Option(33334, "--kind", help="Nostr event kind for encrypted content (spec default: 33334)."),
+) -> None:
+    """Encrypt text/file content into a location-encrypted nostr-style event."""
+    if (text is None and file is None) or (text is not None and file is not None):
+        typer.echo("Specify exactly one of --text or --file.", err=True)
+        raise typer.Exit(code=2)
+
+    state = _require_state()
+    x, y, z, _plane = _require_coord_xyz(coord)
+
+    plaintext: bytes
+    if text is not None:
+        plaintext = text.encode("utf-8")
+    else:
+        try:
+            with open(file or "", "rb") as f:
+                plaintext = f.read()
+        except OSError as e:
+            typer.echo(f"Failed to read file: {e}", err=True)
+            raise typer.Exit(code=1)
+
+    try:
+        material = derive_region_key_material_for_height(x=x, y=y, z=z, height=height, max_compute_height=height)
+    except ValueError as e:
+        typer.echo(str(e), err=True)
+        raise typer.Exit(code=2)
+
+    payload = encrypt_with_location_key(
+        plaintext,
+        location_decryption_key=material.location_decryption_key,
+        nonce=secrets.token_bytes(12),
+    )
+
+    event = make_encrypted_content_event(
+        pubkey_hex=state.pubkey_hex,
+        created_at=int(time.time()),
+        lookup_id_hex=material.lookup_id_hex,
+        algorithm="aes-256-gcm",
+        ciphertext_b64=base64.b64encode(payload).decode("ascii"),
+        height_hint=(height if publish_height else None),
+        kind=kind,
+    )
+    typer.echo(json.dumps(event, separators=(",", ":"), ensure_ascii=False))
+
+
+@app.command()
+def decrypt(
+    event_json: Optional[str] = typer.Option(None, "--event-json", help="Raw nostr event JSON object."),
+    event_file: Optional[str] = typer.Option(None, "--event-file", help="Path to file containing a nostr event JSON object."),
+    height: Optional[int] = typer.Option(
+        None,
+        "--height",
+        min=0,
+        help="Override height for key derivation. If omitted, uses h tag or scans 0..--max-height.",
+    ),
+    max_height: int = typer.Option(
+        DEFAULT_SCAN_MAX_HEIGHT,
+        "--max-height",
+        min=0,
+        help="Max height to scan when --height is omitted and event has no valid h tag.",
+    ),
+    coord: Optional[str] = typer.Option(
+        None,
+        "--coord",
+        help="Override coordinate used for key derivation (defaults to current coord from local state).",
+    ),
+) -> None:
+    """Decrypt a location-encrypted nostr event using local/current coordinate key material."""
+    event = _load_event_from_input(event_json=event_json, event_file=event_file)
+    d_tag = _get_tag(event, "d")
+    if not d_tag:
+        typer.echo("Event is missing required d tag.", err=True)
+        raise typer.Exit(code=2)
+
+    x, y, z, _plane = _require_coord_xyz(coord)
+
+    candidate_heights: List[int] = []
+    if height is not None:
+        candidate_heights = [height]
+    else:
+        h_tag = _get_tag(event, "h")
+        if h_tag is not None:
+            try:
+                h_val = int(h_tag, 10)
+                if h_val >= 0:
+                    candidate_heights.append(h_val)
+            except ValueError:
+                pass
+        candidate_heights.extend([h for h in range(0, max_height + 1) if h not in candidate_heights])
+
+    chosen_height: Optional[int] = None
+    chosen_key: Optional[bytes] = None
+    for h in candidate_heights:
+        try:
+            material = derive_region_key_material_for_height(x=x, y=y, z=z, height=h, max_compute_height=h)
+        except ValueError:
+            continue
+        if material.lookup_id_hex == d_tag:
+            chosen_height = h
+            chosen_key = material.location_decryption_key
+            break
+
+    if chosen_height is None or chosen_key is None:
+        typer.echo("No matching lookup_id found for this event at the current coordinate.", err=True)
+        raise typer.Exit(code=1)
+
+    alg, payload = _parse_encrypted_payload_tag(event)
+    if alg != "aes-256-gcm":
+        typer.echo(f"Unsupported encryption algorithm: {alg}", err=True)
+        raise typer.Exit(code=2)
+    try:
+        plaintext = decrypt_with_location_key(payload, location_decryption_key=chosen_key)
+    except Exception as e:
+        typer.echo(f"Decryption failed: {e}", err=True)
+        raise typer.Exit(code=1)
+    try:
+        decoded = plaintext.decode("utf-8")
+    except UnicodeDecodeError:
+        decoded = ""
+
+    typer.echo(f"height: {chosen_height}")
+    typer.echo(f"lookup_id: {d_tag}")
+    if decoded:
+        typer.echo(decoded)
+    else:
+        typer.echo(base64.b64encode(plaintext).decode("ascii"))
+
+
+@app.command()
+def scan(
+    min_height: int = typer.Option(1, "--min-height", min=0, help="First height to include."),
+    max_height: int = typer.Option(
+        DEFAULT_SCAN_MAX_HEIGHT,
+        "--max-height",
+        min=0,
+        help="Last height to include (inclusive).",
+    ),
+    coord: Optional[str] = typer.Option(
+        None,
+        "--coord",
+        help="Override coordinate used for key derivation (defaults to current coord from local state).",
+    ),
+    events_file: Optional[str] = typer.Option(
+        None,
+        "--events-file",
+        help="Optional JSONL file of nostr events. Use '-' to read JSONL from stdin.",
+    ),
+) -> None:
+    """Scan heights for lookup IDs and optionally match against encrypted events."""
+    if max_height < min_height:
+        typer.echo("--max-height must be >= --min-height.", err=True)
+        raise typer.Exit(code=2)
+
+    x, y, z, _plane = _require_coord_xyz(coord)
+    materials = derive_region_key_material_scan(
+        x=x,
+        y=y,
+        z=z,
+        min_height=min_height,
+        max_height=max_height,
+        max_compute_height=max_height,
+    )
+
+    events: List[dict] = []
+    if events_file:
+        raw_lines: List[str] = []
+        if events_file == "-":
+            raw = typer.get_text_stream("stdin").read()
+            raw_lines = [ln for ln in raw.splitlines() if ln.strip()]
+        else:
+            try:
+                with open(events_file, "r", encoding="utf-8") as f:
+                    raw_lines = [ln for ln in f.read().splitlines() if ln.strip()]
+            except OSError as e:
+                typer.echo(f"Failed to read events file: {e}", err=True)
+                raise typer.Exit(code=1)
+
+        for ln in raw_lines:
+            try:
+                ev = json.loads(ln)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(ev, dict):
+                events.append(ev)
+
+    index: dict[str, List[dict]] = {}
+    for ev in events:
+        d = _get_tag(ev, "d")
+        if not d:
+            continue
+        index.setdefault(d, []).append(ev)
+
+    for m in materials:
+        matches = index.get(m.lookup_id_hex, [])
+        typer.echo(f"h={m.height} d={m.lookup_id_hex} matches={len(matches)}")
+        for ev in matches:
+            typer.echo(f"  id={ev.get('id','')} pubkey={ev.get('pubkey','')} kind={ev.get('kind','')}")
 
 
 @app.command()

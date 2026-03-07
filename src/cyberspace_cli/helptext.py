@@ -67,6 +67,12 @@ Commands (high-level)
   (or: cyberspace gps --coord <coord256>  # derive lat/lon/alt)
 - cyberspace cantor (--from-xyz x,y,z --to-xyz x,y,z | --from-coord <hex> --to-coord <hex>)
 - cyberspace history [--limit N] [--json]
+- cyberspace encrypt (--text <txt> | --file <path>) --height <h> [--coord <coord256>] [--publish-height] [--kind 33334]
+  Emits kind=33334 with tags: d, encrypted(aes-256-gcm,<base64 nonce|ciphertext|tag>), version=2; h is only included with --publish-height.
+- cyberspace decrypt (--event-json '<json>' | --event-file <path>) [--height <h>] [--coord <coord256>]
+  Decrypts a location-encrypted event using your current coord (or overridden coord).
+- cyberspace scan [--min-height N] [--max-height N] [--coord <coord256>] [--events-file <jsonl|->]
+  Prints lookup IDs across heights and optionally matches events by d tag.
 - cyberspace chain list
 - cyberspace chain use <label>
 - cyberspace chain status
