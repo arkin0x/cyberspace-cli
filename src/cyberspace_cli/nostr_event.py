@@ -124,7 +124,8 @@ def make_encrypted_content_event(
     ciphertext_b64: str,
     version: str = "2",
     height_hint: int | None = None,
-    kind: int = 33334,
+    content: str = "",
+    kind: int = 33330,
 ) -> Dict[str, Any]:
     tags: List[List[str]] = [
         ["d", lookup_id_hex],
@@ -133,7 +134,7 @@ def make_encrypted_content_event(
     ]
     if height_hint is not None:
         tags.append(["h", str(int(height_hint))])
-    return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
+    return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content=content)
 
 
 def make_hop_event(

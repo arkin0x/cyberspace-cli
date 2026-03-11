@@ -1021,7 +1021,12 @@ def encrypt(
         "--publish-height",
         help="Publish h tag in the encrypted event (disabled by default).",
     ),
-    kind: int = typer.Option(33334, "--kind", help="Nostr event kind for encrypted content (spec default: 33334)."),
+    hint: Optional[str] = typer.Option(
+        None,
+        "--hint",
+        help="Optional plaintext hint stored in the event content field.",
+    ),
+    kind: int = typer.Option(33330, "--kind", help="Nostr event kind for encrypted content (default: 33330)."),
 ) -> None:
     """Encrypt text/file content into a location-encrypted nostr-style event."""
     if (text is None and file is None) or (text is not None and file is not None):
@@ -1061,6 +1066,7 @@ def encrypt(
         algorithm="aes-256-gcm",
         ciphertext_b64=base64.b64encode(payload).decode("ascii"),
         height_hint=(height if publish_height else None),
+        content=(hint or ""),
         kind=kind,
     )
     typer.echo(json.dumps(event, separators=(",", ":"), ensure_ascii=False))

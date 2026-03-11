@@ -4,9 +4,15 @@ A CLI client for navigating **Cyberspace v2**.
 This repo is intentionally separate from the current research/prototype code under `../v2/`.
 
 ## What this CLI does (today)
-- Creates/loads an identity (Nostr Schnorr keypair)
-- Creates and manages a **local movement chain**: a labeled series of **Nostr-style JSON events**
+- Creates/loads an identity (Nostr Schnorr keypair) and spawn event
+- Creates and manages **local movement chains** (multiple labeled chains, status/history, JSON export)
 - Computes and stores **v2 movement proofs** (per-axis Cantor tree) in hop events
+- Supports movement workflows: `move --by`, `move --to`, `move --toward`, plane switching, and target-driven movement
+- Supports DECK-0001 hyperjump tooling: nearest/show/to/next/prev queries plus hyperjump movement-event creation
+- Includes coordinate and proof tooling: `whereami`, `sector`, `gps` (both directions), `cantor`, `bench`
+- Supports location-encrypted content workflows: `encrypt`, `decrypt`, and `scan`
+- Supports persisted local config and target management (`config`, `target` commands)
+- Includes optional visual tools (`3d`, `lcaplot`) with extra dependencies
 
 ## What this CLI does NOT do (yet)
 - Publish events to relays
