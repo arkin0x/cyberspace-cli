@@ -53,13 +53,21 @@ class TestEncryptDecryptScanCLI(unittest.TestCase):
 
                 event_json = enc.output.strip().splitlines()[-1].strip()
                 event = json.loads(event_json)
-                self.assertEqual(event.get("kind"), 33334)
+                self.assertEqual(event.get("kind"), 33330)
                 self.assertEqual(event.get("content"), "")
                 encrypted_tag = _tag_value(event, "encrypted")
                 self.assertIsNotNone(encrypted_tag)
                 self.assertEqual(encrypted_tag[1], "aes-256-gcm")
                 self.assertEqual(_tag_value(event, "version")[1], "2")
                 self.assertIsNone(_tag_value(event, "h"))
+
+                enc_hint = runner.invoke(
+                    app,
+                    ["encrypt", "--text", message, "--height", "4", "--hint", "decrypt at own risk"],
+                )
+                self.assertEqual(enc_hint.exit_code, 0, msg=enc_hint.output)
+                event_hint = json.loads(enc_hint.output.strip().splitlines()[-1].strip())
+                self.assertEqual(event_hint.get("content"), "decrypt at own risk")
 
                 dec = runner.invoke(app, ["decrypt", "--event-json", event_json])
                 self.assertEqual(dec.exit_code, 0, msg=dec.output)
