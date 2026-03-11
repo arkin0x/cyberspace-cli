@@ -2,17 +2,24 @@ from __future__ import annotations
 import base64
 import json
 import secrets
+import subprocess
 
 import time
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import typer
+from typer.models import OptionInfo
 
 from cyberspace_cli import chains
 from cyberspace_cli import targets
 from cyberspace_cli.config import load_config, save_config
 from cyberspace_cli.helptext import HELP_TEXT
-from cyberspace_cli.nostr_event import make_encrypted_content_event, make_hop_event, make_spawn_event
+from cyberspace_cli.nostr_event import (
+    make_encrypted_content_event,
+    make_hop_event,
+    make_hyperjump_event,
+    make_spawn_event,
+)
 from cyberspace_cli.parsing import normalize_hex_32, parse_destination_xyz_or_coord
 from cyberspace_cli.toward import choose_next_axis_value_toward
 from cyberspace_cli.nostr_keys import (
@@ -39,9 +46,15 @@ app = typer.Typer(no_args_is_help=True)
 chain_app = typer.Typer(no_args_is_help=True)
 config_app = typer.Typer(no_args_is_help=True)
 target_app = typer.Typer(no_args_is_help=True)
+hyperjump_app = typer.Typer(no_args_is_help=True)
 app.add_typer(chain_app, name="chain", help="Manage local movement chains.")
 app.add_typer(config_app, name="config", help="Show/set persisted CLI defaults.")
 app.add_typer(target_app, name="target", help="Manage saved movement targets.")
+app.add_typer(
+    hyperjump_app,
+    name="hyperjump",
+    help="Inspect hyperjumps from anywhere (show/nearest); creating hyperjump actions (to/next/prev) requires being on the hyperjump system.",
+)
 
 
 def _plane_label(plane: int) -> str:
@@ -160,6 +173,189 @@ def _parse_encrypted_payload_tag(event: dict) -> Tuple[str, bytes]:
         typer.echo("Encrypted tag ciphertext must be valid base64.", err=True)
         raise typer.Exit(code=2)
     return alg, payload
+
+
+DEFAULT_HYPERJUMP_RELAY = "wss://cyberspace.nostr1.com"
+HYPERJUMP_KIND = 321
+SECTOR_BITS = 30
+
+
+def _nak_req_events(
+    *,
+    relay: str,
+    kind: int,
+    tags: Dict[str, List[str]],
+    limit: int,
+    timeout_seconds: int = 20,
+    verbose: bool = False,
+) -> List[dict]:
+    cmd = ["nak", "req", "-q", "-k", str(kind), "-l", str(limit)]
+    req_filter: Dict[str, object] = {"kinds": [kind], "limit": limit}
+    for tag_name, values in tags.items():
+        req_filter[f"#{tag_name}"] = values
+        for v in values:
+            cmd.extend(["--tag", f"{tag_name}={v}"])
+    cmd.append(relay)
+    if verbose:
+        typer.echo("req_filter:")
+        typer.echo(json.dumps(req_filter, separators=(",", ":"), ensure_ascii=False))
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout_seconds,
+        )
+    except FileNotFoundError:
+        typer.echo("`nak` is not installed or not available in PATH.", err=True)
+        raise typer.Exit(code=1)
+    except OSError as e:
+        typer.echo(f"Nostr query failed to start: {e}", err=True)
+        raise typer.Exit(code=1)
+    except subprocess.TimeoutExpired:
+        typer.echo(f"Nostr query timed out after {timeout_seconds}s.", err=True)
+        raise typer.Exit(code=1)
+    if verbose:
+        typer.echo(f"nak_exit_code: {proc.returncode}")
+        typer.echo("nak_stdout:")
+        stdout = proc.stdout or ""
+        if stdout.strip():
+            for ln in stdout.rstrip("\n").splitlines():
+                typer.echo(ln)
+        else:
+            typer.echo("(empty)")
+        typer.echo("nak_stderr:")
+        stderr = proc.stderr or ""
+        if stderr.strip():
+            for ln in stderr.rstrip("\n").splitlines():
+                typer.echo(ln)
+        else:
+            typer.echo("(empty)")
+
+    if proc.returncode != 0:
+        stderr = (proc.stderr or "").strip()
+        if stderr:
+            typer.echo(f"Nostr query failed: {stderr}", err=True)
+        else:
+            typer.echo("Nostr query failed.", err=True)
+        raise typer.Exit(code=1)
+
+    out: List[dict] = []
+    for line in (proc.stdout or "").splitlines():
+        s = line.strip()
+        if not s or not s.startswith("{"):
+            continue
+        try:
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+    return out
+
+
+def _axis_value_range(center: int, radius: int) -> List[str]:
+    lo = max(0, center - radius)
+    hi = center + radius
+    return [str(v) for v in range(lo, hi + 1)]
+
+
+def _direction_hint(current: int, target: int, axis: str) -> str:
+    if target > current:
+        return f"{axis}+ ({target - current})"
+    if target < current:
+        return f"{axis}- ({current - target})"
+    return f"{axis}= (0)"
+
+
+def _hyperjump_block_height_from_event(event: dict) -> Optional[int]:
+    if _get_tag(event, "A") != "hyperjump":
+        return None
+    b_tag = _get_tag(event, "B")
+    c_tag = _get_tag(event, "C")
+    if not b_tag or not c_tag:
+        return None
+    try:
+        normalize_hex_32(c_tag)
+        h = int(str(b_tag), 10)
+    except (ValueError, TypeError):
+        return None
+    if h < 0:
+        return None
+    return h
+
+
+def _require_hyperjump_system_state() -> Tuple[CyberspaceState, int]:
+    state = _require_state()
+    label = _require_active_chain_label(state)
+    events = chains.read_events(label)
+    if not events:
+        typer.echo(f"Chain is empty: {label}", err=True)
+        raise typer.Exit(code=1)
+    current_height = _hyperjump_block_height_from_event(events[-1])
+    if current_height is None:
+        typer.echo(
+            "You are not currently on the hyperjump system. Perform a valid hyperjump first.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    return state, current_height
+
+
+def _query_hyperjump_anchor_for_height(
+    *,
+    block_height: int,
+    relay: str,
+    limit: int,
+    verbose: bool = False,
+) -> Optional[Tuple[str, dict, Tuple[int, int, int, int]]]:
+    if block_height < 0:
+        return None
+    events = _nak_req_events(
+        relay=relay,
+        kind=HYPERJUMP_KIND,
+        tags={"B": [str(block_height)]},
+        limit=limit,
+        verbose=verbose,
+    )
+    best: Optional[Tuple[int, str, str, dict]] = None
+    for ev in events:
+        b_tag = _get_tag(ev, "B")
+        c_tag = _get_tag(ev, "C")
+        if not b_tag or not c_tag:
+            continue
+        try:
+            b_val = int(str(b_tag), 10)
+            c_norm = normalize_hex_32(c_tag)
+        except (ValueError, TypeError):
+            continue
+        if b_val != block_height:
+            continue
+        created_at = int(ev.get("created_at", 0))
+        event_id = str(ev.get("id", ""))
+        candidate = (created_at, event_id, c_norm, ev)
+        if best is None or candidate[:2] > best[:2]:
+            best = candidate
+    if best is None:
+        return None
+    coord_hex = best[2]
+    coord_int = int.from_bytes(bytes.fromhex(coord_hex), "big")
+    x, y, z, plane = coord_to_xyz(coord_int)
+    return coord_hex, best[3], (x, y, z, plane)
+
+
+def _print_hyperjump_anchor(*, block_height: int, coord_hex: str, event: dict, xyzp: Tuple[int, int, int, int]) -> None:
+    x, y, z, plane = xyzp
+    typer.echo(f"hyperjump_block_height={block_height}")
+    typer.echo(f"coord: 0x{coord_hex}")
+    typer.echo(f"x={x}")
+    typer.echo(f"y={y}")
+    typer.echo(f"z={z}")
+    typer.echo(f"plane={plane} {_plane_label(plane)}")
+    event_id = str(event.get("id", ""))
+    if event_id:
+        typer.echo(f"event_id={event_id}")
 
 
 @config_app.command("show")
@@ -1023,6 +1219,368 @@ def scan(
         for ev in matches:
             typer.echo(f"  id={ev.get('id','')} pubkey={ev.get('pubkey','')} kind={ev.get('kind','')}")
 
+@hyperjump_app.command("show")
+def hyperjump_show(
+    blockheight: int = typer.Argument(
+        ...,
+        min=0,
+        help="Hyperjump block height to inspect.",
+    ),
+    relay: str = typer.Option(
+        DEFAULT_HYPERJUMP_RELAY,
+        "--relay",
+        help="Relay URL for querying hyperjump anchor events (kind=321).",
+    ),
+    limit: int = typer.Option(
+        25,
+        "--limit",
+        min=1,
+        help="Maximum number of matching events to ask from the relay.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print the Nostr REQ filter and raw nak output for debugging.",
+    ),
+) -> None:
+    """Show a hyperjump anchor for a specific block height."""
+    resolved = _query_hyperjump_anchor_for_height(
+        block_height=blockheight,
+        relay=relay,
+        limit=limit,
+        verbose=verbose,
+    )
+    if resolved is None:
+        typer.echo(f"No hyperjump found for block height {blockheight}.", err=True)
+        raise typer.Exit(code=1)
+    coord_hex, ev, xyzp = resolved
+    _print_hyperjump_anchor(block_height=blockheight, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+
+@hyperjump_app.command("to")
+def hyperjump_to(
+    blockheight: int = typer.Argument(
+        ...,
+        min=0,
+        help="Target hyperjump block height.",
+    ),
+    view: bool = typer.Option(
+        False,
+        "--view",
+        help="Show the target hyperjump without creating a movement action.",
+    ),
+    relay: str = typer.Option(
+        DEFAULT_HYPERJUMP_RELAY,
+        "--relay",
+        help="Relay URL for querying hyperjump anchor events (kind=321).",
+    ),
+    limit: int = typer.Option(
+        25,
+        "--limit",
+        min=1,
+        help="Maximum number of matching events to ask from the relay.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print the Nostr REQ filter and raw nak output for debugging.",
+    ),
+    hyperjump_query_limit: int = typer.Option(
+        25,
+        "--hyperjump-query-limit",
+        min=1,
+        help="Validation query limit used when publishing the hyperjump movement event.",
+    ),
+) -> None:
+    """Move to (or view) a specific hyperjump block height."""
+    resolved = _query_hyperjump_anchor_for_height(
+        block_height=blockheight,
+        relay=relay,
+        limit=limit,
+        verbose=verbose,
+    )
+    if resolved is None:
+        typer.echo(f"No hyperjump found for block height {blockheight}.", err=True)
+        raise typer.Exit(code=1)
+
+    coord_hex, ev, xyzp = resolved
+    if view:
+        _print_hyperjump_anchor(block_height=blockheight, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+        return
+
+    # Action-creating commands are restricted to the hyperjump system.
+    _state, _current_height = _require_hyperjump_system_state()
+    move(
+        to=f"0x{coord_hex}",
+        by=None,
+        toward=None,
+        max_lca_height=None,
+        max_hops=0,
+        hyperjump=True,
+        hyperjump_relay=relay,
+        hyperjump_query_limit=hyperjump_query_limit,
+        exit_hyperjump=False,
+    )
+    _print_hyperjump_anchor(block_height=blockheight, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+
+
+@hyperjump_app.command("next")
+def hyperjump_next(
+    view: bool = typer.Option(
+        False,
+        "--view",
+        help="Show the next hyperjump without creating a movement action.",
+    ),
+    relay: str = typer.Option(
+        DEFAULT_HYPERJUMP_RELAY,
+        "--relay",
+        help="Relay URL for querying hyperjump anchor events (kind=321).",
+    ),
+    limit: int = typer.Option(
+        25,
+        "--limit",
+        min=1,
+        help="Maximum number of matching events to ask from the relay.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print the Nostr REQ filter and raw nak output for debugging.",
+    ),
+    hyperjump_query_limit: int = typer.Option(
+        25,
+        "--hyperjump-query-limit",
+        min=1,
+        help="Validation query limit used when publishing the hyperjump movement event.",
+    ),
+) -> None:
+    """Move to (or view) the next hyperjump block."""
+    _state, current_block_height = _require_hyperjump_system_state()
+    target_block_height = current_block_height + 1
+    resolved = _query_hyperjump_anchor_for_height(
+        block_height=target_block_height,
+        relay=relay,
+        limit=limit,
+        verbose=verbose,
+    )
+    if resolved is None:
+        typer.echo(f"No hyperjump found for block height {target_block_height}.", err=True)
+        raise typer.Exit(code=1)
+
+    coord_hex, ev, xyzp = resolved
+    if view:
+        _print_hyperjump_anchor(block_height=target_block_height, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+        return
+
+    move(
+        to=f"0x{coord_hex}",
+        by=None,
+        toward=None,
+        max_lca_height=None,
+        max_hops=0,
+        hyperjump=True,
+        hyperjump_relay=relay,
+        hyperjump_query_limit=hyperjump_query_limit,
+        exit_hyperjump=False,
+    )
+    _print_hyperjump_anchor(block_height=target_block_height, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+
+
+@hyperjump_app.command("prev")
+def hyperjump_prev(
+    view: bool = typer.Option(
+        False,
+        "--view",
+        help="Show the previous hyperjump without creating a movement action.",
+    ),
+    relay: str = typer.Option(
+        DEFAULT_HYPERJUMP_RELAY,
+        "--relay",
+        help="Relay URL for querying hyperjump anchor events (kind=321).",
+    ),
+    limit: int = typer.Option(
+        25,
+        "--limit",
+        min=1,
+        help="Maximum number of matching events to ask from the relay.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print the Nostr REQ filter and raw nak output for debugging.",
+    ),
+    hyperjump_query_limit: int = typer.Option(
+        25,
+        "--hyperjump-query-limit",
+        min=1,
+        help="Validation query limit used when publishing the hyperjump movement event.",
+    ),
+) -> None:
+    """Move to (or view) the previous hyperjump block."""
+    _state, current_block_height = _require_hyperjump_system_state()
+    target_block_height = current_block_height - 1
+    if target_block_height < 0:
+        typer.echo("No previous hyperjump exists before block height 0.", err=True)
+        raise typer.Exit(code=2)
+
+    resolved = _query_hyperjump_anchor_for_height(
+        block_height=target_block_height,
+        relay=relay,
+        limit=limit,
+        verbose=verbose,
+    )
+    if resolved is None:
+        typer.echo(f"No hyperjump found for block height {target_block_height}.", err=True)
+        raise typer.Exit(code=1)
+
+    coord_hex, ev, xyzp = resolved
+    if view:
+        _print_hyperjump_anchor(block_height=target_block_height, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+        return
+
+    move(
+        to=f"0x{coord_hex}",
+        by=None,
+        toward=None,
+        max_lca_height=None,
+        max_hops=0,
+        hyperjump=True,
+        hyperjump_relay=relay,
+        hyperjump_query_limit=hyperjump_query_limit,
+        exit_hyperjump=False,
+    )
+    _print_hyperjump_anchor(block_height=target_block_height, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+
+
+@hyperjump_app.command("nearest")
+def hyperjump_nearest(
+    relay: str = typer.Option(
+        DEFAULT_HYPERJUMP_RELAY,
+        "--relay",
+        help="Relay URL for querying hyperjump anchor events (kind=321).",
+    ),
+    radius: int = typer.Option(
+        10,
+        "--radius",
+        min=0,
+        help="Sector scan radius around current sector for X/Y/Z (default: ±10).",
+    ),
+    limit: int = typer.Option(
+        2000,
+        "--limit",
+        min=1,
+        help="Maximum number of matching events to ask from the relay.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print the Nostr REQ filter and raw nak output for debugging.",
+    ),
+    coord: Optional[str] = typer.Option(
+        None,
+        "--coord",
+        help="Coordinate override used to calculate nearest hyperjumps (defaults to current coord).",
+    ),
+) -> None:
+    """Find nearby hyperjumps and print directions from the current hyperjump system position."""
+    state = load_state()
+    default_plane = 0
+    state_coord_int = None
+    if state is not None:
+        state_coord_int = int.from_bytes(bytes.fromhex(state.coord_hex), "big")
+        _, _, _, default_plane = coord_to_xyz(state_coord_int)
+
+    if coord is None:
+        if state is None or state_coord_int is None:
+            typer.echo("No local state found. Run `cyberspace spawn` first or provide --coord.", err=True)
+            raise typer.Exit(code=1)
+        cur_coord_hex = state.coord_hex
+        cur_coord_int = state_coord_int
+        cx, cy, cz, cplane = coord_to_xyz(cur_coord_int)
+    else:
+        try:
+            parsed = parse_destination_xyz_or_coord(coord, default_plane=default_plane)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
+        cx, cy, cz, cplane = parsed.x, parsed.y, parsed.z, parsed.plane
+        cur_coord_hex = _coord_hex_from_xyz(cx, cy, cz, cplane)
+    sx = cx >> SECTOR_BITS
+    sy = cy >> SECTOR_BITS
+    sz = cz >> SECTOR_BITS
+
+    events = _nak_req_events(
+        relay=relay,
+        kind=HYPERJUMP_KIND,
+        tags={
+            "X": _axis_value_range(sx, radius),
+            "Y": _axis_value_range(sy, radius),
+            "Z": _axis_value_range(sz, radius),
+        },
+        limit=limit,
+        verbose=verbose,
+    )
+
+    by_coord: Dict[str, dict] = {}
+    for ev in events:
+        c = _get_tag(ev, "C")
+        if not c:
+            continue
+        try:
+            c_norm = normalize_hex_32(c)
+        except ValueError:
+            continue
+        prior = by_coord.get(c_norm)
+        if prior is None or int(ev.get("created_at", 0)) > int(prior.get("created_at", 0)):
+            by_coord[c_norm] = ev
+
+    if not by_coord:
+        typer.echo("No nearby hyperjumps found.")
+        return
+
+    ranked: List[Tuple[int, int, str, dict, Tuple[int, int, int, int]]] = []
+    for coord_hex, ev in by_coord.items():
+        coord_int = int.from_bytes(bytes.fromhex(coord_hex), "big")
+        x, y, z, plane = coord_to_xyz(coord_int)
+        hsx = x >> SECTOR_BITS
+        hsy = y >> SECTOR_BITS
+        hsz = z >> SECTOR_BITS
+        sector_dist = abs(hsx - sx) + abs(hsy - sy) + abs(hsz - sz)
+        axis_dist = abs(x - cx) + abs(y - cy) + abs(z - cz)
+        ranked.append((sector_dist, axis_dist, coord_hex, ev, (x, y, z, plane)))
+
+    ranked.sort(key=lambda it: (it[0], it[1], it[2]))
+    typer.echo(f"current: 0x{cur_coord_hex}")
+    typer.echo(f"x={cx}")
+    typer.echo(f"y={cy}")
+    typer.echo(f"z={cz}")
+    typer.echo(f"plane={cplane} {_plane_label(cplane)}")
+    typer.echo(f"nearby_hyperjumps: {len(ranked)}")
+
+    for i, (sector_dist, _axis_dist, coord_hex, ev, (x, y, z, plane)) in enumerate(ranked, start=1):
+        hsx = x >> SECTOR_BITS
+        hsy = y >> SECTOR_BITS
+        hsz = z >> SECTOR_BITS
+        b_tag = _get_tag(ev, "B") or "?"
+        event_id = str(ev.get("id", ""))
+        dir_hint = " ".join([_direction_hint(cx, x, "x"), _direction_hint(cy, y, "y"), _direction_hint(cz, z, "z")])
+        typer.echo(f"{i}. id={event_id}")
+        typer.echo(f"coord=0x{coord_hex}")
+        typer.echo(f"B={b_tag}")
+        typer.echo(f"x={x}")
+        typer.echo(f"y={y}")
+        typer.echo(f"z={z}")
+        typer.echo(f"plane={plane} {_plane_label(plane)}")
+        typer.echo(f"sector_x={hsx}")
+        typer.echo(f"sector_y={hsy}")
+        typer.echo(f"sector_z={hsz}")
+        typer.echo(f"sector_distance={sector_dist}")
+        typer.echo(f"direction={dir_hint}")
+        typer.echo(f"suggested_move=cyberspace move --to {x},{y},{z},{plane}")
+
 
 @app.command()
 def move(
@@ -1051,8 +1609,37 @@ def move(
         "--max-hops",
         help="Stop after this many hops when using --toward (0 means until reached).",
     ),
+    hyperjump: bool = typer.Option(
+        False,
+        "--hyperjump",
+        help="Publish a hyperjump movement event (A=hyperjump) after validating destination as a known hyperjump anchor.",
+    ),
+    hyperjump_relay: str = typer.Option(
+        DEFAULT_HYPERJUMP_RELAY,
+        "--hyperjump-relay",
+        help="Relay URL used to validate hyperjump destinations.",
+    ),
+    hyperjump_query_limit: int = typer.Option(
+        25,
+        "--hyperjump-query-limit",
+        min=1,
+        help="Max anchor events to query when validating a hyperjump destination.",
+    ),
+    exit_hyperjump: bool = typer.Option(
+        False,
+        "--exit-hyperjump",
+        help="Allow a normal hop while on the hyperjump system (explicitly exits the hyperjump flow).",
+    ),
 ) -> None:
-    """Move locally by appending a hop event to the active chain."""
+    """Move locally by appending a hop or hyperjump event to the active chain."""
+    if isinstance(hyperjump, OptionInfo):
+        hyperjump = False
+    if isinstance(hyperjump_relay, OptionInfo):
+        hyperjump_relay = DEFAULT_HYPERJUMP_RELAY
+    if isinstance(hyperjump_query_limit, OptionInfo):
+        hyperjump_query_limit = 25
+    if isinstance(exit_hyperjump, OptionInfo):
+        exit_hyperjump = False
     state = _require_state()
     label = _require_active_chain_label(state)
 
@@ -1085,11 +1672,33 @@ def move(
     if sum(v is not None for v in (to, by, toward)) != 1:
         typer.echo("Specify exactly one of --to, --by, or --toward.", err=True)
         raise typer.Exit(code=2)
+    if hyperjump and by is not None:
+        typer.echo("--hyperjump is only supported with --to or --toward destinations.", err=True)
+        raise typer.Exit(code=2)
+    if hyperjump and exit_hyperjump:
+        typer.echo("--exit-hyperjump cannot be combined with --hyperjump.", err=True)
+        raise typer.Exit(code=2)
+
+    in_hyperjump_system = _hyperjump_block_height_from_event(events[-1]) is not None
+    if in_hyperjump_system and not hyperjump and not exit_hyperjump:
+        typer.echo(
+            "You are on the hyperjump system. Normal move commands are blocked unless you pass --exit-hyperjump.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
 
     def _plane_name(p: int) -> str:
         return "dataspace" if p == 0 else "ideaspace"
 
-    def _do_single_hop(*, x2: int, y2: int, z2: int, plane2: int, max_compute_height: int):
+    def _do_single_hop(
+        *,
+        x2: int,
+        y2: int,
+        z2: int,
+        plane2: int,
+        max_compute_height: int,
+        hyperjump_to_height: Optional[str] = None,
+    ):
         nonlocal x1, y1, z1, plane1, prev_event_id
 
         if plane2 not in (0, 1):
@@ -1105,62 +1714,103 @@ def move(
             )
             raise typer.Exit(code=2)
 
-        # Guard against absurd hops: LCA height drives O(2^h) compute.
-        hx = find_lca_height(x1, x2)
-        hy = find_lca_height(y1, y2)
-        hz = find_lca_height(z1, z2)
-        if max(hx, hy, hz) > max_compute_height:
-            typer.echo(
-                "Move is too large for a single hop. "
-                f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
-                f"limit={max_compute_height}. "
-                "Use smaller hops (or raise --max-lca-height if you really intend to do an expensive hop).",
-                err=True,
-            )
-            raise typer.Exit(code=2)
 
         coord_hex = _coord_hex_from_xyz(x2, y2, z2, plane2)
+        proof = None
 
-        try:
-            proof = compute_hop_proof(
-                x1,
-                y1,
-                z1,
-                x2,
-                y2,
-                z2,
-                plane=plane2,
-                previous_event_id_hex=prev_event_id,
-                max_compute_height=max_compute_height,
-            )
-        except ValueError as e:
-            typer.echo(f"Failed to compute movement proof: {e}", err=True)
-            raise typer.Exit(code=2)
+        if hyperjump_to_height is None:
+            # Guard against absurd hops: LCA height drives O(2^h) compute.
+            hx = find_lca_height(x1, x2)
+            hy = find_lca_height(y1, y2)
+            hz = find_lca_height(z1, z2)
+            if max(hx, hy, hz) > max_compute_height:
+                typer.echo(
+                    "Move is too large for a single hop. "
+                    f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
+                    f"limit={max_compute_height}. "
+                    "Use smaller hops (or raise --max-lca-height if you really intend to do an expensive hop).",
+                    err=True,
+                )
+                raise typer.Exit(code=2)
+
+            try:
+                proof = compute_hop_proof(
+                    x1,
+                    y1,
+                    z1,
+                    x2,
+                    y2,
+                    z2,
+                    plane=plane2,
+                    previous_event_id_hex=prev_event_id,
+                    max_compute_height=max_compute_height,
+                )
+            except ValueError as e:
+                typer.echo(f"Failed to compute movement proof: {e}", err=True)
+                raise typer.Exit(code=2)
 
         created_at = int(time.time())
-        hop_event = make_hop_event(
-            pubkey_hex=state.pubkey_hex,
-            created_at=created_at,
-            genesis_event_id=genesis_id,
-            previous_event_id=prev_event_id,
-            prev_coord_hex=state.coord_hex,
-            coord_hex=coord_hex,
-            proof_hash_hex=proof.proof_hash,
-        )
-        chains.append_event(label, hop_event)
+        if hyperjump_to_height is None:
+            movement_event = make_hop_event(
+                pubkey_hex=state.pubkey_hex,
+                created_at=created_at,
+                genesis_event_id=genesis_id,
+                previous_event_id=prev_event_id,
+                prev_coord_hex=state.coord_hex,
+                coord_hex=coord_hex,
+                proof_hash_hex=proof.proof_hash,
+            )
+        else:
+            movement_event = make_hyperjump_event(
+                pubkey_hex=state.pubkey_hex,
+                created_at=created_at,
+                genesis_event_id=genesis_id,
+                previous_event_id=prev_event_id,
+                prev_coord_hex=state.coord_hex,
+                coord_hex=coord_hex,
+                to_height=hyperjump_to_height,
+            )
+        chains.append_event(label, movement_event)
 
         state.coord_hex = coord_hex
         save_state(state)
 
-        prev_event_id = hop_event["id"]
+        prev_event_id = movement_event["id"]
         x1, y1, z1, plane1 = x2, y2, z2, plane2
 
         typer.echo(f"Moved. chain={label} len={chains.chain_length(label)}")
         typer.echo(f"coord: 0x{coord_hex}")
-        typer.echo(f"proof: {proof.proof_hash}")
-        typer.echo(f"terrain_k: {proof.terrain_k}")
+        if proof is not None:
+            typer.echo(f"proof: {proof.proof_hash}")
+            typer.echo(f"terrain_k: {proof.terrain_k}")
+        else:
+            typer.echo(f"action: hyperjump")
+            typer.echo(f"B: {hyperjump_to_height}")
 
         return proof
+
+    def _resolve_hyperjump_height_for_destination(*, x: int, y: int, z: int, plane: int) -> Optional[str]:
+        if not hyperjump:
+            return None
+        dest_coord_hex = _coord_hex_from_xyz(x, y, z, plane)
+        anchors = _nak_req_events(
+            relay=hyperjump_relay,
+            kind=HYPERJUMP_KIND,
+            tags={"C": [dest_coord_hex]},
+            limit=hyperjump_query_limit,
+        )
+        if not anchors:
+            typer.echo(
+                f"Destination is not a known hyperjump coordinate on relay {hyperjump_relay}: 0x{dest_coord_hex}",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        anchor = anchors[0]
+        b_tag = _get_tag(anchor, "B")
+        if not b_tag:
+            typer.echo("Matched hyperjump anchor event is missing required B tag.", err=True)
+            raise typer.Exit(code=2)
+        return b_tag
 
     if toward is not None:
         try:
@@ -1169,6 +1819,12 @@ def move(
             raise typer.BadParameter(str(e)) from e
 
         tx, ty, tz, target_plane = target.x, target.y, target.z, target.plane
+        hyperjump_to_height = _resolve_hyperjump_height_for_destination(
+            x=tx,
+            y=ty,
+            z=tz,
+            plane=target_plane,
+        )
 
         hops = 0
         try:
@@ -1186,12 +1842,14 @@ def move(
 
                 # If we've reached the target xyz but we're in the wrong plane, the last hop is a plane switch.
                 if (x1, y1, z1) == (tx, ty, tz) and plane1 != target_plane:
+                    final_hyperjump = hyperjump_to_height is not None
                     _do_single_hop(
                         x2=x1,
                         y2=y1,
                         z2=z1,
                         plane2=target_plane,
                         max_compute_height=effective_max_lca_height,
+                        hyperjump_to_height=hyperjump_to_height if final_hyperjump else None,
                     )
                     hops += 1
 
@@ -1247,7 +1905,17 @@ def move(
                     )
 
                 # Intermediate hops can be in either plane; we keep the current plane until we need to switch.
-                hop_proof = _do_single_hop(x2=x2, y2=y2, z2=z2, plane2=plane1, max_compute_height=hop_limit)
+                final_hyperjump = bool(
+                    hyperjump_to_height is not None and (x2, y2, z2, plane1) == (tx, ty, tz, target_plane)
+                )
+                hop_proof = _do_single_hop(
+                    x2=x2,
+                    y2=y2,
+                    z2=z2,
+                    plane2=plane1,
+                    max_compute_height=hop_limit,
+                    hyperjump_to_height=hyperjump_to_height if final_hyperjump else None,
+                )
                 hops += 1
 
                 typer.echo(f"hop: {hops}")
@@ -1255,8 +1923,9 @@ def move(
                 typer.echo(f"y={y1} remaining={ty - y1}")
                 typer.echo(f"z={z1} remaining={tz - z1}")
                 typer.echo(f"plane={plane1} {_plane_name(plane1)}")
-                typer.echo(f"lca_height: X={hx} Y={hy} Z={hz} limit={hop_limit}")
-                typer.echo(f"terrain_k: {hop_proof.terrain_k}")
+                if hop_proof is not None:
+                    typer.echo(f"lca_height: X={hx} Y={hy} Z={hz} limit={hop_limit}")
+                    typer.echo(f"terrain_k: {hop_proof.terrain_k}")
         except KeyboardInterrupt:
             typer.echo(f"Interrupted after hops={hops}.", err=True)
             typer.echo(f"coord: 0x{state.coord_hex}")
@@ -1267,6 +1936,12 @@ def move(
             dest = parse_destination_xyz_or_coord(to, default_plane=plane1)
         except ValueError as e:
             raise typer.BadParameter(str(e)) from e
+        hyperjump_to_height = _resolve_hyperjump_height_for_destination(
+            x=dest.x,
+            y=dest.y,
+            z=dest.z,
+            plane=dest.plane,
+        )
 
         _do_single_hop(
             x2=dest.x,
@@ -1274,6 +1949,7 @@ def move(
             z2=dest.z,
             plane2=dest.plane,
             max_compute_height=effective_max_lca_height,
+            hyperjump_to_height=hyperjump_to_height,
         )
         return
 

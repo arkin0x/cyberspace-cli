@@ -53,11 +53,24 @@ Commands (high-level)
   Set the current movement target (stored locally in state.json).
 - cyberspace target list
   List targets and show which is current.
-- cyberspace move (--by dx,dy,dz | --by 0,0,0,plane | --to x,y,z[,plane] | --to 0x<coord256> | --toward <dest>) [--max-lca-height N]
+- cyberspace move (--by dx,dy,dz | --by 0,0,0,plane | --to x,y,z[,plane] | --to 0x<coord256> | --toward <dest>) [--max-lca-height N] [--hyperjump] [--exit-hyperjump]
   Default --max-lca-height comes from config (see: cyberspace config show).
   If no destination is provided, `cyberspace move` defaults to moving `--toward` the current target.
   Tip: if you include spaces, quote the comma-list: cyberspace move --by "-1, 0, 0"
   Plane switch: cyberspace move --by 0,0,0,1  (ideaspace)
+  Hyperjump: cyberspace move --to 0x<coord256> --hyperjump
+             cyberspace move --toward 0x<coord256> --hyperjump
+  While on the hyperjump system, normal hops require --exit-hyperjump.
+- cyberspace hyperjump nearest [--radius 10] [--coord <coord>] [--relay wss://cyberspace.nostr1.com] [--verbose]
+  Queries kind=321 block anchor events in nearby sectors and prints direction hints.
+- cyberspace hyperjump show <blockheight> [--relay wss://cyberspace.nostr1.com]
+  Shows coordinate/plane info for a specific hyperjump block height.
+- cyberspace hyperjump to <blockheight> [--view]
+  Moves to a specific hyperjump block height, or only previews it with --view.
+- cyberspace hyperjump next [--view]
+- cyberspace hyperjump prev [--view]
+  Moves to the next/previous hyperjump block, or only previews it with --view.
+  Note: action-creating hyperjump commands require that you are currently on the hyperjump system.
 - cyberspace bench
   (benchmarks proof compute time by LCA height and recommends a max-lca-height)
 - cyberspace config show
