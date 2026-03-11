@@ -92,6 +92,29 @@ def make_spawn_event(*, pubkey_hex: str, created_at: int, coord_hex: str, kind: 
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
 
 
+def make_hyperjump_event(
+    *,
+    pubkey_hex: str,
+    created_at: int,
+    genesis_event_id: str,
+    previous_event_id: str,
+    prev_coord_hex: str,
+    coord_hex: str,
+    to_height: str,
+    kind: int = 3333,
+) -> Dict[str, Any]:
+    tags: List[List[str]] = [
+        ["A", "hyperjump"],
+        ["e", genesis_event_id, "", "genesis"],
+        ["e", previous_event_id, "", "previous"],
+        ["c", prev_coord_hex],
+        ["C", coord_hex],
+        ["B", str(to_height)],
+    ]
+    tags.extend(_sector_tags_from_coord_hex(coord_hex))
+    return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
+
+
 def make_encrypted_content_event(
     *,
     pubkey_hex: str,

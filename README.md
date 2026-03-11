@@ -88,6 +88,12 @@ cyberspace move --to 0x2b50e88
 # --toward supports a target in a different plane: it will do a final plane-switch hop when xyz matches.
 # While running, it prints per-hop progress.
 cyberspace move --toward 0x2b50e88
+# Publish a hyperjump movement event (A=hyperjump) to a known hyperjump coord.
+cyberspace move --to 0x2b50e88 --hyperjump
+# Or approach with normal hops and use hyperjump for the final toward step.
+cyberspace move --toward 0x2b50e88 --hyperjump
+# If you're on the hyperjump system and want a normal hop, confirm with:
+cyberspace move --to x,y,z --exit-hyperjump
 
 # If no destination is provided, `cyberspace move` defaults to moving `--toward` the current target.
 cyberspace move
@@ -110,6 +116,16 @@ cyberspace history --json
 # position utilities
 cyberspace whereami
 cyberspace sector
+cyberspace hyperjump nearest
+cyberspace hyperjump nearest --radius 10 --relay wss://cyberspace.nostr1.com
+cyberspace hyperjump nearest --coord 0x2b50e88
+cyberspace hyperjump nearest --verbose
+cyberspace hyperjump show 940158
+cyberspace hyperjump to 940158
+cyberspace hyperjump to 940158 --view
+cyberspace hyperjump next
+cyberspace hyperjump prev
+cyberspace hyperjump next --view
 
 # open the built-in 3D visualizer (optional deps)
 cyberspace 3d
