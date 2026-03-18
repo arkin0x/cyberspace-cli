@@ -40,6 +40,10 @@ class SceneConfig:
     elev_deg: float = 18.0
     azim_deg: float = -58.0
 
+    # Optional Earth-focused framing altitude (km above Earth's surface).
+    # When set, draw_scene() zooms to Earth-centered bounds sized by (R_earth + altitude).
+    earth_view_altitude_km: Optional[float] = None
+
 
 @dataclass(frozen=True)
 class Marker:
@@ -308,9 +312,16 @@ def draw_scene(
     ax.view_init(elev=cfg.elev_deg, azim=cfg.azim_deg)
 
     # Bound extents tightly to dataspace cube (in mpl space)
-    ax.set_xlim(-half, half)
-    ax.set_ylim(-half, half)
-    ax.set_zlim(-half, half)
+    view_half = half
+    if cfg.earth_view_altitude_km is not None:
+        alt_km = max(0.0, float(cfg.earth_view_altitude_km))
+        earth_view_half = (earth_radius_km + alt_km) * s
+        # Keep Earth fully visible with a small margin and never exceed dataspace bounds.
+        view_half = min(half, max(earth_view_half, r_e * 1.03))
+
+    ax.set_xlim(-view_half, view_half)
+    ax.set_ylim(-view_half, view_half)
+    ax.set_zlim(-view_half, view_half)
     _set_axes_equal(ax)
 
     # Hide tick labels to keep the 'space' aesthetic

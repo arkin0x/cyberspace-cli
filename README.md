@@ -140,6 +140,8 @@ cyberspace hyperjump next --view
 
 # open the built-in 3D visualizer (optional deps)
 cyberspace 3d
+# set the default "View Earth" altitude (km above Earth surface)
+cyberspace 3d --earth-altitude-km 8000
 
 # sector-local 3D view (renders only the current sector cube; spawn renders only if in the same sector)
 cyberspace 3d --sector

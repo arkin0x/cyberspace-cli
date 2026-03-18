@@ -44,7 +44,7 @@ Commands (high-level)
 - cyberspace spawn [--from-key <nsec|hex>] [--chain <label>]
 - cyberspace whereami
 - cyberspace sector
-- cyberspace 3d
+- cyberspace 3d [--earth-altitude-km <km>]
   (optional GUI; install: pip install 'cyberspace-cli[visualizer]' and you may need python3-tk)
 - cyberspace lcaplot
   (optional GUI; plots lca_height(v, v±1) spikes + 2^h block boundaries; install extras as above)

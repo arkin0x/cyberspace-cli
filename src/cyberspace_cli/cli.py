@@ -839,6 +839,11 @@ def three_d(
     ),
     scale: Optional[float] = typer.Option(None, "--scale", help="Render scaling multiplier."),
     grid_lines: Optional[int] = typer.Option(None, "--grid-lines", help="Wireframe grid density."),
+    earth_altitude_km: Optional[float] = typer.Option(
+        None,
+        "--earth-altitude-km",
+        help="Default altitude above Earth's surface (km) used by the UI's 'View Earth' control.",
+    ),
     show_spawn: bool = typer.Option(True, "--spawn/--no-spawn", help="Show spawn marker (default: on)."),
     show_current: bool = typer.Option(True, "--current/--no-current", help="Show current marker (default: on)."),
 ) -> None:
@@ -887,6 +892,10 @@ def three_d(
 
     effective_scale = float(scale) if scale is not None else (1.0 if sector else 0.5)
     effective_grid_lines = int(grid_lines) if grid_lines is not None else (6 if sector else 4)
+    if earth_altitude_km is not None and earth_altitude_km < 0:
+        typer.echo("--earth-altitude-km must be >= 0.", err=True)
+        raise typer.Exit(code=2)
+    effective_earth_altitude_km = float(earth_altitude_km) if earth_altitude_km is not None else 12000.0
 
     try:
         run_app(
@@ -894,6 +903,7 @@ def three_d(
             spawn_coord_hex=spawn_hex,
             scale=effective_scale,
             grid_lines=effective_grid_lines,
+            earth_altitude_km=effective_earth_altitude_km,
             mode=("sector" if sector else "dataspace"),
         )
     except Exception as e:
