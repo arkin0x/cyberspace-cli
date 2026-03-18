@@ -6,8 +6,9 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from cyberspace_cli.paths import config_path
+from cyberspace_core.geoid import DEFAULT_GEOID_MODEL, normalize_geoid_model
 
-CONFIG_VERSION = "2026-02-26-cli-config-v1"
+CONFIG_VERSION = "2026-03-18-cli-config-v2"
 
 DEFAULT_MAX_LCA_HEIGHT = 16
 
@@ -16,10 +17,15 @@ DEFAULT_MAX_LCA_HEIGHT = 16
 class CyberspaceConfig:
     version: str
     default_max_lca_height: int
+    gps_geoid_model: str
 
     @staticmethod
     def default() -> "CyberspaceConfig":
-        return CyberspaceConfig(version=CONFIG_VERSION, default_max_lca_height=DEFAULT_MAX_LCA_HEIGHT)
+        return CyberspaceConfig(
+            version=CONFIG_VERSION,
+            default_max_lca_height=DEFAULT_MAX_LCA_HEIGHT,
+            gps_geoid_model=DEFAULT_GEOID_MODEL,
+        )
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "CyberspaceConfig":
@@ -27,15 +33,21 @@ class CyberspaceConfig:
             v = int(d.get("default_max_lca_height", DEFAULT_MAX_LCA_HEIGHT))
         except Exception:
             v = DEFAULT_MAX_LCA_HEIGHT
+        try:
+            geoid_model = normalize_geoid_model(str(d.get("gps_geoid_model", DEFAULT_GEOID_MODEL)))
+        except Exception:
+            geoid_model = DEFAULT_GEOID_MODEL
         return CyberspaceConfig(
             version=str(d.get("version", "")) or CONFIG_VERSION,
             default_max_lca_height=v,
+            gps_geoid_model=geoid_model,
         )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "version": self.version,
             "default_max_lca_height": int(self.default_max_lca_height),
+            "gps_geoid_model": self.gps_geoid_model,
         }
 
 

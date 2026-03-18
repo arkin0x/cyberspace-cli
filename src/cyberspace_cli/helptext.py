@@ -75,8 +75,13 @@ Commands (high-level)
   (benchmarks proof compute time by LCA height and recommends a max-lca-height)
 - cyberspace config show
 - cyberspace config set --max-lca-height N
+- cyberspace config set-geoid-model <egm2008-2_5|egm2008-1>
+- cyberspace geoid doctor [--model <egm2008-2_5|egm2008-1>] [--effective-only]
 - cyberspace gps <lat,lon>
   (or: cyberspace gps --lat <lat> --lon <lon>)
+  (for altitude above WGS84 ellipsoid: --altitude-wgs84 <meters>; --no-clamp is implied)
+  (for altitude above mean sea level: --altitude-sealevel <meters>; N is auto-derived from geoid model unless overridden by --geoid-offset-m)
+  (optional per-command override: --geoid-model <egm2008-2_5|egm2008-1>)
   (or: cyberspace gps --coord <coord256>  # derive lat/lon/alt)
 - cyberspace cantor (--from-xyz x,y,z --to-xyz x,y,z | --from-coord <hex> --to-coord <hex>)
 - cyberspace history [--limit N] [--json]
