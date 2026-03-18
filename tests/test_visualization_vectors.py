@@ -5,6 +5,7 @@ from pathlib import Path
 from cyberspace_cli.visualizer.viz import (
     black_sun_circle_center_mpl,
     cyberspace_to_mpl,
+    coord_to_dataspace_km,
     golden_vector_markers,
 )
 
@@ -39,10 +40,10 @@ class TestVisualizationVectors(unittest.TestCase):
             self.assertEqual(str(z), v["z_u85"], f"{name}: z mismatch")
             self.assertEqual(int(plane), int(v["plane"]), f"{name}: plane mismatch")
 
-            # Stored km values are floats, so use a modest tolerance.
-            self.assertAlmostEqual(u85_to_km_from_center(x), float(v["x_km_from_center"]), places=3, msg=f"{name}: x_km")
-            self.assertAlmostEqual(u85_to_km_from_center(y), float(v["y_km_from_center"]), places=3, msg=f"{name}: y_km")
-            self.assertAlmostEqual(u85_to_km_from_center(z), float(v["z_km_from_center"]), places=3, msg=f"{name}: z_km")
+            x_km_viz, y_km_viz, z_km_viz = coord_to_dataspace_km(coord)
+            self.assertAlmostEqual(u85_to_km_from_center(x), x_km_viz, places=6, msg=f"{name}: x_km")
+            self.assertAlmostEqual(u85_to_km_from_center(y), y_km_viz, places=6, msg=f"{name}: y_km")
+            self.assertAlmostEqual(u85_to_km_from_center(z), z_km_viz, places=6, msg=f"{name}: z_km")
 
     def test_golden_vector_overlay_markers(self) -> None:
         markers = golden_vector_markers()
@@ -61,12 +62,13 @@ class TestVisualizationVectors(unittest.TestCase):
         self.assertAlmostEqual(by_label["GV center"].position_km[1], 0.0, places=3)
         self.assertAlmostEqual(by_label["GV center"].position_km[2], 0.0, places=3)
 
-        self.assertAlmostEqual(by_label["GV +X"].position_km[0], 12007.0, places=3)
-        self.assertAlmostEqual(by_label["GV -X"].position_km[0], -12007.0, places=3)
-        self.assertAlmostEqual(by_label["GV +Y"].position_km[1], 12007.0, places=3)
-        self.assertAlmostEqual(by_label["GV -Y"].position_km[1], -12007.0, places=3)
-        self.assertAlmostEqual(by_label["GV +Z"].position_km[2], 12007.0, places=3)
-        self.assertAlmostEqual(by_label["GV -Z"].position_km[2], -12007.0, places=3)
+        expected_delta = u85_to_km_from_center(AXIS_CENTER + (1 << 82))
+        self.assertAlmostEqual(by_label["GV +X"].position_km[0], expected_delta, places=3)
+        self.assertAlmostEqual(by_label["GV -X"].position_km[0], -expected_delta, places=3)
+        self.assertAlmostEqual(by_label["GV +Y"].position_km[1], expected_delta, places=3)
+        self.assertAlmostEqual(by_label["GV -Y"].position_km[1], -expected_delta, places=3)
+        self.assertAlmostEqual(by_label["GV +Z"].position_km[2], expected_delta, places=3)
+        self.assertAlmostEqual(by_label["GV -Z"].position_km[2], -expected_delta, places=3)
 
     def test_semantic_axis_mapping_and_black_sun_circle_tangent(self) -> None:
         self.assertEqual(cyberspace_to_mpl(1.0, 0.0, 0.0), (1.0, 0.0, 0.0))

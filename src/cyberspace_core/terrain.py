@@ -3,7 +3,7 @@ from __future__ import annotations
 """Deterministic per-coordinate "terrain" utilities.
 
 This module defines the terrain-derived temporal height K used for hop
-proof freshness (spec §5.4.2.1).
+proof freshness (spec §5.5.2.1).
 
 Goal:
 - Derive a small integer K in [0, 16] from a destination coordinate.

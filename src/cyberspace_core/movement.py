@@ -88,16 +88,16 @@ def compute_movement_proof_xyz(
 
 @dataclass(frozen=True)
 class HopProof:
-    """Full 4D hop proof (spatial + temporal) per spec §5.4.3 / §5.6."""
+    """Full 4D hop proof (spatial + temporal) per spec §5.5.3 / §5.7."""
     cantor_x: int
     cantor_y: int
     cantor_z: int
     region_n: int       # π(π(cx, cy), cz)  — stable spatial region integer
-    terrain_k: int      # terrain-derived temporal height K  (§5.4.2.1)
-    temporal_seed: int  # t = prev_event_id_int % 2^85       (§5.4.2.2)
-    cantor_t: int       # temporal axis Cantor root           (§5.4.2.2)
-    hop_n: int          # π(region_n, cantor_t)               (§5.4.3)
-    proof_hash: str     # sha256(sha256(int_to_bytes_be_min(hop_n))).hex()  (§5.6)
+    terrain_k: int      # terrain-derived temporal height K  (§5.5.2.1)
+    temporal_seed: int  # t = prev_event_id_int % 2^85       (§5.5.2.2)
+    cantor_t: int       # temporal axis Cantor root           (§5.5.2.2)
+    hop_n: int          # π(region_n, cantor_t)               (§5.5.3)
+    proof_hash: str     # sha256(sha256(int_to_bytes_be_min(hop_n))).hex()  (§5.7)
 
 
 def compute_hop_proof(
@@ -112,7 +112,7 @@ def compute_hop_proof(
     previous_event_id_hex: str,
     max_compute_height: int = DEFAULT_MAX_COMPUTE_HEIGHT,
 ) -> HopProof:
-    """Compute the full 4D hop proof (spatial + temporal) per spec §5.4–§5.6.
+    """Compute the full 4D hop proof (spatial + temporal) per spec §5.5–§5.7.
 
     Parameters
     ----------
@@ -123,18 +123,26 @@ def compute_hop_proof(
                             the previous movement event in the chain)
     max_compute_height : per-axis spatial LCA height cap
     """
-    # --- spatial component (§5.4) ---
+    # --- spatial component (§5.5) ---
     cx = compute_axis_cantor(x1, x2, max_compute_height=max_compute_height)
     cy = compute_axis_cantor(y1, y2, max_compute_height=max_compute_height)
     cz = compute_axis_cantor(z1, z2, max_compute_height=max_compute_height)
     region_n = cantor_pair(cantor_pair(cx, cy), cz)
 
-    # --- temporal component (§5.4.2) ---
-    # K from terrain at destination (§5.4.2.1)
+    # --- temporal component (§5.5.2) ---
+    # K from terrain at destination (§5.5.2.1)
     terrain_k_val = terrain_k(x=x2, y=y2, z=z2, plane=plane)
 
-    # Seed from previous event id (§5.4.2.2)
-    prev_id_int = int(previous_event_id_hex, 16)
+    # Seed from previous event id (§5.5.2.2)
+    if len(previous_event_id_hex) != 64:
+        raise ValueError("previous_event_id_hex must be exactly 64 hex chars (32 bytes)")
+    if previous_event_id_hex != previous_event_id_hex.lower():
+        raise ValueError("previous_event_id_hex must be lowercase hex")
+    try:
+        previous_event_id_bytes = bytes.fromhex(previous_event_id_hex)
+    except ValueError as e:
+        raise ValueError("previous_event_id_hex must be valid lowercase hex") from e
+    prev_id_int = int.from_bytes(previous_event_id_bytes, "big")
     t = prev_id_int % (1 << AXIS_BITS)
 
     # Temporal subtree root
@@ -143,10 +151,10 @@ def compute_hop_proof(
         t_base, terrain_k_val, max_compute_height=TEMPORAL_MAX_COMPUTE_HEIGHT,
     )
 
-    # --- 4D combination (§5.4.3) ---
+    # --- 4D combination (§5.5.3) ---
     hop_n = cantor_pair(region_n, cantor_t)
 
-    # --- proof hash (§5.6): double SHA-256 ---
+    # --- proof hash (§5.7): double SHA-256 ---
     hop_bytes = int_to_bytes_be_min(hop_n)
     movement_proof_key = sha256(hop_bytes)
     proof_hash = sha256(movement_proof_key).hex()

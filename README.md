@@ -182,6 +182,8 @@ On Linux you may also need `python3-tk` for Tkinter.
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'
 ```
+## Spec conformance checklist
+- `docs/spec-conformance/CYBERSPACE_V2_2026-03-16-h34.md`
 
 ## Security
 This prototype stores the private key locally in plaintext. Treat it like a hot wallet key.
