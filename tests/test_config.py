@@ -20,6 +20,7 @@ class TestConfig(unittest.TestCase):
                 os.environ["CYBERSPACE_HOME"] = td
                 cfg = load_config()
                 self.assertIsNotNone(cfg.default_max_lca_height)
+                self.assertEqual(cfg.gps_geoid_model, "egm2008-2_5")
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)
@@ -33,10 +34,12 @@ class TestConfig(unittest.TestCase):
                 os.environ["CYBERSPACE_HOME"] = td
                 cfg = CyberspaceConfig.default()
                 cfg.default_max_lca_height = 13
+                cfg.gps_geoid_model = "egm2008-1"
                 save_config(cfg)
 
                 got = load_config()
                 self.assertEqual(got.default_max_lca_height, 13)
+                self.assertEqual(got.gps_geoid_model, "egm2008-1")
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)

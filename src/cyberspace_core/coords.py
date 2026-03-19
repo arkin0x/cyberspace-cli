@@ -1,67 +1,41 @@
 """Cyberspace coordinate utilities.
 
 This module provides:
-- Bit-interleaved 256-bit coordinates (X,Y,Z are 85-bit unsigned ints + 1 plane bit)
+- Bit-interleaved 256-bit coordinates (X/Y/Z are 85-bit unsigned ints + 1 plane bit)
 - Dataspace mapping from GPS (WGS84 lat/lon[/alt]) into the 85-bit axis space
 - Inverse mapping from dataspace coord/xyz back to WGS84 GPS (lat/lon/alt)
 
-Axis orientation for the GPS mapping starts from the standard Earth-Centered,
-Earth-Fixed (ECEF) frame, then permutes axes to match the *cyberspace* naming
-convention:
+Axis orientation for the GPS mapping starts from standard Earth-Centered,
+Earth-Fixed (ECEF), then permutes axes to match cyberspace naming:
 
-ECEF (standard):
-- +X_ecef points to (lat=0°, lon=0°) (equator at the prime meridian)
-- +Y_ecef points to (lat=0°, lon=90°E) (equator; "east" direction)
-- +Z_ecef points to the North Pole (lat=90°)
+ECEF:
+- +X_ecef points to (lat=0°, lon=0°)
+- +Y_ecef points to (lat=0°, lon=90°E)
+- +Z_ecef points to the North Pole
 
-Cyberspace dataspace axis naming (current project convention):
-- +X_cs = +X_ecef  (prime meridian at equator; lon=0°)
-- +Y_cs = +Z_ecef  (up/down through the poles; north is +Y)
-- +Z_cs = +Y_ecef  (east direction; lon=+90° at equator)
-
-Dataspace cube sizing (per spec image):
-- Full axis length: 96,056 km
-- Half axis length: 48,028 km (center -> edge)
+Cyberspace dataspace:
+- +X_cs = +X_ecef
+- +Y_cs = +Z_ecef
+- +Z_cs = +Y_ecef
 
 ## Canonical GPS->dataspace mapping (deterministic)
-The GPS->dataspace conversion is *consensus-critical* if you expect independent
-implementations to agree on the same cyberspace coordinate. A naive float-based
-implementation can quantize away low bits (and even skip sectors).
+The GPS->dataspace conversion is consensus-critical. Implementations must avoid
+platform float/libm variability and use deterministic Decimal arithmetic.
 
-This module defines a canonical conversion using Python's `decimal.Decimal`.
-
-### Canonical constants
-The following values are part of the spec and MUST NOT change without bumping a
-spec version:
-- `CANONICAL_GPS_TO_DATASPACE_SPEC_VERSION = "2026-02-13-decimal-v1"`
+Canonical constants:
+- `CANONICAL_GPS_TO_DATASPACE_SPEC_VERSION = "2026-03-16-h34-corrected"`
 - Decimal context: `prec = 96`, `rounding = ROUND_HALF_EVEN`
-- π constant: the exact decimal string in `PI_STR` (truncated, not rounded)
-- Trig termination: `TRIG_EPS = 1e-88` and loop upper bound `TRIG_MAX_ITER = 256`
+- π constant: exact decimal string in `PI_STR` (truncated, not rounded)
+- Trig termination: `TRIG_EPS = 1e-88`, `TRIG_MAX_ITER = 256`
+- H34 scaling: `units_per_km = 1000 * 2^33`
 
-### Canonical input parsing
-- Inputs are interpreted as decimals.
-- If floats are passed, they are converted via `Decimal(str(x))` (not `Decimal(x)`) to
-  avoid binary-float artifacts.
+Canonical axis mapping:
+- `u = km * units_per_km + 2^84`
+- round with `ROUND_HALF_EVEN`
+- clamp to `[0, 2^85 - 1]`
 
-### Canonical trig (no platform libm)
-- Degrees→radians uses the `PI_STR` constant.
-- Range reduction:
-  1) `x = x mod 2π` into `[0, 2π)`
-  2) if `x > π` then `x -= 2π` to fold into `(-π, π]`
-  3) fold into `[-π/2, π/2]` using symmetries (track cosine sign)
-- sin/cos via Taylor series in Decimal, iterating until `abs(term) < TRIG_EPS`.
-
-### Canonical rounding to u85 axis
-- Convert km→axis-units using `units_per_km = 2^85 / 96056`.
-- Compute `u = km * units_per_km + 2^84`.
-- Round to int using `ROUND_HALF_EVEN`.
-- Clamp to `[0, 2^85 - 1]`.
-
-This is designed to avoid float quantization that can cause landing in the wrong
-Sector (2^30 Gibsons) at maximum precision.
-
-So physical ECEF coordinates in kilometers are scaled and shifted into [0, 2^85) per axis,
-with Earth's center mapping to the midpoint (2^84).
+This places Earth's center at axis midpoint `2^84` and yields an axis length of
+~4.5 trillion km (half-axis ~2.25 trillion km).
 """
 
 from __future__ import annotations
@@ -75,7 +49,7 @@ AXIS_UNITS = 1 << AXIS_BITS  # 2^85
 AXIS_MAX = AXIS_UNITS - 1
 AXIS_CENTER = 1 << (AXIS_BITS - 1)  # 2^84
 
-CANONICAL_GPS_TO_DATASPACE_SPEC_VERSION = "2026-02-13-decimal-v1"
+CANONICAL_GPS_TO_DATASPACE_SPEC_VERSION = "2026-03-16-h34-corrected"
 
 # Decimal context used for canonical GPS->dataspace conversion.
 # This does *not* affect global Decimal state; we always use localcontext().
@@ -99,9 +73,14 @@ NumberLike = Union[int, float, str, Decimal]
 PLANE_DATASPACE = 0
 PLANE_IDEASPACE = 1
 
-# d-space sizing from the spec image
-DATASPACE_AXIS_KM = Decimal("96056")
-DATASPACE_HALF_AXIS_KM = DATASPACE_AXIS_KM / 2  # 48,028 km
+# H34 scale (spec §4.4 step 9): units_per_km = 1000 * 2^33.
+UNITS_PER_KM_INT = 1000 * (1 << 33)
+UNITS_PER_KM = Decimal(UNITS_PER_KM_INT)
+KM_PER_UNIT = Decimal(1) / UNITS_PER_KM
+
+# Derived dataspace extents (for visualization/inverse mapping helpers).
+DATASPACE_AXIS_KM = Decimal(AXIS_UNITS) / UNITS_PER_KM
+DATASPACE_HALF_AXIS_KM = DATASPACE_AXIS_KM / 2
 
 # WGS84 constants (GPS uses WGS84)
 WGS84_A_M = Decimal("6378137")
@@ -293,8 +272,7 @@ def _km_to_axis_u(km_from_center: Decimal) -> int:
         ctx.prec = DECIMAL_PREC
         ctx.rounding = ROUND_HALF_EVEN
 
-        units_per_km = Decimal(AXIS_UNITS) / DATASPACE_AXIS_KM
-        u = km_from_center * units_per_km + Decimal(AXIS_CENTER)
+        u = km_from_center * UNITS_PER_KM + Decimal(AXIS_CENTER)
         u_int = int(u.to_integral_value(rounding=ROUND_HALF_EVEN))
         return _clamp_int(u_int, 0, AXIS_MAX)
 
@@ -368,8 +346,7 @@ def _axis_u_to_km(axis_u: int) -> Decimal:
         ctx.prec = DECIMAL_PREC
         ctx.rounding = ROUND_HALF_EVEN
 
-        km_per_unit = DATASPACE_AXIS_KM / Decimal(AXIS_UNITS)
-        return (Decimal(int(axis_u)) - Decimal(AXIS_CENTER)) * km_per_unit
+        return (Decimal(int(axis_u)) - Decimal(AXIS_CENTER)) * KM_PER_UNIT
 
 
 def dataspace_xyz_to_ecef_km(x: int, y: int, z: int) -> Tuple[Decimal, Decimal, Decimal]:

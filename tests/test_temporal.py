@@ -1,4 +1,4 @@
-"""Tests for the temporal axis (§5.4.2) and 4D hop proof (§5.4.3 / §5.6).
+"""Tests for the temporal axis (§5.5.2) and 4D hop proof (§5.5.3 / §5.7).
 
 Golden vectors taken from CYBERSPACE_V2.md §5.6.1.
 """
@@ -31,7 +31,7 @@ class TestTerrainK(unittest.TestCase):
 
 class TestTemporalAxis(unittest.TestCase):
     def test_temporal_seed_from_zero_prev_id(self) -> None:
-        """§5.4.2.2: t = 0 when previous_event_id is all zeros."""
+        """§5.5.2.2: t = 0 when previous_event_id is all zeros."""
         prev_id_hex = "0" * 64
         prev_id_int = int(prev_id_hex, 16)
         t = prev_id_int % (1 << 85)
@@ -44,6 +44,36 @@ class TestTemporalAxis(unittest.TestCase):
         t_base = (t >> k) << k
         self.assertEqual(t_base, 0)
         cantor_t = compute_subtree_cantor(t_base, k, max_compute_height=17)
+
+    def test_previous_event_id_must_be_64_chars(self) -> None:
+        with self.assertRaises(ValueError):
+            compute_hop_proof(
+                0, 0, 0,
+                1, 0, 0,
+                plane=0,
+                previous_event_id_hex="0" * 63,
+                max_compute_height=20,
+            )
+
+    def test_previous_event_id_must_be_lowercase(self) -> None:
+        with self.assertRaises(ValueError):
+            compute_hop_proof(
+                0, 0, 0,
+                1, 0, 0,
+                plane=0,
+                previous_event_id_hex="AA" * 32,
+                max_compute_height=20,
+            )
+
+    def test_previous_event_id_must_be_hex(self) -> None:
+        with self.assertRaises(ValueError):
+            compute_hop_proof(
+                0, 0, 0,
+                1, 0, 0,
+                plane=0,
+                previous_event_id_hex="gg" * 32,
+                max_compute_height=20,
+            )
 
 
 class TestHopProofGoldenVector(unittest.TestCase):

@@ -112,6 +112,11 @@ cyberspace move --to 0x2b50e88 --max-lca-height 25
 # Or persist a default so you don't need the flag every time:
 cyberspace config show
 cyberspace config set --max-lca-height 16
+cyberspace config set-geoid-model egm2008-2_5
+cyberspace config set-geoid-model egm2008-1
+cyberspace geoid doctor
+cyberspace geoid doctor --effective-only
+cyberspace geoid doctor --model egm2008-1
 
 # Benchmark your machine and get a recommended default ("Optimal Speed" near ~2 seconds):
 cyberspace bench
@@ -135,6 +140,8 @@ cyberspace hyperjump next --view
 
 # open the built-in 3D visualizer (optional deps)
 cyberspace 3d
+# set the default "View Earth" altitude (km above Earth surface)
+cyberspace 3d --earth-altitude-km 8000
 
 # sector-local 3D view (renders only the current sector cube; spawn renders only if in the same sector)
 cyberspace 3d --sector
@@ -146,6 +153,14 @@ cyberspace lcaplot --axis z --span 2048 --max-lca-height 17
 cyberspace gps 37.7749,-122.4194
 # or
 cyberspace gps --lat 37.7749 --lon -122.4194
+# altitude above WGS84 ellipsoid (GPS-native): no-clamp is implied
+cyberspace gps 37.7749,-122.4194 --altitude-wgs84 123.45
+# altitude above mean sea level: geoid separation N is auto-derived (h = H + N)
+cyberspace gps 37.7749,-122.4194 --altitude-sealevel 95.0
+# optional: manual override for geoid separation N
+cyberspace gps 37.7749,-122.4194 --altitude-sealevel 95.0 --geoid-offset-m 30.5
+# optional: per-command model override
+cyberspace gps 37.7749,-122.4194 --altitude-sealevel 95.0 --geoid-model egm2008-1
 # reverse: coord256 -> gps (lat/lon/alt)
 cyberspace gps --coord 0xc4943fa01bb22b95946ec1605717047a3b79bd717d5d84e35a12cb56df76134a
 
@@ -182,6 +197,53 @@ On Linux you may also need `python3-tk` for Tkinter.
 ```bash
 PYTHONPATH=src python3 -m unittest discover -s tests -p 'test_*.py'
 ```
+## Spec conformance checklist
+- `docs/spec-conformance/CYBERSPACE_V2_2026-03-16-h34.md`
+
+## Geoid models for sea-level altitude conversion (MSL -> WGS84)
+When you provide `--altitude-sealevel`, the CLI converts orthometric height `H` to ellipsoidal height `h` using:
+- `h = H + N`
+- `N` = geoid undulation from a gridded geoid model.
+
+Supported models:
+- `egm2008-2_5` (default): good balance of precision vs footprint.
+- `egm2008-1`: finer grid, larger footprint.
+
+Switch defaults with:
+```bash
+cyberspace config set-geoid-model egm2008-2_5
+cyberspace config set-geoid-model egm2008-1
+```
+
+Verify install health with:
+```bash
+cyberspace geoid doctor
+cyberspace geoid doctor --effective-only
+cyberspace geoid doctor --model egm2008-1
+```
+
+Data tradeoffs (GeographicLib geoid datasets):
+- `egm2008-2_5`: ~75 MB installed, ~35 MB download.
+- `egm2008-1`: ~470 MB installed, ~170 MB download.
+
+Purpose/tradeoff summary:
+- Use `egm2008-2_5` for most CLI/mobile workflows where storage and install friction matter.
+- Use `egm2008-1` when you want denser geoid sampling and can afford the larger dataset.
+
+Data search paths:
+- `CYBERSPACE_GEOID_PATH` (highest precedence)
+- `GEOGRAPHICLIB_GEOID_PATH`
+- `GEOGRAPHICLIB_DATA/geoids`
+- `CYBERSPACE_HOME/geoids` (or `~/.cyberspace/geoids`)
+- `/usr/share/GeographicLib/geoids`
+- `/usr/local/share/GeographicLib/geoids`
+- `/opt/homebrew/share/GeographicLib/geoids`
+
+Sources for model sizes and usage:
+- GeographicLib geoid dataset table: https://geographiclib.sourceforge.io/C++/doc/geoid.html
+- GeoidEval model/cache notes: https://geographiclib.sourceforge.io/html/GeoidEval.1.html
+- PROJ EGM2008 2.5' grid size reference: https://ftp.osuosl.org/pub/osgeo/download/proj/vdatum/egm08_25/
+- PROJ EGM96 15' grid size reference: https://download.osgeo.org/proj/vdatum/egm96_15/
 
 ## Security
 This prototype stores the private key locally in plaintext. Treat it like a hot wallet key.

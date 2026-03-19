@@ -3,6 +3,7 @@ import base64
 import json
 import secrets
 import subprocess
+from decimal import Decimal, InvalidOperation
 
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -32,6 +33,17 @@ from cyberspace_cli.nostr_keys import (
 from cyberspace_cli.state import CyberspaceState, STATE_VERSION, load_state, save_state
 from cyberspace_core.cantor import int_to_bytes_be_min, int_to_hex_be_min, sha256, sha256_int_hex
 from cyberspace_core.coords import AXIS_MAX, coord_to_xyz, dataspace_coord_to_gps, gps_to_dataspace_coord, xyz_to_coord
+from cyberspace_core.geoid import (
+    DEFAULT_GEOID_MODEL,
+    GeoidError,
+    GeoidModelNotFoundError,
+    SUPPORTED_GEOID_MODELS,
+    candidate_model_paths,
+    default_geoid_search_dirs,
+    geoid_undulation_m,
+    load_geoid_grid,
+    normalize_geoid_model,
+)
 from cyberspace_core.location_encryption import (
     DEFAULT_SCAN_MAX_HEIGHT,
     decrypt_with_location_key,
@@ -47,9 +59,11 @@ chain_app = typer.Typer(no_args_is_help=True)
 config_app = typer.Typer(no_args_is_help=True)
 target_app = typer.Typer(no_args_is_help=True)
 hyperjump_app = typer.Typer(no_args_is_help=True)
+geoid_app = typer.Typer(no_args_is_help=True)
 app.add_typer(chain_app, name="chain", help="Manage local movement chains.")
 app.add_typer(config_app, name="config", help="Show/set persisted CLI defaults.")
 app.add_typer(target_app, name="target", help="Manage saved movement targets.")
+app.add_typer(geoid_app, name="geoid", help="Inspect geoid dataset configuration and availability.")
 app.add_typer(
     hyperjump_app,
     name="hyperjump",
@@ -98,6 +112,17 @@ def _parse_coord_hex(s: str) -> str:
         return normalize_hex_32(s)
     except ValueError as e:
         raise typer.BadParameter(str(e)) from e
+
+def _parse_decimal_option(value: Optional[str], option_name: str) -> Optional[Decimal]:
+    if value is None:
+        return None
+    raw = value.strip()
+    if not raw:
+        raise typer.BadParameter(f"{option_name} expects a numeric value.")
+    try:
+        return Decimal(raw)
+    except (InvalidOperation, ValueError):
+        raise typer.BadParameter(f"{option_name} expects a numeric value.") from None
 
 
 def _coord_hex_from_xyz(x: int, y: int, z: int, plane: int) -> str:
@@ -363,6 +388,7 @@ def config_show() -> None:
     """Show persisted CLI config."""
     cfg = load_config()
     typer.echo(f"default_max_lca_height: {cfg.default_max_lca_height}")
+    typer.echo(f"gps_geoid_model: {cfg.gps_geoid_model}")
 
 
 @config_app.command("set")
@@ -380,6 +406,84 @@ def config_set(
     save_config(cfg)
     typer.echo("Saved.")
     typer.echo(f"default_max_lca_height: {cfg.default_max_lca_height}")
+
+
+@config_app.command("set-geoid-model")
+def config_set_geoid_model(
+    model: str = typer.Argument(
+        ...,
+        metavar="MODEL",
+        help="Default geoid model for --altitude-sealevel auto conversion: egm2008-2_5 or egm2008-1.",
+    ),
+) -> None:
+    """Persist default geoid model for sea-level altitude conversion in `cyberspace gps`."""
+    try:
+        model_n = normalize_geoid_model(model)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+
+    cfg = load_config()
+    cfg.gps_geoid_model = model_n
+    save_config(cfg)
+    typer.echo("Saved.")
+    typer.echo(f"gps_geoid_model: {cfg.gps_geoid_model}")
+@geoid_app.command("doctor")
+def geoid_doctor(
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Optional model to focus on (egm2008-2_5 or egm2008-1). Default: config model.",
+    ),
+    show_all: bool = typer.Option(
+        True,
+        "--all/--effective-only",
+        help="Show status for all supported models (default) or only the effective model.",
+    ),
+) -> None:
+    """Inspect geoid model configuration and dataset installation health."""
+    cfg = load_config()
+    model_raw = model or cfg.gps_geoid_model or DEFAULT_GEOID_MODEL
+    try:
+        effective_model = normalize_geoid_model(model_raw)
+    except ValueError as e:
+        raise typer.BadParameter(str(e)) from e
+
+    typer.echo(f"config_default_model={cfg.gps_geoid_model}")
+    typer.echo(f"effective_model={effective_model}")
+    typer.echo("search_dirs:")
+    for d in default_geoid_search_dirs():
+        typer.echo(str(d))
+
+    models_to_check: List[str]
+    if show_all:
+        models_to_check = [effective_model] + [m for m in SUPPORTED_GEOID_MODELS if m != effective_model]
+    else:
+        models_to_check = [effective_model]
+
+    for idx, m in enumerate(models_to_check):
+        if idx > 0:
+            typer.echo("")
+        typer.echo(f"model={m}")
+        try:
+            grid = load_geoid_grid(m)
+            typer.echo("status=available")
+            typer.echo(f"path={grid.path}")
+            typer.echo(f"grid={grid.width}x{grid.height}")
+            typer.echo(f"scale={grid.scale}")
+            typer.echo(f"offset={grid.offset}")
+            try:
+                sz = grid.path.stat().st_size
+                typer.echo(f"size_bytes={sz}")
+            except OSError:
+                pass
+        except GeoidModelNotFoundError:
+            typer.echo("status=missing")
+            typer.echo("candidates:")
+            for c in candidate_model_paths(m):
+                typer.echo(str(c))
+        except GeoidError as e:
+            typer.echo("status=invalid")
+            typer.echo(f"error={e}")
 
 
 @target_app.command("set")
@@ -735,6 +839,11 @@ def three_d(
     ),
     scale: Optional[float] = typer.Option(None, "--scale", help="Render scaling multiplier."),
     grid_lines: Optional[int] = typer.Option(None, "--grid-lines", help="Wireframe grid density."),
+    earth_altitude_km: Optional[float] = typer.Option(
+        None,
+        "--earth-altitude-km",
+        help="Default altitude above Earth's surface (km) used by the UI's 'View Earth' control.",
+    ),
     show_spawn: bool = typer.Option(True, "--spawn/--no-spawn", help="Show spawn marker (default: on)."),
     show_current: bool = typer.Option(True, "--current/--no-current", help="Show current marker (default: on)."),
 ) -> None:
@@ -783,6 +892,10 @@ def three_d(
 
     effective_scale = float(scale) if scale is not None else (1.0 if sector else 0.5)
     effective_grid_lines = int(grid_lines) if grid_lines is not None else (6 if sector else 4)
+    if earth_altitude_km is not None and earth_altitude_km < 0:
+        typer.echo("--earth-altitude-km must be >= 0.", err=True)
+        raise typer.Exit(code=2)
+    effective_earth_altitude_km = float(earth_altitude_km) if earth_altitude_km is not None else 12000.0
 
     try:
         run_app(
@@ -790,6 +903,7 @@ def three_d(
             spawn_coord_hex=spawn_hex,
             scale=effective_scale,
             grid_lines=effective_grid_lines,
+            earth_altitude_km=effective_earth_altitude_km,
             mode=("sector" if sector else "dataspace"),
         )
     except Exception as e:
@@ -810,8 +924,34 @@ def gps(
     ),
     lat: Optional[str] = typer.Option(None, "--lat", help="Latitude (alternative to 'lat,lon')."),
     lon: Optional[str] = typer.Option(None, "--lon", help="Longitude (alternative to 'lat,lon')."),
-    altitude_m: str = typer.Option("0", "--alt", help="Altitude in meters (default 0)."),
-    clamp_to_surface: bool = typer.Option(True, "--clamp/--no-clamp", help="Clamp altitude to WGS84 surface."),
+    altitude_wgs84_m: Optional[str] = typer.Option(
+        None,
+        "--altitude-wgs84",
+        "--alt-wgs84",
+        "--alt",
+        help="Altitude in meters above the WGS84 ellipsoid (GPS-native reference).",
+    ),
+    altitude_sealevel_m: Optional[str] = typer.Option(
+        None,
+        "--altitude-sealevel",
+        "--alt-sealevel",
+        help="Altitude in meters above mean sea level (MSL / orthometric height).",
+    ),
+    geoid_offset_m: Optional[str] = typer.Option(
+        None,
+        "--geoid-offset-m",
+        help="Geoid separation N in meters used with sea-level altitude (h = H + N).",
+    ),
+    geoid_model: Optional[str] = typer.Option(
+        None,
+        "--geoid-model",
+        help="Geoid model for auto sea-level conversion (egm2008-2_5 default, or egm2008-1).",
+    ),
+    clamp_to_surface: Optional[bool] = typer.Option(
+        None,
+        "--clamp/--no-clamp",
+        help="Clamp altitude to WGS84 surface. If altitude is provided and this flag is omitted, --no-clamp is implied.",
+    ),
 ) -> None:
     """Convert between GPS and dataspace coord256.
 
@@ -819,15 +959,24 @@ def gps(
     To avoid that, this command supports either:
     - `cyberspace gps 37.7749,-122.4194`
     - `cyberspace gps --lat 37.7749 --lon -122.4194`
+    - `cyberspace gps 37.7749,-122.4194 --altitude-wgs84 123.45`
+    - `cyberspace gps 37.7749,-122.4194 --altitude-sealevel 95.0`
+    - `cyberspace gps 37.7749,-122.4194 --altitude-sealevel 95.0 --geoid-offset-m 30.5`
     - `cyberspace gps --coord 0x<coord256>`
+
+    Altitude references:
+    - `--altitude-wgs84` (`--alt`) is ellipsoid height `h`.
+    - `--altitude-sealevel` is orthometric/MSL height `H`; if `--geoid-offset-m` is omitted,
+      geoid separation `N` is auto-derived from `--geoid-model` (or config), using `h = H + N`.
+    - If an altitude option is provided and `--clamp/--no-clamp` is omitted, `--no-clamp` is implied.
     """
 
     if coord is not None:
         if at is not None or lat is not None or lon is not None:
             typer.echo("Use either --coord OR ('lat,lon' / --lat --lon).", err=True)
             raise typer.Exit(code=2)
-        if altitude_m != "0" or not clamp_to_surface:
-            typer.echo("--alt/--clamp only apply when converting GPS -> coord.", err=True)
+        if altitude_wgs84_m is not None or altitude_sealevel_m is not None or geoid_offset_m is not None or geoid_model is not None or clamp_to_surface is not None:
+            typer.echo("--altitude-* / --geoid-* / --clamp only apply when converting GPS -> coord.", err=True)
             raise typer.Exit(code=2)
 
         try:
@@ -858,8 +1007,67 @@ def gps(
             typer.echo("Provide either 'lat,lon' or both --lat and --lon.", err=True)
             raise typer.Exit(code=2)
         lat_s, lon_s = lat, lon
+    alt_wgs84 = _parse_decimal_option(altitude_wgs84_m, "--altitude-wgs84/--alt")
+    alt_sealevel = _parse_decimal_option(altitude_sealevel_m, "--altitude-sealevel")
+    geoid_offset = _parse_decimal_option(geoid_offset_m, "--geoid-offset-m")
 
-    coord_int = gps_to_dataspace_coord(lat_s, lon_s, altitude_m, clamp_to_surface=clamp_to_surface)
+    if alt_wgs84 is not None and alt_sealevel is not None:
+        typer.echo("Use either --altitude-wgs84 OR --altitude-sealevel (not both).", err=True)
+        raise typer.Exit(code=2)
+
+    if geoid_offset is not None and alt_sealevel is None:
+        typer.echo("--geoid-offset-m requires --altitude-sealevel.", err=True)
+        raise typer.Exit(code=2)
+
+    if geoid_model is not None and alt_sealevel is None:
+        typer.echo("--geoid-model requires --altitude-sealevel.", err=True)
+        raise typer.Exit(code=2)
+
+    has_altitude = alt_wgs84 is not None or alt_sealevel is not None
+    if has_altitude and clamp_to_surface is True:
+        typer.echo("Cannot use --clamp with altitude options. Omit --clamp or use --no-clamp.", err=True)
+        raise typer.Exit(code=2)
+    effective_clamp = bool(clamp_to_surface) if clamp_to_surface is not None else (False if has_altitude else True)
+
+    if alt_sealevel is not None and geoid_offset is not None:
+        altitude_input_m = alt_sealevel + geoid_offset
+    elif alt_sealevel is not None:
+        cfg = load_config()
+        model_raw = geoid_model or cfg.gps_geoid_model or DEFAULT_GEOID_MODEL
+        try:
+            model_n = normalize_geoid_model(model_raw)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
+        try:
+            n_m = Decimal(
+                str(
+                    geoid_undulation_m(
+                        float(lat_s),
+                        float(lon_s),
+                        model=model_n,
+                    )
+                )
+            )
+        except GeoidError as e:
+            searched = "\n".join(str(p) for p in candidate_model_paths(model_n))
+            typer.echo(str(e), err=True)
+            typer.echo(
+                f"Install '{model_n}.pgm' (GeographicLib geoid data) into one of these paths:\n{searched}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        altitude_input_m = alt_sealevel + n_m
+    elif alt_wgs84 is not None:
+        altitude_input_m = alt_wgs84
+    else:
+        altitude_input_m = Decimal(0)
+
+    coord_int = gps_to_dataspace_coord(
+        lat_s,
+        lon_s,
+        str(altitude_input_m),
+        clamp_to_surface=effective_clamp,
+    )
     coord_hex = coord_int.to_bytes(32, "big").hex()
     x, y, z, plane = coord_to_xyz(coord_int)
 

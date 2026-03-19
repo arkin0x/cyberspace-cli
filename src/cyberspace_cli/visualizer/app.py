@@ -30,6 +30,7 @@ class AppState:
 class CyberspaceVisualizerApp:
     FACE_BLACK_SUN_ELEV_DEG = 15.0
     FACE_BLACK_SUN_AZIM_DEG = -90.0
+    DEFAULT_EARTH_VIEW_ALTITUDE_KM = 12000.0
     def __init__(
         self,
         root: tk.Tk,
@@ -38,6 +39,7 @@ class CyberspaceVisualizerApp:
         initial_spawn_coord_hex: Optional[str] = None,
         initial_scale: float = 0.5,
         initial_grid_lines: int = 4,
+        initial_earth_altitude_km: float = DEFAULT_EARTH_VIEW_ALTITUDE_KM,
         mode: str = "dataspace",
         sector_bits: int = SECTOR_BITS_DEFAULT,
     ) -> None:
@@ -57,9 +59,20 @@ class CyberspaceVisualizerApp:
         self.spawn_coord_hex = initial_spawn_coord_hex or ""
         self.current_coord_hex = initial_current_coord_hex or ""
 
-        # --- Controls ---
-        controls = ttk.Frame(root, padding=10)
-        controls.pack(side=tk.LEFT, fill=tk.Y)
+        # --- Controls (scrollable) ---
+        controls_shell = ttk.Frame(root)
+        controls_shell.pack(side=tk.LEFT, fill=tk.Y)
+
+        self.controls_canvas = tk.Canvas(controls_shell, highlightthickness=0, borderwidth=0, width=390)
+        self.controls_scrollbar = ttk.Scrollbar(controls_shell, orient=tk.VERTICAL, command=self.controls_canvas.yview)
+        self.controls_canvas.configure(yscrollcommand=self.controls_scrollbar.set)
+        self.controls_canvas.pack(side=tk.LEFT, fill=tk.Y, expand=False)
+        self.controls_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        controls = ttk.Frame(self.controls_canvas, padding=10)
+        self.controls_window_id = self.controls_canvas.create_window((0, 0), window=controls, anchor="nw")
+        self.controls_canvas.bind("<Configure>", self._on_controls_canvas_configure)
+        controls.bind("<Configure>", self._on_controls_frame_configure)
 
         ttk.Label(controls, text="Cyberspace 3D", font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
 
@@ -81,6 +94,7 @@ class CyberspaceVisualizerApp:
         ttk.Button(controls, text="Render spawn/current", command=self.on_render_spawn_current).pack(
             fill=tk.X, pady=(6, 0)
         )
+
 
         ttk.Separator(controls).pack(fill=tk.X, pady=10)
 
@@ -118,6 +132,7 @@ class CyberspaceVisualizerApp:
 
         self.scale_var = tk.StringVar(value=str(initial_scale))
         self.grid_lines_var = tk.StringVar(value=str(initial_grid_lines))
+        self.earth_altitude_km_var = tk.StringVar(value=str(float(initial_earth_altitude_km)))
 
         self._labeled_entry(controls, "Latitude (deg)", self.lat_var)
         self._labeled_entry(controls, "Longitude (deg)", self.lon_var)
@@ -128,12 +143,14 @@ class CyberspaceVisualizerApp:
         ttk.Label(controls, text="Render Options", font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
         self._labeled_entry(controls, "Scale (e.g. 0.5)", self.scale_var)
         self._labeled_entry(controls, "Grid lines (e.g. 4)", self.grid_lines_var)
+        self._labeled_entry(controls, "Earth view altitude (km)", self.earth_altitude_km_var)
 
         self.show_midplane_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(controls, text="Show midplane", variable=self.show_midplane_var).pack(anchor="w", pady=(4, 0))
 
         ttk.Button(controls, text="Convert GPS + Render", command=self.on_render_gps).pack(fill=tk.X, pady=(10, 0))
         ttk.Button(controls, text="Reset view", command=self.on_reset_view).pack(fill=tk.X, pady=(6, 0))
+        ttk.Button(controls, text="View Earth", command=self.on_view_earth).pack(fill=tk.X, pady=(6, 0))
         ttk.Button(controls, text="Face black sun", command=self.on_face_black_sun).pack(fill=tk.X, pady=(6, 0))
         ttk.Button(controls, text="Toggle golden vectors", command=self.on_toggle_golden_vectors).pack(fill=tk.X, pady=(6, 0))
         ttk.Button(controls, text="Rotate mode", command=self.on_rotate_mode).pack(fill=tk.X, pady=(6, 0))
@@ -155,6 +172,11 @@ class CyberspaceVisualizerApp:
             value='Tip: drag rotates. If drag translates, toggle off toolbar Pan/Zoom (or click "Rotate mode").'
         )
         ttk.Label(controls, textvariable=self.status_var, foreground="#888").pack(anchor="w", pady=(10, 0))
+        self._bind_controls_mousewheel_tree(controls)
+        self._bind_controls_mousewheel(self.controls_canvas)
+
+        # Ensure initial scroll bounds are correct.
+        self._on_controls_frame_configure()
 
         # --- Figure ---
         fig_frame = ttk.Frame(root, padding=10)
@@ -174,6 +196,8 @@ class CyberspaceVisualizerApp:
         self.last_markers = []
         self.show_golden_vectors = False
         self.golden_markers = golden_vector_markers()
+        self.earth_view_enabled = False
+        self.earth_view_altitude_km = max(0.0, float(initial_earth_altitude_km))
 
         # Camera preset state (used to populate SceneConfig)
         self.elev_deg = SceneConfig().elev_deg
@@ -218,6 +242,43 @@ class CyberspaceVisualizerApp:
         elif mode == "zoom rect":
             tb.zoom()  # toggles off
 
+    def _on_controls_frame_configure(self, _evt=None) -> None:
+        canvas = getattr(self, "controls_canvas", None)
+        if canvas is None:
+            return
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _on_controls_canvas_configure(self, evt) -> None:
+        canvas = getattr(self, "controls_canvas", None)
+        window_id = getattr(self, "controls_window_id", None)
+        if canvas is None or window_id is None:
+            return
+        canvas.itemconfigure(window_id, width=evt.width)
+
+    def _bind_controls_mousewheel(self, widget) -> None:
+        widget.bind("<MouseWheel>", self._on_controls_mousewheel, add="+")
+        widget.bind("<Button-4>", self._on_controls_mousewheel, add="+")
+        widget.bind("<Button-5>", self._on_controls_mousewheel, add="+")
+
+    def _bind_controls_mousewheel_tree(self, widget) -> None:
+        self._bind_controls_mousewheel(widget)
+        for child in widget.winfo_children():
+            self._bind_controls_mousewheel_tree(child)
+
+    def _on_controls_mousewheel(self, event) -> None:
+        canvas = getattr(self, "controls_canvas", None)
+        if canvas is None:
+            return
+        if getattr(event, "num", None) == 4:
+            canvas.yview_scroll(-1, "units")
+            return
+        if getattr(event, "num", None) == 5:
+            canvas.yview_scroll(1, "units")
+            return
+        delta = getattr(event, "delta", 0)
+        if delta:
+            canvas.yview_scroll(-1 if delta > 0 else 1, "units")
+
     def _get_scene_config(self) -> SceneConfig:
         try:
             scale = float(self.scale_var.get().strip())
@@ -229,13 +290,30 @@ class CyberspaceVisualizerApp:
         except ValueError:
             grid_lines = 4
 
+        earth_view_altitude_km = None
+        if self.mode == "dataspace" and self.earth_view_enabled:
+            earth_view_altitude_km = float(self.earth_view_altitude_km)
+
         return SceneConfig(
             scale=scale,
             grid_lines=grid_lines,
             show_midplane=bool(self.show_midplane_var.get()),
             elev_deg=float(getattr(self, "elev_deg", SceneConfig().elev_deg)),
             azim_deg=float(getattr(self, "azim_deg", SceneConfig().azim_deg)),
+            earth_view_altitude_km=earth_view_altitude_km,
         )
+
+    def _parse_earth_altitude_km(self) -> float:
+        raw = self.earth_altitude_km_var.get().strip()
+        if not raw:
+            return 0.0
+        try:
+            altitude_km = float(raw)
+        except ValueError as e:
+            raise ValueError("Earth view altitude must be a number.") from e
+        if altitude_km < 0:
+            raise ValueError("Earth view altitude must be >= 0 km.")
+        return altitude_km
 
     def _render_scene(self, *, markers, sector_label: str = "") -> None:
         cfg = self._get_scene_config()
@@ -394,6 +472,7 @@ class CyberspaceVisualizerApp:
 
     def on_reset_view(self) -> None:
         self._ensure_rotate_mode()
+        self.earth_view_enabled = False
 
         # Back to default view.
         self.elev_deg = SceneConfig().elev_deg
@@ -416,6 +495,23 @@ class CyberspaceVisualizerApp:
 
         self._render_scene(markers=self.last_markers, sector_label=sector_label)
         self._set_status("View reset.")
+
+    def on_view_earth(self) -> None:
+        self._ensure_rotate_mode()
+
+        if self.mode != "dataspace":
+            self._set_status("View Earth is only available in dataspace mode.")
+            return
+
+        try:
+            self.earth_view_altitude_km = self._parse_earth_altitude_km()
+        except Exception as e:
+            self._set_status(f"Error: {e}")
+            return
+
+        self.earth_view_enabled = True
+        self._render_scene(markers=self.last_markers, sector_label="")
+        self._set_status(f"View Earth enabled (altitude: {self.earth_view_altitude_km:g} km).")
 
     def on_face_black_sun(self) -> None:
         """Set a deterministic view that faces the black sun (+Z / east)."""
@@ -476,6 +572,7 @@ def run_app(
     spawn_coord_hex: Optional[str] = None,
     scale: float = 0.5,
     grid_lines: int = 4,
+    earth_altitude_km: float = CyberspaceVisualizerApp.DEFAULT_EARTH_VIEW_ALTITUDE_KM,
     mode: str = "dataspace",
     sector_bits: int = SECTOR_BITS_DEFAULT,
 ) -> int:
@@ -486,6 +583,7 @@ def run_app(
         initial_spawn_coord_hex=spawn_coord_hex,
         initial_scale=scale,
         initial_grid_lines=grid_lines,
+        initial_earth_altitude_km=earth_altitude_km,
         mode=mode,
         sector_bits=sector_bits,
     )
@@ -499,6 +597,7 @@ def main(argv: list[str]) -> int:
     spawn = None
     scale = 0.5
     grid = 4
+    earth_altitude_km = CyberspaceVisualizerApp.DEFAULT_EARTH_VIEW_ALTITUDE_KM
     mode = "dataspace"
 
     it = iter(argv[1:])
@@ -515,10 +614,20 @@ def main(argv: list[str]) -> int:
             v = next(it, None)
             if v is not None:
                 grid = int(v)
+        elif a == "--earth-altitude-km":
+            v = next(it, None)
+            if v is not None:
+                earth_altitude_km = float(v)
         elif a == "--sector":
             mode = "sector"
-
-    return run_app(current_coord_hex=current, spawn_coord_hex=spawn, scale=scale, grid_lines=grid, mode=mode)
+    return run_app(
+        current_coord_hex=current,
+        spawn_coord_hex=spawn,
+        scale=scale,
+        grid_lines=grid,
+        earth_altitude_km=earth_altitude_km,
+        mode=mode,
+    )
 
 
 if __name__ == "__main__":
