@@ -2339,6 +2339,11 @@ def move(
                     typer.echo(f"plane={plane1} {_plane_name(plane1)}")
                     continue
 
+                # When sidestep is enabled, allow boundary crossings up to this
+                # ceiling.  Merkle streaming at h=25 takes ~50s per axis which is
+                # a practical upper bound for interactive use.
+                SIDESTEP_BOUNDARY_CEILING = 28
+
                 def _axis_step(axis: str, current: int, target: int) -> Tuple[int, int, bool]:
                     try:
                         r = choose_next_axis_value_toward(
@@ -2357,7 +2362,15 @@ def move(
                             raise
 
                         needed = find_lca_height(current, nxt)
-                        if needed != effective_max_lca_height + 1:
+                        if sidestep:
+                            # Sidestep uses streaming Merkle proofs (O(h) memory),
+                            # so we can afford higher LCA crossings.
+                            if needed > SIDESTEP_BOUNDARY_CEILING:
+                                raise ValueError(
+                                    f"{msg} (boundary crossing would require LCA height={needed}, "
+                                    f"exceeds sidestep ceiling={SIDESTEP_BOUNDARY_CEILING})"
+                                )
+                        elif needed != effective_max_lca_height + 1:
                             raise ValueError(
                                 f"{msg} (boundary crossing would require max_lca_height={needed}; "
                                 f"rerun with --max-lca-height {needed})"
@@ -2375,7 +2388,9 @@ def move(
                 hop_limit = effective_max_lca_height
                 boundary_axes = [a for a, used in (('X', bx), ('Y', by_), ('Z', bz)) if used]
                 if boundary_axes:
-                    hop_limit = effective_max_lca_height + 1
+                    # Use the actual max LCA needed across all boundary axes.
+                    boundary_heights = [h for h, used in ((hx, bx), (hy, by_), (hz, bz)) if used]
+                    hop_limit = max(boundary_heights) if boundary_heights else effective_max_lca_height + 1
                     typer.echo(
                         "LCA boundary encountered on axis "
                         + ",".join(boundary_axes)
