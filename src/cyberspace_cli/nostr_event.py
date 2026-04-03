@@ -158,3 +158,45 @@ def make_hop_event(
     ]
     tags.extend(_sector_tags_from_coord_hex(coord_hex))
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
+
+
+def make_sidestep_event(
+    *,
+    pubkey_hex: str,
+    created_at: int,
+    genesis_event_id: str,
+    previous_event_id: str,
+    prev_coord_hex: str,
+    coord_hex: str,
+    proof_hash_hex: str,
+    merkle_roots_hex: str,
+    merkle_proofs_hex: str,
+    lca_heights: tuple,
+    kind: int = 3333,
+) -> Dict[str, Any]:
+    """Create a sidestep movement event (kind 3333, A=sidestep).
+
+    Parameters
+    ----------
+    merkle_roots_hex : colon-separated hex string "M_x:M_y:M_z" (each 64 hex chars)
+    merkle_proofs_hex : colon-separated hex string "proof_x:proof_y:proof_z"
+        Each per-axis proof is concatenated sibling hashes (64*h hex chars per axis).
+        Empty string for trivial axes (h=0).
+    lca_heights : (hx, hy, hz) tuple of per-axis LCA heights
+    """
+    hx, hy, hz = lca_heights
+    tags: List[List[str]] = [
+        ["A", "sidestep"],
+        ["e", genesis_event_id, "", "genesis"],
+        ["e", previous_event_id, "", "previous"],
+        ["c", prev_coord_hex],
+        ["C", coord_hex],
+        ["proof", proof_hash_hex],
+        ["mr", merkle_roots_hex],
+        ["mp", merkle_proofs_hex],
+        ["hx", str(hx)],
+        ["hy", str(hy)],
+        ["hz", str(hz)],
+    ]
+    tags.extend(_sector_tags_from_coord_hex(coord_hex))
+    return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content=proof_hash_hex)
