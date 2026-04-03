@@ -1678,12 +1678,57 @@ def hyperjump_prev(
 
 
 # Maximum number of tag values per relay request.  Relays typically reject
-# filters whose total tag-value count exceeds ~2000.  With 3 axis tags the
-# per-axis budget is MAX_TAG_VALUES // 3, giving a max radius of roughly 333.
-MAX_TAG_VALUES = 2000
+# filters whose total tag-value count exceeds ~2000.  We use 1900 to be safe.
+# By querying a SINGLE axis (Y) we can use the full budget for one axis,
+# giving a max radius of 950 per request (±950 = 1901 values).
+MAX_TAG_VALUES = 1900
+
+# Max radius that fits in a single relay request (±_MAX_SINGLE_RADIUS = 1901 values).
+_MAX_SINGLE_RADIUS = (MAX_TAG_VALUES - 1) // 2  # 949
 
 # Progressive expansion schedule: radii to try in order when --expand is used.
-_EXPAND_RADII = [2, 5, 10, 25, 50, 100, 200, 333]
+# Values > _MAX_SINGLE_RADIUS require multiple chunked requests.
+_EXPAND_RADII = [10, 50, 100, 250, 500, 950, 1900, 3800, 7600, 15000]
+
+
+def _single_axis_query(
+    relay: str,
+    axis_center: int,
+    radius: int,
+    limit: int,
+    verbose: bool,
+    axis: str = "Y",
+) -> List[dict]:
+    """Query hyperjumps along a single axis, chunking if radius > _MAX_SINGLE_RADIUS.
+
+    For large radii we split the range into chunks of MAX_TAG_VALUES values
+    and issue separate requests, accumulating all results.
+    """
+    full_range = _axis_value_range(axis_center, radius)
+    if len(full_range) <= MAX_TAG_VALUES:
+        # Fits in one request.
+        return _nak_req_events(
+            relay=relay,
+            kind=HYPERJUMP_KIND,
+            tags={axis: full_range},
+            limit=limit,
+            verbose=verbose,
+        )
+    # Split into chunks of MAX_TAG_VALUES sector values.
+    all_events: List[dict] = []
+    for i in range(0, len(full_range), MAX_TAG_VALUES):
+        chunk = full_range[i : i + MAX_TAG_VALUES]
+        if verbose:
+            typer.echo(f"  chunk {i // MAX_TAG_VALUES + 1}: {chunk[0]}..{chunk[-1]} ({len(chunk)} values)")
+        events = _nak_req_events(
+            relay=relay,
+            kind=HYPERJUMP_KIND,
+            tags={axis: chunk},
+            limit=limit,
+            verbose=verbose,
+        )
+        all_events.extend(events)
+    return all_events
 
 
 def _load_hyperjump_cache() -> List[dict]:
@@ -1843,7 +1888,7 @@ def hyperjump_nearest(
         10,
         "--radius",
         min=0,
-        help="Sector scan radius around current sector for X/Y/Z (default: ±10).",
+        help="Sector scan radius along the Y axis (default: ±10). Large radii use multiple relay requests.",
     ),
     limit: int = typer.Option(
         2000,
@@ -1884,10 +1929,11 @@ def hyperjump_nearest(
 ) -> None:
     """Find nearby hyperjumps and print directions from the current position.
 
-    By default, queries the relay for hyperjumps within --radius sectors.
-    Use --expand to automatically widen the search until at least one
-    hyperjump is found. Use --cache to search the local cache (created by
-    `hyperjump sync`) for instant results without relay queries.
+    Queries the relay along a single axis (Y) to find hyperjumps within
+    --radius sectors, then ranks by full 3D proximity.  Use --expand to
+    automatically widen the search until at least one hyperjump is found.
+    Use --cache to search the local cache (created by `hyperjump sync`)
+    for instant results without relay queries.
     """
     state = load_state()
     default_plane = 0
@@ -1934,23 +1980,21 @@ def hyperjump_nearest(
         _print_ranked_hyperjumps(ranked, cur_coord_hex, cx, cy, cz, cplane)
         return
 
-    # ---------- Expand mode: progressive radius expansion ----------
+    # ---------- Expand mode: progressive radius expansion (single-axis) ----------
     if expand:
-        # Build the radius schedule: start small, grow until we find something.
-        radii = [r for r in _EXPAND_RADII if r <= (MAX_TAG_VALUES // 3 - 1) // 2]
+        # Query only the Y axis, expanding outward.  Every hyperjump has X, Y,
+        # and Z tags so filtering on one axis still finds all HJs within that
+        # sector band.  Results are ranked by full 3D proximity afterwards.
         by_coord: Dict[str, dict] = {}
         final_radius = 0
-        for r in radii:
+        for r in _EXPAND_RADII:
             if verbose:
-                typer.echo(f"Searching radius={r} ...")
-            events = _nak_req_events(
+                n_chunks = max(1, (2 * r + 1 + MAX_TAG_VALUES - 1) // MAX_TAG_VALUES)
+                typer.echo(f"Searching Y-axis radius={r} ({n_chunks} request(s)) ...")
+            events = _single_axis_query(
                 relay=relay,
-                kind=HYPERJUMP_KIND,
-                tags={
-                    "X": _axis_value_range(sx, r),
-                    "Y": _axis_value_range(sy, r),
-                    "Z": _axis_value_range(sz, r),
-                },
+                axis_center=sy,
+                radius=r,
                 limit=limit,
                 verbose=verbose,
             )
@@ -1960,7 +2004,7 @@ def hyperjump_nearest(
                 break
         if not by_coord:
             typer.echo(
-                f"No hyperjumps found after expanding to radius={final_radius}. "
+                f"No hyperjumps found after expanding Y-axis to radius={final_radius}. "
                 "Try `hyperjump sync` + `hyperjump nearest --cache` for a global search."
             )
             return
@@ -1970,21 +2014,17 @@ def hyperjump_nearest(
         _print_ranked_hyperjumps(ranked, cur_coord_hex, cx, cy, cz, cplane, search_radius=final_radius)
         return
 
-    # ---------- Fixed-radius mode (original behaviour) ----------
-    # Clamp radius so we don't exceed relay tag-value limits.
-    max_per_axis = MAX_TAG_VALUES // 3
-    effective_radius = min(radius, (max_per_axis - 1) // 2)
-    if effective_radius != radius and verbose:
-        typer.echo(f"Clamped radius from {radius} to {effective_radius} (relay tag limit).")
+    # ---------- Fixed-radius mode (single-axis query) ----------
+    # Query along the Y axis only; for large radii we chunk automatically.
+    effective_radius = radius
+    if verbose:
+        n_chunks = max(1, (2 * radius + 1 + MAX_TAG_VALUES - 1) // MAX_TAG_VALUES)
+        typer.echo(f"Querying Y-axis radius={radius} ({n_chunks} request(s)) ...")
 
-    events = _nak_req_events(
+    events = _single_axis_query(
         relay=relay,
-        kind=HYPERJUMP_KIND,
-        tags={
-            "X": _axis_value_range(sx, effective_radius),
-            "Y": _axis_value_range(sy, effective_radius),
-            "Z": _axis_value_range(sz, effective_radius),
-        },
+        axis_center=sy,
+        radius=effective_radius,
         limit=limit,
         verbose=verbose,
     )
