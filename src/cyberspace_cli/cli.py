@@ -20,6 +20,7 @@ from cyberspace_cli.nostr_event import (
     make_encrypted_content_event,
     make_hop_event,
     make_hyperjump_event,
+    make_sidestep_event,
     make_spawn_event,
 )
 from cyberspace_cli.parsing import normalize_hex_32, parse_destination_xyz_or_coord
@@ -52,7 +53,13 @@ from cyberspace_core.location_encryption import (
     derive_region_key_material_scan,
     encrypt_with_location_key,
 )
-from cyberspace_core.movement import compute_axis_cantor, compute_hop_proof, compute_movement_proof_xyz, find_lca_height
+from cyberspace_core.movement import (
+    compute_axis_cantor,
+    compute_hop_proof,
+    compute_movement_proof_xyz,
+    compute_sidestep_proof,
+    find_lca_height,
+)
 from cyberspace_core.movement_debug import axis_cantor_debug
 
 app = typer.Typer(no_args_is_help=True)
@@ -2039,21 +2046,31 @@ def move(
         min=1,
         help="Max anchor events to query when validating a hyperjump destination.",
     ),
+    sidestep: bool = typer.Option(
+        False,
+        "--sidestep",
+        help="Use Merkle sidestep proof instead of Cantor hop proof. Required for LCA heights above Cantor capacity.",
+    ),
     exit_hyperjump: bool = typer.Option(
         False,
         "--exit-hyperjump",
         help="Allow a normal hop while on the hyperjump system (explicitly exits the hyperjump flow).",
     ),
 ) -> None:
-    """Move locally by appending a hop or hyperjump event to the active chain."""
+    """Move locally by appending a hop, sidestep, or hyperjump event to the active chain."""
     if isinstance(hyperjump, OptionInfo):
         hyperjump = False
     if isinstance(hyperjump_relay, OptionInfo):
         hyperjump_relay = DEFAULT_HYPERJUMP_RELAY
     if isinstance(hyperjump_query_limit, OptionInfo):
         hyperjump_query_limit = 25
+    if isinstance(sidestep, OptionInfo):
+        sidestep = False
     if isinstance(exit_hyperjump, OptionInfo):
         exit_hyperjump = False
+    if sidestep and hyperjump:
+        typer.echo("--sidestep cannot be combined with --hyperjump.", err=True)
+        raise typer.Exit(code=2)
     state = _require_state()
     label = _require_active_chain_label(state)
 
@@ -2112,6 +2129,7 @@ def move(
         plane2: int,
         max_compute_height: int,
         hyperjump_to_height: Optional[str] = None,
+        use_sidestep: bool = False,
     ):
         nonlocal x1, y1, z1, plane1, prev_event_id
 
@@ -2131,40 +2149,81 @@ def move(
 
         coord_hex = _coord_hex_from_xyz(x2, y2, z2, plane2)
         proof = None
+        sidestep_proof = None
 
         if hyperjump_to_height is None:
             # Guard against absurd hops: LCA height drives O(2^h) compute.
             hx = find_lca_height(x1, x2)
             hy = find_lca_height(y1, y2)
             hz = find_lca_height(z1, z2)
-            if max(hx, hy, hz) > max_compute_height:
-                typer.echo(
-                    "Move is too large for a single hop. "
-                    f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
-                    f"limit={max_compute_height}. "
-                    "Use smaller hops (or raise --max-lca-height if you really intend to do an expensive hop).",
-                    err=True,
-                )
-                raise typer.Exit(code=2)
 
-            try:
-                proof = compute_hop_proof(
-                    x1,
-                    y1,
-                    z1,
-                    x2,
-                    y2,
-                    z2,
-                    plane=plane2,
-                    previous_event_id_hex=prev_event_id,
-                    max_compute_height=max_compute_height,
-                )
-            except ValueError as e:
-                typer.echo(f"Failed to compute movement proof: {e}", err=True)
-                raise typer.Exit(code=2)
+            if use_sidestep:
+                # Sidestep: use Merkle proofs on all axes (no max_compute_height limit
+                # because streaming Merkle only needs O(h) memory, not O(2^h)).
+                try:
+                    sidestep_proof = compute_sidestep_proof(
+                        x1,
+                        y1,
+                        z1,
+                        x2,
+                        y2,
+                        z2,
+                        plane=plane2,
+                        previous_event_id_hex=prev_event_id,
+                    )
+                except ValueError as e:
+                    typer.echo(f"Failed to compute sidestep proof: {e}", err=True)
+                    raise typer.Exit(code=2)
+            else:
+                if max(hx, hy, hz) > max_compute_height:
+                    typer.echo(
+                        "Move is too large for a single hop. "
+                        f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
+                        f"limit={max_compute_height}. "
+                        "Use --sidestep for Merkle proof, or raise --max-lca-height for an expensive Cantor hop.",
+                        err=True,
+                    )
+                    raise typer.Exit(code=2)
+
+                try:
+                    proof = compute_hop_proof(
+                        x1,
+                        y1,
+                        z1,
+                        x2,
+                        y2,
+                        z2,
+                        plane=plane2,
+                        previous_event_id_hex=prev_event_id,
+                        max_compute_height=max_compute_height,
+                    )
+                except ValueError as e:
+                    typer.echo(f"Failed to compute movement proof: {e}", err=True)
+                    raise typer.Exit(code=2)
 
         created_at = int(time.time())
-        if hyperjump_to_height is None:
+        if sidestep_proof is not None:
+            # Encode Merkle roots and inclusion proofs as colon-separated hex
+            merkle_roots_hex = ":".join(
+                root.hex() for root in (sidestep_proof.merkle_x, sidestep_proof.merkle_y, sidestep_proof.merkle_z)
+            )
+            merkle_proofs_hex = ":".join(
+                "".join(s.hex() for s in sidestep_proof.inclusion_proofs[axis])
+                for axis in ("x", "y", "z")
+            )
+            movement_event = make_sidestep_event(
+                pubkey_hex=state.pubkey_hex,
+                created_at=created_at,
+                genesis_event_id=genesis_id,
+                previous_event_id=prev_event_id,
+                prev_coord_hex=state.coord_hex,
+                coord_hex=coord_hex,
+                proof_hash_hex=sidestep_proof.proof_hash,
+                merkle_roots_hex=merkle_roots_hex,
+                merkle_proofs_hex=merkle_proofs_hex,
+                lca_heights=sidestep_proof.lca_heights,
+            )
+        elif hyperjump_to_height is None:
             movement_event = make_hop_event(
                 pubkey_hex=state.pubkey_hex,
                 created_at=created_at,
@@ -2194,14 +2253,19 @@ def move(
 
         typer.echo(f"Moved. chain={label} len={chains.chain_length(label)}")
         typer.echo(f"coord: 0x{coord_hex}")
-        if proof is not None:
+        if sidestep_proof is not None:
+            typer.echo(f"action: sidestep")
+            typer.echo(f"proof: {sidestep_proof.proof_hash}")
+            typer.echo(f"terrain_k: {sidestep_proof.terrain_k}")
+            typer.echo(f"lca_heights: X={sidestep_proof.lca_heights[0]} Y={sidestep_proof.lca_heights[1]} Z={sidestep_proof.lca_heights[2]}")
+        elif proof is not None:
             typer.echo(f"proof: {proof.proof_hash}")
             typer.echo(f"terrain_k: {proof.terrain_k}")
         else:
             typer.echo(f"action: hyperjump")
             typer.echo(f"B: {hyperjump_to_height}")
 
-        return proof
+        return sidestep_proof or proof
 
     def _resolve_hyperjump_height_for_destination(*, x: int, y: int, z: int, plane: int) -> Optional[str]:
         if not hyperjump:
@@ -2264,6 +2328,7 @@ def move(
                         plane2=target_plane,
                         max_compute_height=effective_max_lca_height,
                         hyperjump_to_height=hyperjump_to_height if final_hyperjump else None,
+                        use_sidestep=sidestep,
                     )
                     hops += 1
 
@@ -2329,6 +2394,7 @@ def move(
                     plane2=plane1,
                     max_compute_height=hop_limit,
                     hyperjump_to_height=hyperjump_to_height if final_hyperjump else None,
+                    use_sidestep=sidestep,
                 )
                 hops += 1
 
@@ -2364,6 +2430,7 @@ def move(
             plane2=dest.plane,
             max_compute_height=effective_max_lca_height,
             hyperjump_to_height=hyperjump_to_height,
+            use_sidestep=sidestep,
         )
         return
 
@@ -2380,6 +2447,7 @@ def move(
             z2=z1 + dz,
             plane2=plane1,
             max_compute_height=effective_max_lca_height,
+            use_sidestep=sidestep,
         )
         return
 
@@ -2395,6 +2463,7 @@ def move(
         z2=z1,
         plane2=plane2,
         max_compute_height=effective_max_lca_height,
+        use_sidestep=sidestep,
     )
 
 
