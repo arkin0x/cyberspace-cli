@@ -2342,7 +2342,10 @@ def move(
                 # When sidestep is enabled, allow boundary crossings up to this
                 # ceiling.  Merkle streaming at h=25 takes ~50s per axis which is
                 # a practical upper bound for interactive use.
-                SIDESTEP_BOUNDARY_CEILING = 28
+                # With the parallel C-accelerated Merkle engine, h33 takes ~15min
+                # on a 16-core system (~10M leaves/sec). h36 takes ~1.8 hours.
+                # h40 ~= 30 hours. Beyond 40 is impractical on consumer hardware.
+                SIDESTEP_BOUNDARY_CEILING = 40
 
                 def _axis_step(axis: str, current: int, target: int) -> Tuple[int, int, bool]:
                     try:
