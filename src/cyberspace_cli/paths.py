@@ -25,3 +25,7 @@ def chains_dir() -> Path:
 
 def config_path() -> Path:
     return cyberspace_home() / "config.json"
+
+
+def hyperjump_cache_path() -> Path:
+    return cyberspace_home() / "hyperjump_cache.jsonl"

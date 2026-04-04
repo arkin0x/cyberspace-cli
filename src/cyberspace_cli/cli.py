@@ -14,6 +14,7 @@ from typer.models import OptionInfo
 from cyberspace_cli import chains
 from cyberspace_cli import targets
 from cyberspace_cli.config import load_config, save_config
+from cyberspace_cli.paths import hyperjump_cache_path
 from cyberspace_cli.helptext import HELP_TEXT
 from cyberspace_cli.nostr_event import (
     make_encrypted_content_event,
@@ -1676,75 +1677,81 @@ def hyperjump_prev(
     _print_hyperjump_anchor(block_height=target_block_height, coord_hex=coord_hex, event=ev, xyzp=xyzp)
 
 
-@hyperjump_app.command("nearest")
-def hyperjump_nearest(
-    relay: str = typer.Option(
-        DEFAULT_HYPERJUMP_RELAY,
-        "--relay",
-        help="Relay URL for querying hyperjump anchor events (kind=321).",
-    ),
-    radius: int = typer.Option(
-        10,
-        "--radius",
-        min=0,
-        help="Sector scan radius around current sector for X/Y/Z (default: ±10).",
-    ),
-    limit: int = typer.Option(
-        2000,
-        "--limit",
-        min=1,
-        help="Maximum number of matching events to ask from the relay.",
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Print the Nostr REQ filter and raw nak output for debugging.",
-    ),
-    coord: Optional[str] = typer.Option(
-        None,
-        "--coord",
-        help="Coordinate override used to calculate nearest hyperjumps (defaults to current coord).",
-    ),
-) -> None:
-    """Find nearby hyperjumps and print directions from the current hyperjump system position."""
-    state = load_state()
-    default_plane = 0
-    state_coord_int = None
-    if state is not None:
-        state_coord_int = int.from_bytes(bytes.fromhex(state.coord_hex), "big")
-        _, _, _, default_plane = coord_to_xyz(state_coord_int)
+# Maximum number of tag values per relay request.  Relays typically reject
+# filters whose total tag-value count exceeds ~2000.  We use 1900 to be safe.
+# By querying a SINGLE axis (Y) we can use the full budget for one axis,
+# giving a max radius of 950 per request (±950 = 1901 values).
+MAX_TAG_VALUES = 1900
 
-    if coord is None:
-        if state is None or state_coord_int is None:
-            typer.echo("No local state found. Run `cyberspace spawn` first or provide --coord.", err=True)
-            raise typer.Exit(code=1)
-        cur_coord_hex = state.coord_hex
-        cur_coord_int = state_coord_int
-        cx, cy, cz, cplane = coord_to_xyz(cur_coord_int)
-    else:
+# Max radius that fits in a single relay request (±_MAX_SINGLE_RADIUS = 1901 values).
+_MAX_SINGLE_RADIUS = (MAX_TAG_VALUES - 1) // 2  # 949
+
+# Progressive expansion schedule: radii to try in order when --expand is used.
+# Values > _MAX_SINGLE_RADIUS require multiple chunked requests.
+_EXPAND_RADII = [10, 50, 100, 250, 500, 950, 1900, 3800, 7600, 15000]
+
+
+def _single_axis_query(
+    relay: str,
+    axis_center: int,
+    radius: int,
+    limit: int,
+    verbose: bool,
+    axis: str = "Y",
+) -> List[dict]:
+    """Query hyperjumps along a single axis, chunking if radius > _MAX_SINGLE_RADIUS.
+
+    For large radii we split the range into chunks of MAX_TAG_VALUES values
+    and issue separate requests, accumulating all results.
+    """
+    full_range = _axis_value_range(axis_center, radius)
+    if len(full_range) <= MAX_TAG_VALUES:
+        # Fits in one request.
+        return _nak_req_events(
+            relay=relay,
+            kind=HYPERJUMP_KIND,
+            tags={axis: full_range},
+            limit=limit,
+            verbose=verbose,
+        )
+    # Split into chunks of MAX_TAG_VALUES sector values.
+    all_events: List[dict] = []
+    for i in range(0, len(full_range), MAX_TAG_VALUES):
+        chunk = full_range[i : i + MAX_TAG_VALUES]
+        if verbose:
+            typer.echo(f"  chunk {i // MAX_TAG_VALUES + 1}: {chunk[0]}..{chunk[-1]} ({len(chunk)} values)")
+        events = _nak_req_events(
+            relay=relay,
+            kind=HYPERJUMP_KIND,
+            tags={axis: chunk},
+            limit=limit,
+            verbose=verbose,
+        )
+        all_events.extend(events)
+    return all_events
+
+
+def _load_hyperjump_cache() -> List[dict]:
+    """Load locally cached hyperjump events from the JSONL file."""
+    cache = hyperjump_cache_path()
+    if not cache.exists():
+        return []
+    events: List[dict] = []
+    for line in cache.read_text().splitlines():
+        s = line.strip()
+        if not s or not s.startswith("{"):
+            continue
         try:
-            parsed = parse_destination_xyz_or_coord(coord, default_plane=default_plane)
-        except ValueError as e:
-            raise typer.BadParameter(str(e)) from e
-        cx, cy, cz, cplane = parsed.x, parsed.y, parsed.z, parsed.plane
-        cur_coord_hex = _coord_hex_from_xyz(cx, cy, cz, cplane)
-    sx = cx >> SECTOR_BITS
-    sy = cy >> SECTOR_BITS
-    sz = cz >> SECTOR_BITS
+            obj = json.loads(s)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            events.append(obj)
+    return events
 
-    events = _nak_req_events(
-        relay=relay,
-        kind=HYPERJUMP_KIND,
-        tags={
-            "X": _axis_value_range(sx, radius),
-            "Y": _axis_value_range(sy, radius),
-            "Z": _axis_value_range(sz, radius),
-        },
-        limit=limit,
-        verbose=verbose,
-    )
 
+def _dedup_hyperjumps(events: List[dict]) -> Dict[str, dict]:
+    """Deduplicate hyperjump events by coordinate, keeping the most recent."""
     by_coord: Dict[str, dict] = {}
     for ev in events:
         c = _get_tag(ev, "C")
@@ -1757,11 +1764,15 @@ def hyperjump_nearest(
         prior = by_coord.get(c_norm)
         if prior is None or int(ev.get("created_at", 0)) > int(prior.get("created_at", 0)):
             by_coord[c_norm] = ev
+    return by_coord
 
-    if not by_coord:
-        typer.echo("No nearby hyperjumps found.")
-        return
 
+def _rank_hyperjumps(
+    by_coord: Dict[str, dict],
+    sx: int, sy: int, sz: int,
+    cx: int, cy: int, cz: int,
+) -> List[Tuple[int, int, str, dict, Tuple[int, int, int, int]]]:
+    """Rank hyperjumps by sector distance then axis distance from current position."""
     ranked: List[Tuple[int, int, str, dict, Tuple[int, int, int, int]]] = []
     for coord_hex, ev in by_coord.items():
         coord_int = int.from_bytes(bytes.fromhex(coord_hex), "big")
@@ -1772,13 +1783,24 @@ def hyperjump_nearest(
         sector_dist = abs(hsx - sx) + abs(hsy - sy) + abs(hsz - sz)
         axis_dist = abs(x - cx) + abs(y - cy) + abs(z - cz)
         ranked.append((sector_dist, axis_dist, coord_hex, ev, (x, y, z, plane)))
-
     ranked.sort(key=lambda it: (it[0], it[1], it[2]))
+    return ranked
+
+
+def _print_ranked_hyperjumps(
+    ranked: List[Tuple[int, int, str, dict, Tuple[int, int, int, int]]],
+    cur_coord_hex: str,
+    cx: int, cy: int, cz: int, cplane: int,
+    search_radius: Optional[int] = None,
+) -> None:
+    """Print ranked hyperjump results in the standard output format."""
     typer.echo(f"current: 0x{cur_coord_hex}")
     typer.echo(f"x={cx}")
     typer.echo(f"y={cy}")
     typer.echo(f"z={cz}")
     typer.echo(f"plane={cplane} {_plane_label(cplane)}")
+    if search_radius is not None:
+        typer.echo(f"search_radius={search_radius}")
     typer.echo(f"nearby_hyperjumps: {len(ranked)}")
 
     for i, (sector_dist, _axis_dist, coord_hex, ev, (x, y, z, plane)) in enumerate(ranked, start=1):
@@ -1801,6 +1823,224 @@ def hyperjump_nearest(
         typer.echo(f"sector_distance={sector_dist}")
         typer.echo(f"direction={dir_hint}")
         typer.echo(f"suggested_move=cyberspace move --to {x},{y},{z},{plane}")
+
+
+@hyperjump_app.command("sync")
+def hyperjump_sync(
+    relay: str = typer.Option(
+        DEFAULT_HYPERJUMP_RELAY,
+        "--relay",
+        help="Relay URL for querying hyperjump anchor events (kind=321).",
+    ),
+    limit: int = typer.Option(
+        10000,
+        "--limit",
+        min=1,
+        help="Maximum events per relay request (relay may cap this).",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print progress details.",
+    ),
+) -> None:
+    """Download all hyperjump anchor events from the relay and cache locally.
+
+    Creates a local JSONL file at ~/.cyberspace/hyperjump_cache.jsonl so that
+    `hyperjump nearest --cache` can search instantly without relay queries.
+    Re-run to refresh the cache with the latest events.
+    """
+    typer.echo(f"Fetching hyperjump anchors from {relay} ...")
+    events = _nak_req_events(
+        relay=relay,
+        kind=HYPERJUMP_KIND,
+        tags={},
+        limit=limit,
+        timeout_seconds=60,
+        verbose=verbose,
+    )
+    if not events:
+        typer.echo("No hyperjump events found on the relay.")
+        return
+
+    # Deduplicate by coordinate (keep most recent per coord).
+    by_coord = _dedup_hyperjumps(events)
+
+    cache = hyperjump_cache_path()
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    with open(cache, "w") as f:
+        for ev in by_coord.values():
+            f.write(json.dumps(ev, separators=(",", ":"), ensure_ascii=False) + "\n")
+
+    typer.echo(f"Cached {len(by_coord)} unique hyperjump(s) to {cache}")
+    typer.echo(f"(from {len(events)} total event(s) fetched)")
+
+
+@hyperjump_app.command("nearest")
+def hyperjump_nearest(
+    relay: str = typer.Option(
+        DEFAULT_HYPERJUMP_RELAY,
+        "--relay",
+        help="Relay URL for querying hyperjump anchor events (kind=321).",
+    ),
+    radius: int = typer.Option(
+        10,
+        "--radius",
+        min=0,
+        help="Sector scan radius along the Y axis (default: ±10). Large radii use multiple relay requests.",
+    ),
+    limit: int = typer.Option(
+        2000,
+        "--limit",
+        min=1,
+        help="Maximum number of matching events to ask from the relay.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print the Nostr REQ filter and raw nak output for debugging.",
+    ),
+    coord: Optional[str] = typer.Option(
+        None,
+        "--coord",
+        help="Coordinate override used to calculate nearest hyperjumps (defaults to current coord).",
+    ),
+    expand: bool = typer.Option(
+        False,
+        "--expand",
+        "-e",
+        help="Progressively expand search radius until a hyperjump is found (overrides --radius).",
+    ),
+    cache: bool = typer.Option(
+        False,
+        "--cache",
+        "-c",
+        help="Search the local cache instead of querying the relay. Run `hyperjump sync` first.",
+    ),
+    count: int = typer.Option(
+        0,
+        "--count",
+        "-n",
+        min=0,
+        help="Limit display to the N nearest results (0 = show all).",
+    ),
+) -> None:
+    """Find nearby hyperjumps and print directions from the current position.
+
+    Queries the relay along a single axis (Y) to find hyperjumps within
+    --radius sectors, then ranks by full 3D proximity.  Use --expand to
+    automatically widen the search until at least one hyperjump is found.
+    Use --cache to search the local cache (created by `hyperjump sync`)
+    for instant results without relay queries.
+    """
+    state = load_state()
+    default_plane = 0
+    state_coord_int = None
+    if state is not None:
+        state_coord_int = int.from_bytes(bytes.fromhex(state.coord_hex), "big")
+        _, _, _, default_plane = coord_to_xyz(state_coord_int)
+
+    if coord is None:
+        if state is None or state_coord_int is None:
+            typer.echo("No local state found. Run `cyberspace spawn` first or provide --coord.", err=True)
+            raise typer.Exit(code=1)
+        cur_coord_hex = state.coord_hex
+        cur_coord_int = state_coord_int
+        cx, cy, cz, cplane = coord_to_xyz(cur_coord_int)
+    else:
+        try:
+            parsed = parse_destination_xyz_or_coord(coord, default_plane=default_plane)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
+        cx, cy, cz, cplane = parsed.x, parsed.y, parsed.z, parsed.plane
+        cur_coord_hex = _coord_hex_from_xyz(cx, cy, cz, cplane)
+
+    sx = cx >> SECTOR_BITS
+    sy = cy >> SECTOR_BITS
+    sz = cz >> SECTOR_BITS
+
+    # ---------- Cache mode: search local file, no relay queries ----------
+    if cache:
+        cached_events = _load_hyperjump_cache()
+        if not cached_events:
+            typer.echo(
+                "No local cache found. Run `cyberspace hyperjump sync` first.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        by_coord = _dedup_hyperjumps(cached_events)
+        ranked = _rank_hyperjumps(by_coord, sx, sy, sz, cx, cy, cz)
+        if not ranked:
+            typer.echo("No hyperjumps found in cache.")
+            return
+        if count > 0:
+            ranked = ranked[:count]
+        _print_ranked_hyperjumps(ranked, cur_coord_hex, cx, cy, cz, cplane)
+        return
+
+    # ---------- Expand mode: progressive radius expansion (single-axis) ----------
+    if expand:
+        # Query only the Y axis, expanding outward.  Every hyperjump has X, Y,
+        # and Z tags so filtering on one axis still finds all HJs within that
+        # sector band.  Results are ranked by full 3D proximity afterwards.
+        by_coord: Dict[str, dict] = {}
+        final_radius = 0
+        for r in _EXPAND_RADII:
+            if verbose:
+                n_chunks = max(1, (2 * r + 1 + MAX_TAG_VALUES - 1) // MAX_TAG_VALUES)
+                typer.echo(f"Searching Y-axis radius={r} ({n_chunks} request(s)) ...")
+            events = _single_axis_query(
+                relay=relay,
+                axis_center=sy,
+                radius=r,
+                limit=limit,
+                verbose=verbose,
+            )
+            by_coord = _dedup_hyperjumps(events)
+            final_radius = r
+            if by_coord:
+                break
+        if not by_coord:
+            typer.echo(
+                f"No hyperjumps found after expanding Y-axis to radius={final_radius}. "
+                "Try `hyperjump sync` + `hyperjump nearest --cache` for a global search."
+            )
+            return
+        ranked = _rank_hyperjumps(by_coord, sx, sy, sz, cx, cy, cz)
+        if count > 0:
+            ranked = ranked[:count]
+        _print_ranked_hyperjumps(ranked, cur_coord_hex, cx, cy, cz, cplane, search_radius=final_radius)
+        return
+
+    # ---------- Fixed-radius mode (single-axis query) ----------
+    # Query along the Y axis only; for large radii we chunk automatically.
+    effective_radius = radius
+    if verbose:
+        n_chunks = max(1, (2 * radius + 1 + MAX_TAG_VALUES - 1) // MAX_TAG_VALUES)
+        typer.echo(f"Querying Y-axis radius={radius} ({n_chunks} request(s)) ...")
+
+    events = _single_axis_query(
+        relay=relay,
+        axis_center=sy,
+        radius=effective_radius,
+        limit=limit,
+        verbose=verbose,
+    )
+
+    by_coord = _dedup_hyperjumps(events)
+
+    if not by_coord:
+        typer.echo("No nearby hyperjumps found.")
+        if not expand:
+            typer.echo("Hint: try --expand to progressively widen the search, or --cache with `hyperjump sync`.")
+        return
+
+    ranked = _rank_hyperjumps(by_coord, sx, sy, sz, cx, cy, cz)
+    if count > 0:
+        ranked = ranked[:count]
+    _print_ranked_hyperjumps(ranked, cur_coord_hex, cx, cy, cz, cplane, search_radius=effective_radius)
 
 
 @app.command()
@@ -2139,6 +2379,11 @@ def move(
                     typer.echo(f"plane={plane1} {_plane_name(plane1)}")
                     continue
 
+                # When sidestep is enabled, allow boundary crossings up to this
+                # ceiling.  Merkle streaming at h=25 takes ~50s per axis which is
+                # a practical upper bound for interactive use.
+                SIDESTEP_BOUNDARY_CEILING = 28
+
                 def _axis_step(axis: str, current: int, target: int) -> Tuple[int, int, bool]:
                     try:
                         r = choose_next_axis_value_toward(
@@ -2157,7 +2402,15 @@ def move(
                             raise
 
                         needed = find_lca_height(current, nxt)
-                        if needed != effective_max_lca_height + 1:
+                        if sidestep:
+                            # Sidestep uses streaming Merkle proofs (O(h) memory),
+                            # so we can afford higher LCA crossings.
+                            if needed > SIDESTEP_BOUNDARY_CEILING:
+                                raise ValueError(
+                                    f"{msg} (boundary crossing would require LCA height={needed}, "
+                                    f"exceeds sidestep ceiling={SIDESTEP_BOUNDARY_CEILING})"
+                                )
+                        elif needed != effective_max_lca_height + 1:
                             raise ValueError(
                                 f"{msg} (boundary crossing would require max_lca_height={needed}; "
                                 f"rerun with --max-lca-height {needed})"
@@ -2175,7 +2428,9 @@ def move(
                 hop_limit = effective_max_lca_height
                 boundary_axes = [a for a, used in (('X', bx), ('Y', by_), ('Z', bz)) if used]
                 if boundary_axes:
-                    hop_limit = effective_max_lca_height + 1
+                    # Use the actual max LCA needed across all boundary axes.
+                    boundary_heights = [h for h, used in ((hx, bx), (hy, by_), (hz, bz)) if used]
+                    hop_limit = max(boundary_heights) if boundary_heights else effective_max_lca_height + 1
                     typer.echo(
                         "LCA boundary encountered on axis "
                         + ",".join(boundary_axes)
