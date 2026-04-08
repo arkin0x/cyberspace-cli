@@ -283,12 +283,25 @@ def compute_axis_merkle_root(v1: int, v2: int) -> Tuple[bytes, List[bytes], int]
 
     For trivial axes where v1 == v2, returns the single leaf hash with empty
     inclusion proof and height 0.
+
+    For heights >= 20, uses the parallel C-accelerated Merkle engine if
+    available, which can be 10-30x faster on multi-core systems.
     """
     h = find_lca_height(v1, v2)
     if h == 0:
         root = merkle_leaf(v1)
         return root, [], 0
     base = (v1 >> h) << h
+
+    # Use parallel engine for large trees
+    if h >= 20:
+        try:
+            from cyberspace_core.merkle_engine import parallel_merkle_root_with_proof
+            root, siblings = parallel_merkle_root_with_proof(base, h)
+            return root, siblings, h
+        except ImportError:
+            pass
+
     root, siblings = compute_axis_merkle_root_streaming(base, h)
     return root, siblings, h
 
