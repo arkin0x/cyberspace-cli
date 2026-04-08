@@ -223,6 +223,7 @@ def _nak_req_events(
     verbose: bool = False,
     since: int | None = None,
     until: int | None = None,
+    max_block: int | None = None,
 ) -> List[dict]:
     cmd = ["nak", "req", "-q", "-k", str(kind), "-l", str(limit)]
     if since is not None:
@@ -234,6 +235,8 @@ def _nak_req_events(
         req_filter["since"] = since
     if until is not None:
         req_filter["until"] = until
+    if max_block is not None:
+        req_filter["#B"] = [str(max_block)]
     for tag_name, values in tags.items():
         req_filter[f"#{tag_name}"] = values
         for v in values:
@@ -1817,8 +1820,8 @@ def hyperjump_sync(
 ) -> None:
     """Download all hyperjump anchor events from the relay and cache locally.
 
-    Paginates through the relay in batches (using --until) to fetch ALL events,
-    not just the first batch. Creates a local JSONL file at
+    Paginates through the relay in batches using block height (B tag) to fetch
+    ALL events, not just the first batch. Creates a local JSONL file at
     ~/.cyberspace/hyperjump_cache.jsonl so that `hyperjump nearest --cache`
     can search instantly without relay queries.
     Re-run to refresh the cache with the latest events.
@@ -1826,7 +1829,7 @@ def hyperjump_sync(
     cache = hyperjump_cache_path()
     cache.parent.mkdir(parents=True, exist_ok=True)
 
-    # If resuming, load existing events and find the oldest created_at
+    # If resuming, load existing events and find the oldest block height
     existing_ids: set = set()
     existing_events: list = []
     if resume and cache.exists():
@@ -1847,17 +1850,35 @@ def hyperjump_sync(
     typer.echo(f"Fetching hyperjump anchors from {relay} ...")
     all_events = list(existing_events)
     seen_ids = set(existing_ids)
-    cursor_until: int | None = None
     total_fetched = 0
     batch_num = 0
 
-    # When resuming, only fetch events newer than our newest cached event
-    cursor_since: int | None = None
+    # Find the maximum block height we've already cached (for resume)
+    cursor_max_block: int | None = None
     if resume and existing_events:
-        newest_ts = max(ev.get("created_at", 0) for ev in existing_events)
-        if newest_ts > 0:
-            cursor_since = newest_ts - 1
-            typer.echo(f"  Fetching events since timestamp {cursor_since} (resume optimization)")
+        # Helper to extract B tag from event
+        def get_block_height(ev: dict) -> int:
+            for tag in ev.get("tags", []):
+                if tag[0] == "B":
+                    try:
+                        return int(tag[1])
+                    except (ValueError, IndexError):
+                        pass
+            return -1
+        max_bh = max((get_block_height(ev) for ev in existing_events), default=-1)
+        if max_bh >= 0:
+            cursor_max_block = max_bh
+            typer.echo(f"  Fetching events with block height <= {cursor_max_block} (resume optimization)")
+
+    # Helper to extract B tag from event
+    def get_block_height(ev: dict) -> int:
+        for tag in ev.get("tags", []):
+            if tag[0] == "B":
+                try:
+                    return int(tag[1])
+                except (ValueError, IndexError):
+                    pass
+        return -1
 
     while True:
         batch_num += 1
@@ -1868,8 +1889,7 @@ def hyperjump_sync(
             limit=limit,
             timeout_seconds=300,
             verbose=verbose,
-            until=cursor_until,
-            since=cursor_since,
+            max_block=cursor_max_block,
         )
         if not batch:
             if verbose:
@@ -1877,16 +1897,16 @@ def hyperjump_sync(
             break
 
         new_in_batch = 0
-        oldest_ts: int | None = None
+        oldest_block: int | None = None
         for ev in batch:
             eid = ev.get("id", "")
             if eid and eid not in seen_ids:
                 seen_ids.add(eid)
                 all_events.append(ev)
                 new_in_batch += 1
-            ts = ev.get("created_at", 0)
-            if oldest_ts is None or ts < oldest_ts:
-                oldest_ts = ts
+            bh = get_block_height(ev)
+            if oldest_block is None or bh < oldest_block:
+                oldest_block = bh
 
         total_fetched += len(batch)
         typer.echo(
@@ -1902,9 +1922,9 @@ def hyperjump_sync(
         if new_in_batch == 0:
             break
 
-        # Move cursor before the oldest event in this batch
-        if oldest_ts is not None:
-            cursor_until = oldest_ts - 1
+        # Move cursor to before the oldest block in this batch
+        if oldest_block is not None:
+            cursor_max_block = oldest_block - 1
         else:
             break
 
