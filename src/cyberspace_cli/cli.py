@@ -221,9 +221,19 @@ def _nak_req_events(
     limit: int,
     timeout_seconds: int = 20,
     verbose: bool = False,
+    since: int | None = None,
+    until: int | None = None,
 ) -> List[dict]:
     cmd = ["nak", "req", "-q", "-k", str(kind), "-l", str(limit)]
+    if since is not None:
+        cmd.extend(["--since", str(since)])
+    if until is not None:
+        cmd.extend(["--until", str(until)])
     req_filter: Dict[str, object] = {"kinds": [kind], "limit": limit}
+    if since is not None:
+        req_filter["since"] = since
+    if until is not None:
+        req_filter["until"] = until
     for tag_name, values in tags.items():
         req_filter[f"#{tag_name}"] = values
         for v in values:
@@ -248,7 +258,7 @@ def _nak_req_events(
         raise typer.Exit(code=1)
     except subprocess.TimeoutExpired:
         typer.echo(f"Nostr query timed out after {timeout_seconds}s.", err=True)
-        raise typer.Exit(code=1)
+        return []
     if verbose:
         typer.echo(f"nak_exit_code: {proc.returncode}")
         typer.echo("nak_stdout:")
@@ -1788,10 +1798,10 @@ def hyperjump_sync(
         help="Relay URL for querying hyperjump anchor events (kind=321).",
     ),
     limit: int = typer.Option(
-        10000,
+        5000,
         "--limit",
         min=1,
-        help="Maximum events per relay request (relay may cap this).",
+        help="Maximum events per relay request batch (relay may cap this).",
     ),
     verbose: bool = typer.Option(
         False,
@@ -1799,37 +1809,118 @@ def hyperjump_sync(
         "-v",
         help="Print progress details.",
     ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Resume from existing cache (append new events instead of overwriting).",
+    ),
 ) -> None:
     """Download all hyperjump anchor events from the relay and cache locally.
 
-    Creates a local JSONL file at ~/.cyberspace/hyperjump_cache.jsonl so that
-    `hyperjump nearest --cache` can search instantly without relay queries.
+    Paginates through the relay in batches (using --until) to fetch ALL events,
+    not just the first batch. Creates a local JSONL file at
+    ~/.cyberspace/hyperjump_cache.jsonl so that `hyperjump nearest --cache`
+    can search instantly without relay queries.
     Re-run to refresh the cache with the latest events.
     """
+    cache = hyperjump_cache_path()
+    cache.parent.mkdir(parents=True, exist_ok=True)
+
+    # If resuming, load existing events and find the oldest created_at
+    existing_ids: set = set()
+    existing_events: list = []
+    if resume and cache.exists():
+        typer.echo("Resuming from existing cache ...")
+        with open(cache) as f:
+            for line in f:
+                s = line.strip()
+                if not s:
+                    continue
+                try:
+                    ev = json.loads(s)
+                    existing_events.append(ev)
+                    existing_ids.add(ev.get("id", ""))
+                except json.JSONDecodeError:
+                    continue
+        typer.echo(f"  Loaded {len(existing_events)} cached event(s).")
+
     typer.echo(f"Fetching hyperjump anchors from {relay} ...")
-    events = _nak_req_events(
-        relay=relay,
-        kind=HYPERJUMP_KIND,
-        tags={},
-        limit=limit,
-        timeout_seconds=60,
-        verbose=verbose,
-    )
-    if not events:
+    all_events = list(existing_events)
+    seen_ids = set(existing_ids)
+    cursor_until: int | None = None
+    total_fetched = 0
+    batch_num = 0
+
+    # When resuming, only fetch events newer than our newest cached event
+    cursor_since: int | None = None
+    if resume and existing_events:
+        newest_ts = max(ev.get("created_at", 0) for ev in existing_events)
+        if newest_ts > 0:
+            cursor_since = newest_ts - 1
+            typer.echo(f"  Fetching events since timestamp {cursor_since} (resume optimization)")
+
+    while True:
+        batch_num += 1
+        batch = _nak_req_events(
+            relay=relay,
+            kind=HYPERJUMP_KIND,
+            tags={},
+            limit=limit,
+            timeout_seconds=300,
+            verbose=verbose,
+            until=cursor_until,
+            since=cursor_since,
+        )
+        if not batch:
+            if verbose:
+                typer.echo(f"  Batch {batch_num}: empty — pagination complete.")
+            break
+
+        new_in_batch = 0
+        oldest_ts: int | None = None
+        for ev in batch:
+            eid = ev.get("id", "")
+            if eid and eid not in seen_ids:
+                seen_ids.add(eid)
+                all_events.append(ev)
+                new_in_batch += 1
+            ts = ev.get("created_at", 0)
+            if oldest_ts is None or ts < oldest_ts:
+                oldest_ts = ts
+
+        total_fetched += len(batch)
+        typer.echo(
+            f"  Batch {batch_num}: {len(batch)} event(s), "
+            f"{new_in_batch} new — {len(all_events)} total unique so far"
+        )
+
+        # If we got fewer than the limit, we've exhausted the relay
+        if len(batch) < limit:
+            break
+
+        # If no new events in this batch, we're cycling — done
+        if new_in_batch == 0:
+            break
+
+        # Move cursor before the oldest event in this batch
+        if oldest_ts is not None:
+            cursor_until = oldest_ts - 1
+        else:
+            break
+
+    if not all_events:
         typer.echo("No hyperjump events found on the relay.")
         return
 
     # Deduplicate by coordinate (keep most recent per coord).
-    by_coord = _dedup_hyperjumps(events)
+    by_coord = _dedup_hyperjumps(all_events)
 
-    cache = hyperjump_cache_path()
-    cache.parent.mkdir(parents=True, exist_ok=True)
     with open(cache, "w") as f:
         for ev in by_coord.values():
             f.write(json.dumps(ev, separators=(",", ":"), ensure_ascii=False) + "\n")
 
     typer.echo(f"Cached {len(by_coord)} unique hyperjump(s) to {cache}")
-    typer.echo(f"(from {len(events)} total event(s) fetched)")
+    typer.echo(f"(from {total_fetched} fetched + {len(existing_events)} previously cached)")
 
 
 @hyperjump_app.command("nearest")
