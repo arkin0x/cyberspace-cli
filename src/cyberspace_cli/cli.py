@@ -221,22 +221,26 @@ def _nak_req_events(
     limit: int,
     timeout_seconds: int = 20,
     verbose: bool = False,
-    since: int | None = None,
     until: int | None = None,
-    max_block: int | None = None,
+    since: int | None = None,
 ) -> List[dict]:
+    """Fetch events from relay with optional timestamp pagination.
+    
+    Parameters
+    ----------
+    until : only fetch events with created_at <= this unix timestamp
+    since : only fetch events with created_at >= this unix timestamp
+    """
     cmd = ["nak", "req", "-q", "-k", str(kind), "-l", str(limit)]
-    if since is not None:
-        cmd.extend(["--since", str(since)])
     if until is not None:
         cmd.extend(["--until", str(until)])
-    req_filter: Dict[str, object] = {"kinds": [kind], "limit": limit}
     if since is not None:
-        req_filter["since"] = since
+        cmd.extend(["--since", str(since)])
+    req_filter: Dict[str, object] = {"kinds": [kind], "limit": limit}
     if until is not None:
         req_filter["until"] = until
-    if max_block is not None:
-        req_filter["#B"] = [str(max_block)]
+    if since is not None:
+        req_filter["since"] = since
     for tag_name, values in tags.items():
         req_filter[f"#{tag_name}"] = values
         for v in values:
@@ -1801,10 +1805,10 @@ def hyperjump_sync(
         help="Relay URL for querying hyperjump anchor events (kind=321).",
     ),
     limit: int = typer.Option(
-        5000,
+        10000,
         "--limit",
         min=1,
-        help="Maximum events per relay request batch (relay may cap this).",
+        help="Maximum events per relay request (relay may cap this).",
     ),
     verbose: bool = typer.Option(
         False,
@@ -1820,10 +1824,12 @@ def hyperjump_sync(
 ) -> None:
     """Download all hyperjump anchor events from the relay and cache locally.
 
-    Paginates through the relay in batches using block height (B tag) to fetch
-    ALL events, not just the first batch. Creates a local JSONL file at
+    Paginates through the relay in timestamp-ordered batches to fetch ALL events,
+    not just the first batch. Creates a local JSONL file at
     ~/.cyberspace/hyperjump_cache.jsonl so that `hyperjump nearest --cache`
     can search instantly without relay queries.
+
+    Use --resume to append new events instead of overwriting existing cache.
     Re-run to refresh the cache with the latest events.
     """
     cache = hyperjump_cache_path()
@@ -1853,23 +1859,6 @@ def hyperjump_sync(
     total_fetched = 0
     batch_num = 0
 
-    # Find the maximum block height we've already cached (for resume)
-    cursor_max_block: int | None = None
-    if resume and existing_events:
-        # Helper to extract B tag from event
-        def get_block_height(ev: dict) -> int:
-            for tag in ev.get("tags", []):
-                if tag[0] == "B":
-                    try:
-                        return int(tag[1])
-                    except (ValueError, IndexError):
-                        pass
-            return -1
-        max_bh = max((get_block_height(ev) for ev in existing_events), default=-1)
-        if max_bh >= 0:
-            cursor_max_block = max_bh
-            typer.echo(f"  Fetching events with block height <= {cursor_max_block} (resume optimization)")
-
     # Helper to extract B tag from event
     def get_block_height(ev: dict) -> int:
         for tag in ev.get("tags", []):
@@ -1880,6 +1869,18 @@ def hyperjump_sync(
                     pass
         return -1
 
+    # Find the oldest timestamp we've already cached (for resume)
+    cursor_until: int | None = None
+    if resume and existing_events:
+        oldest_ts = min((ev.get("created_at", 0) for ev in existing_events if ev.get("created_at")), default=0)
+        if oldest_ts > 0:
+            cursor_until = oldest_ts - 1
+            min_b = min((get_block_height(ev) for ev in existing_events if get_block_height(ev) >= 0), default=None)
+            max_b = max((get_block_height(ev) for ev in existing_events if get_block_height(ev) >= 0), default=None)
+            typer.echo(f"  Resuming: fetching events older than timestamp {cursor_until}")
+            if min_b is not None and max_b is not None:
+                typer.echo(f"  Current cache covers blocks {min_b} to {max_b}")
+
     while True:
         batch_num += 1
         batch = _nak_req_events(
@@ -1889,7 +1890,7 @@ def hyperjump_sync(
             limit=limit,
             timeout_seconds=300,
             verbose=verbose,
-            max_block=cursor_max_block,
+            until=cursor_until,
         )
         if not batch:
             if verbose:
@@ -1897,16 +1898,16 @@ def hyperjump_sync(
             break
 
         new_in_batch = 0
-        oldest_block: int | None = None
+        oldest_ts: int | None = None
         for ev in batch:
             eid = ev.get("id", "")
             if eid and eid not in seen_ids:
                 seen_ids.add(eid)
                 all_events.append(ev)
                 new_in_batch += 1
-            bh = get_block_height(ev)
-            if oldest_block is None or bh < oldest_block:
-                oldest_block = bh
+            ts = ev.get("created_at", 0)
+            if oldest_ts is None or ts < oldest_ts:
+                oldest_ts = ts
 
         total_fetched += len(batch)
         typer.echo(
@@ -1922,9 +1923,9 @@ def hyperjump_sync(
         if new_in_batch == 0:
             break
 
-        # Move cursor to before the oldest block in this batch
-        if oldest_block is not None:
-            cursor_max_block = oldest_block - 1
+        # Move cursor to before the oldest timestamp in this batch
+        if oldest_ts is not None:
+            cursor_until = oldest_ts - 1
         else:
             break
 
@@ -1939,8 +1940,15 @@ def hyperjump_sync(
         for ev in by_coord.values():
             f.write(json.dumps(ev, separators=(",", ":"), ensure_ascii=False) + "\n")
 
+    # Report block range covered
+    if all_events:
+        block_heights = [bh for ev in all_events if (bh := get_block_height(ev)) >= 0]
+        if block_heights:
+            typer.echo(f"Block range: {min(block_heights)} to {max(block_heights)}")
+    
     typer.echo(f"Cached {len(by_coord)} unique hyperjump(s) to {cache}")
     typer.echo(f"(from {total_fetched} fetched + {len(existing_events)} previously cached)")
+    typer.echo(f"Estimated remaining: ~{max(0, 940000 - len(by_coord)):,} events")
 
 
 @hyperjump_app.command("nearest")
