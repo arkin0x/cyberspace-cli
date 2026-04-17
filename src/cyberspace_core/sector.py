@@ -3,10 +3,118 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-from .coords import coord_to_xyz
+from .coords import AXIS_BITS, coord_to_xyz
 
 
 SECTOR_BITS_DEFAULT = 30
+
+
+# DECK-0001 §I.2: Sector extraction from interleaved coordinates
+# Coordinates are interleaved as XYZXYZXYZ...P pattern (85 bits per axis + 1 plane bit)
+# To extract a sector, we must de-interleave to get the 85-bit axis value, then take high 55 bits
+
+
+def extract_axis_from_coord256(coord256: int, axis: str) -> int:
+    """De-interleave coord256 to get 85-bit axis value per DECK-0001 §I.2.
+    
+    Coordinates use interleaved bit pattern XYZXYZXYZ...P where:
+    - X bits are at positions 3, 6, 9, ..., 255 (85 bits total)
+    - Y bits are at positions 2, 5, 8, ..., 254 (85 bits total)
+    - Z bits are at positions 1, 4, 7, ..., 253 (85 bits total)
+    - P (plane) bit is at position 0
+    
+    Args:
+        coord256: The 256-bit coordinate integer
+        axis: 'X', 'Y', or 'Z' to extract
+        
+    Returns:
+        The 85-bit axis value
+    """
+    if axis == 'X':
+        shift = 3  # X bits at positions 3, 6, 9, ...
+    elif axis == 'Y':
+        shift = 2  # Y bits at positions 2, 5, 8, ...
+    elif axis == 'Z':
+        shift = 1  # Z bits at positions 1, 4, 7, ...
+    else:
+        raise ValueError(f"axis must be 'X', 'Y', or 'Z', got '{axis}'")
+    
+    result = 0
+    for i in range(AXIS_BITS):  # 85 iterations
+        bit_pos = shift + (3 * i)
+        if coord256 & (1 << bit_pos):
+            result |= (1 << i)
+    return result
+
+
+def sector_from_coord256(coord256: int, axis: str) -> int:
+    """Extract 55-bit sector value from an interleaved coord256 per DECK-0001 §I.2.
+    
+    This is the DECK-0001 compliant sector extraction method. It de-interleaves
+    the coordinate to get the 85-bit axis value, then takes the high 55 bits.
+    
+    Args:
+        coord256: The 256-bit coordinate integer (interleaved XYZXYZ...P pattern)
+        axis: 'X', 'Y', or 'Z' to extract sector from
+        
+    Returns:
+        The 55-bit sector value (high 55 bits of the 85-bit axis value)
+    """
+    axis_value = extract_axis_from_coord256(coord256, axis)
+    return axis_value >> 30  # High 55 bits of 85-bit axis
+
+
+def extract_hyperjump_sectors(merkle_root_hex: str) -> Tuple[int, int, int]:
+    """Extract X, Y, Z sector values from a Hyperjump's Merkle root.
+    
+    Args:
+        merkle_root_hex: 64-char lowercase hex string (32-byte Merkle root)
+        
+    Returns:
+        Tuple of (sector_x, sector_y, sector_z) as 55-bit integers
+    """
+    if len(merkle_root_hex) != 64:
+        raise ValueError("merkle_root_hex must be exactly 64 hex chars (32 bytes)")
+    if merkle_root_hex != merkle_root_hex.lower():
+        raise ValueError("merkle_root_hex must be lowercase hex")
+    
+    merkle_root_int = int(merkle_root_hex, 16)
+    sx = sector_from_coord256(merkle_root_int, 'X')
+    sy = sector_from_coord256(merkle_root_int, 'Y')
+    sz = sector_from_coord256(merkle_root_int, 'Z')
+    return (sx, sy, sz)
+
+
+def coord_matches_hyperjump_plane(
+    coord256: int,
+    merkle_root_hex: str,
+    axis: str
+) -> bool:
+    """Check if a coordinate's sector matches a Hyperjump's sector on given axis.
+    
+    This implements the sector-plane entry check per DECK-0001 §I.2.
+    
+    Args:
+        coord256: The 256-bit coordinate to check
+        merkle_root_hex: 64-char hex of the Hyperjump's Merkle root
+        axis: 'X', 'Y', or 'Z' for which plane to check
+        
+    Returns:
+        True if sector(coord256, axis) == sector(merkle_root, axis)
+    """
+    coord_sector = sector_from_coord256(coord256, axis)
+    hj_sectors = extract_hyperjump_sectors(merkle_root_hex)
+    
+    if axis == 'X':
+        hj_sector = hj_sectors[0]
+    elif axis == 'Y':
+        hj_sector = hj_sectors[1]
+    elif axis == 'Z':
+        hj_sector = hj_sectors[2]
+    else:
+        raise ValueError(f"axis must be 'X', 'Y', or 'Z', got '{axis}'")
+    
+    return coord_sector == hj_sector
 
 
 @dataclass(frozen=True)
