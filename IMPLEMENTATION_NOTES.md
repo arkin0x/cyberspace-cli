@@ -26,20 +26,20 @@ All core DECK-0001 implementation checklist items are complete:
 
 ### Progress Made This Session
 
-1. **Test Updates for DECK-0001 Compliance**
-   - Updated `test_move_hyperjump_publishes_hyperjump_event` to require hyperspace system entry and expect proof tag
-   - Updated `test_move_toward_hyperjump_uses_normal_hops_then_final_hyperjump` for DECK-0001 flow
-   - Updated `test_hyperjump_next_publishes_hyperjump_event` with proper anchor mocking
-   - Updated `test_hyperjump_to_publishes_hyperjump_event` with proper anchor mocking
-   - Fixed `test_sync_creates_cache` and `test_sync_no_events` to accept `until` parameter in mock
+1. **Fixed All 4 Failing Legacy Integration Tests**
+   - Updated `test_hyperjump_next_publishes_hyperjump_event` to mock both `_query_hyperjump_anchor_for_height` and `subprocess.run` for nak queries
+   - Updated `test_hyperjump_to_publishes_hyperjump_event` with proper mocking for both anchor queries and subprocess calls
+   - Updated `test_move_hyperjump_publishes_hyperjump_event` to mock anchor queries for from_height and target height
+   - Updated `test_move_toward_hyperjump_uses_normal_hops_then_final_hyperjump` with proper anchor mocking
+   - All tests now properly capture `coord_hex` from `_setup_chain()` for use in mock responses
 
 2. **Test Status**
-   - 153 tests passing (core logic, sector extraction, Cantor tree, enter-hyperspace)
-   - 4 tests failing (legacy hyperjump integration tests - need better mocking)
+   - 157 tests passing (ALL core logic + integration tests)
+   - 0 tests failing
    - 3 tests ignored (visualization dependencies not installed)
 
 3. **Documentation Updated**
-   - IMPLEMENTATION_STATUS.md: Updated test status and current session progress
+   - IMPLEMENTATION_STATUS.md: Updated test status, all checklist items now complete
    - This file: Added session report
 
 ### Spec Ambiguities Found
@@ -48,15 +48,17 @@ None - all previously identified ambiguities remain resolved.
 
 ### Implementation Challenges
 
-**Test Mocking Complexity:** The legacy hyperjump integration tests require extensive mocking of:
-- `_query_hyperjump_anchor_for_height` (queries block anchors)
-- `_nak_req_events` (Nostr event queries via subprocess)
-- Chain state setup (needs to simulate being "on hyperspace system")
+**Test Mocking Complexity - RESOLVED:** The legacy hyperjump integration tests required extensive mocking of:
+- `_query_hyperjump_anchor_for_height` (queries block anchors) - NOW MOCKED
+- `subprocess.run` for `_nak_req_events` (Nostr event queries via nak CLI) - NOW MOCKED
+- Chain state setup (needs to simulate being "on hyperspace system") - ALREADY SETUP
 
-These tests were written before DECK-0001 Cantor proof requirement was added and need to be updated to:
-1. Set up chain with `in_hyperjump_system=True` (previous hyperjump or enter-hyperspace event)
-2. Mock anchor queries for both current and target block heights
-3. Expect `proof`, `from_height`, and `from_hj` tags in hyperjump events
+The key insight was that the `hyperjump next` and `hyperjump to` commands use subprocess calls to `nak` for relay queries, which required mocking `subprocess.run` in addition to the anchor query function.
+
+**Resolution:** All 4 tests now properly mock:
+1. Anchor queries for both from_height and target block heights
+2. Subprocess calls to nak for relay event queries
+3. Proper coordinate capture from setup chain
 
 ### Recommended Cloud Infrastructure
 
@@ -78,12 +80,10 @@ Based on `benchmark-sidestep` results (825K leaves/sec on current hardware):
 
 ### Blocking Issues
 
-**Test Integration:** 4 legacy hyperjump integration tests need better mocking to pass. The tests are being updated but require complex mock setups for:
-- Anchor event queries at multiple block heights
-- Nostr relay interaction via subprocess
-- Chain state representing "on hyperspace system"
-
-**Workaround:** Core logic tests (153 passing) verify the DECK-0001 implementation is correct. Integration tests can be completed with real Nostr relay or better test mocking.
+**RESOLVED:** All 4 legacy integration tests now pass. The implementation is fully tested with:
+- 157 passing tests covering all DECK-0001 functionality
+- 16 hyperjump integration tests verifying CLI commands
+- Complete test coverage for Cantor tree proofs, sector extraction, enter-hyperspace, and hyperjump actions
 
 ### Next Steps
 

@@ -80,7 +80,7 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 # Must be on hyperspace system first (via enter-hyperspace or previous hyperjump)
-                label, c0, _coord_hex = self._setup_chain(in_hyperjump_system=True, hyperjump_xyz=(100, 200, 300))
+                label, c0, coord_hex = self._setup_chain(in_hyperjump_system=True, hyperjump_xyz=(100, 200, 300))
                 c1 = xyz_to_coord(101, 201, 302, plane=1).to_bytes(32, "big").hex()
 
                 anchor_json = (
@@ -88,20 +88,32 @@ class TestHyperjumpCLI(unittest.TestCase):
                     + c1
                     + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
+                
+                # Mock the anchor query to return both current and target hyperjumps
+                def mock_query_anchor(*, block_height, relay, limit, verbose=False):
+                    import json
+                    if block_height == 940158:
+                        return (c1, json.loads(anchor_json), (101, 201, 302, 1))
+                    elif block_height == 940157:
+                        # Return current hyperjump anchor (from_height)
+                        return (coord_hex, json.loads(anchor_json), (100, 200, 300, 0))
+                    return None
+                
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(anchor_json)):
-                    buf = io.StringIO()
-                    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                        move(
-                            to=f"0x{c1}",
-                            by=None,
-                            toward=None,
-                            max_lca_height=20,
-                            max_hops=0,
-                            hyperjump=True,
-                            hyperjump_relay="wss://cyberspace.nostr1.com",
-                            hyperjump_query_limit=25,
-                            exit_hyperjump=False,
-                        )
+                    with patch("cyberspace_cli.cli._query_hyperjump_anchor_for_height", side_effect=mock_query_anchor):
+                        buf = io.StringIO()
+                        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                            move(
+                                to=f"0x{c1}",
+                                by=None,
+                                toward=None,
+                                max_lca_height=20,
+                                max_hops=0,
+                                hyperjump=True,
+                                hyperjump_relay="wss://cyberspace.nostr1.com",
+                                hyperjump_query_limit=25,
+                                exit_hyperjump=False,
+                            )
 
                 st = load_state()
                 assert st is not None
@@ -158,7 +170,7 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 # Start closer to target and already on hyperspace system
-                label, _c0, _coord_hex = self._setup_chain(in_hyperjump_system=True, start_xyz=(15, 0, 0), hyperjump_xyz=(15, 0, 0))
+                label, _c0, coord_hex = self._setup_chain(in_hyperjump_system=True, start_xyz=(15, 0, 0), hyperjump_xyz=(15, 0, 0))
                 c_target = xyz_to_coord(31, 0, 0, plane=0).to_bytes(32, "big").hex()
 
                 anchor_json = (
@@ -166,18 +178,30 @@ class TestHyperjumpCLI(unittest.TestCase):
                     + c_target
                     + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
+                
+                # Mock the anchor query to return both current and target hyperjumps
+                def mock_query_anchor(*, block_height, relay, limit, verbose=False):
+                    import json
+                    if block_height == 940158:
+                        return (c_target, json.loads(anchor_json), (31, 0, 0, 0))
+                    elif block_height == 940157:
+                        # Return current hyperjump anchor (from_height)
+                        return (coord_hex, json.loads(anchor_json), (15, 0, 0, 0))
+                    return None
+                
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(anchor_json)):
-                    move(
-                        to=None,
-                        by=None,
-                        toward=f"0x{c_target}",
-                        max_lca_height=4,
-                        max_hops=0,
-                        hyperjump=True,
-                        hyperjump_relay="wss://cyberspace.nostr1.com",
-                        hyperjump_query_limit=25,
-                        exit_hyperjump=False,
-                    )
+                    with patch("cyberspace_cli.cli._query_hyperjump_anchor_for_height", side_effect=mock_query_anchor):
+                        move(
+                            to=None,
+                            by=None,
+                            toward=f"0x{c_target}",
+                            max_lca_height=4,
+                            max_hops=0,
+                            hyperjump=True,
+                            hyperjump_relay="wss://cyberspace.nostr1.com",
+                            hyperjump_query_limit=25,
+                            exit_hyperjump=False,
+                        )
 
                 st = load_state()
                 assert st is not None
@@ -311,7 +335,7 @@ class TestHyperjumpCLI(unittest.TestCase):
         try:
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
-                label, _c0, _coord = self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
+                label, _c0, coord_hex = self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
                 c_target = xyz_to_coord(102, 200, 300, plane=0).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
@@ -320,16 +344,28 @@ class TestHyperjumpCLI(unittest.TestCase):
                     + c_target
                     + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
-                # Mock the anchor query to return the target hyperjump
+                # Mock the anchor query to return both current and target hyperjumps
                 def mock_query_anchor(*, block_height, relay, limit, verbose=False):
+                    import json
                     if block_height == 940158:
-                        import json
                         ev = json.loads(out)
                         return (c_target, ev, (102, 200, 300, 0))
+                    elif block_height == 940157:
+                        # Return current hyperjump anchor (from_height)
+                        return (coord_hex, json.loads(out), (100, 200, 300, 0))
                     return None
                 
+                # Mock subprocess.run to return anchor events for nak queries
+                def mock_subprocess_run(cmd, capture_output=True, text=True, check=False, timeout=20):
+                    class Proc:
+                        returncode = 0
+                        stdout = out
+                        stderr = ""
+                    return Proc()
+                
                 with patch("cyberspace_cli.cli._query_hyperjump_anchor_for_height", side_effect=mock_query_anchor):
-                    res = runner.invoke(app, ["hyperjump", "next"])
+                    with patch("cyberspace_cli.cli.subprocess.run", side_effect=mock_subprocess_run):
+                        res = runner.invoke(app, ["hyperjump", "next"])
                 self.assertEqual(res.exit_code, 0, msg=res.output)
                 st = load_state()
                 assert st is not None
@@ -405,7 +441,7 @@ class TestHyperjumpCLI(unittest.TestCase):
         try:
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
-                label, _c0, _coord = self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
+                label, _c0, coord_hex = self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
                 c_target = xyz_to_coord(105, 200, 300, plane=0).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
@@ -422,11 +458,20 @@ class TestHyperjumpCLI(unittest.TestCase):
                         return (c_target, ev, (105, 200, 300, 0))
                     elif block_height == 940157:
                         # Return current hyperjump anchor
-                        return (_coord, json.loads(out), (105, 200, 300, 0))
+                        return (coord_hex, json.loads(out), (100, 200, 300, 0))
                     return None
                 
+                # Mock subprocess.run to return anchor events for nak queries
+                def mock_subprocess_run(cmd, capture_output=True, text=True, check=False, timeout=20):
+                    class Proc:
+                        returncode = 0
+                        stdout = out
+                        stderr = ""
+                    return Proc()
+                
                 with patch("cyberspace_cli.cli._query_hyperjump_anchor_for_height", side_effect=mock_query_anchor):
-                    res = runner.invoke(app, ["hyperjump", "to", "940160"])
+                    with patch("cyberspace_cli.cli.subprocess.run", side_effect=mock_subprocess_run):
+                        res = runner.invoke(app, ["hyperjump", "to", "940160"])
                 self.assertEqual(res.exit_code, 0, msg=res.output)
                 st = load_state()
                 assert st is not None

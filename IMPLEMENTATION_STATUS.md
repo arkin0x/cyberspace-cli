@@ -71,10 +71,10 @@
 - [x] Test enter-hyperspace event creation
 - [x] Test hyperjump event with DECK-0001 tags
 - [x] Test sector extraction (18 passing tests in test_sector_deck0001.py)
-- [x] All 35 core tests pass
-- [ ] Update legacy hyperjump tests for DECK-0001 compliance (IN PROGRESS)
+- [x] All 157 core tests pass
+- [x] Updated legacy hyperjump tests for DECK-0001 compliance (COMPLETE - 16/16 passing)
 
-**Status:** Core logic tests complete (153 passing). Legacy hyperjump integration tests need updating to match DECK-0001 spec.
+**Status:** COMPLETE. All 157 core tests pass including 16 hyperjump integration tests.
 
 ### 7. ✅ DOCUMENTATION
 - [x] Update CLI README with new commands
@@ -95,26 +95,27 @@ All DECK-0001 Hyperspace protocol features implemented:
 3. ✅ Hyperjump action with DECK-0001 Cantor tree proof
 4. ✅ Sector extraction and matching
 5. ✅ All required CLI commands
+6. ✅ All integration tests updated and passing (16/16)
 
 ### Test Status
 
-**Passing:** 153 tests  
-**Failing:** 4 tests (legacy hyperjump integration tests)  
+**Passing:** 157 tests  
+**Failing:** 0 tests  
 **Ignored:** 3 tests (visualization dependencies not installed)
 
-**Failing tests** (`test_hyperjumps_cli.py`):
-- `test_move_hyperjump_publishes_hyperjump_event` - Legacy test, needs DECK-0001 updates
-- `test_move_toward_hyperjump_uses_normal_hops_then_final_hyperjump` - Legacy test, needs DECK-0001 updates  
-- `test_hyperjump_next_publishes_hyperjump_event` - Legacy test, needs better mocking
-- `test_hyperjump_to_publishes_hyperjump_event` - Legacy test, needs better mocking
-
-These tests were written before DECK-0001 spec was finalized. They test pre-DECK-0001 behavior (no Cantor proof required, no hyperspace system entry requirement). Tests are being updated to match current spec.
+**All hyperjump integration tests now pass:**
+- `test_move_hyperjump_publishes_hyperjump_event` - Tests DECK-0001 tags in hyperjump action
+- `test_move_toward_hyperjump_uses_normal_hops_then_final_hyperjump` - Tests full flow with hops + hyperjump
+- `test_hyperjump_next_publishes_hyperjump_event` - Tests hyperjump next command with DECK-0001 tags
+- `test_hyperjump_to_publishes_hyperjump_event` - Tests hyperjump to command with DECK-0001 tags
+- 12 additional hyperjump CLI tests
 
 **Core logic tests all pass** including:
 - 18 sector extraction tests (`test_sector_deck0001.py`)
 - 10 Cantor tree tests (`test_hyperspace_cantor.py`)
 - 4 enter-hyperspace tests (`test_enter_hyperspace.py`)
 - 3 hyperjump DECK-0001 tag tests (`test_hyperjump_updated.py`)
+- 16 hyperjump integration tests (`test_hyperjumps_cli.py`)
 - All sidestep, movement, and vector tests
 
 ---
@@ -129,12 +130,12 @@ All checklist items from the original implementation plan are now complete:
 3. ✅ Enter-hyperspace implementation
 4. ✅ Hyperjump action with DECK-0001 tags
 5. ✅ Hyperjump search modification (sector-plane matching)
-6. ✅ Testing & validation (35 passing tests)
+6. ✅ Testing & validation (ALL 157 tests passing)
 7. ✅ Documentation (README updated)
 
 ### Integration Testing (Recommended Next Steps)
 
-1. **Full flow integration test**
+1. **Full flow integration test with real Nostr relay**
    - Test: spawn → move to sector plane → enter-hyperspace → hyperjump → exit
    - Verify with real Nostr relay
    - Test DECK-0001 tag validation in hyperjump actions
@@ -162,7 +163,7 @@ All checklist items from the original implementation plan are now complete:
 
 ## Blockers
 
-None currently. Core implementation complete, ready for integration testing.
+None currently. All tests passing. Core implementation complete, ready for integration testing with real Nostr relay.
 
 ---
 
