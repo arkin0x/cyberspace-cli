@@ -2410,11 +2410,33 @@ def enter_hyperspace(
     genesis_id = events[0]["id"]
     prev_event_id = events[-1]["id"]
     
-    # Build Cantor proof to reach current coordinate (standard hop proof)
-    # For enter-hyperspace, the proof is the standard movement proof to reach the entry point
-    # This would be computed based on the path from previous coordinate to current
-    # For now, we use a placeholder - in practice this needs the actual movement proof
-    proof_hex = "0" * 64  # TODO: Compute actual Cantor proof for the movement to this coordinate
+    # Get the proof from the previous movement event
+    # The enter-hyperspace proof should be the standard movement proof that brought
+    # the identity to the entry coordinate (DECK-0001 §I.3: "proof: Standard Cantor proof to reach the coordinate")
+    # This is the proof from the last movement event (hop or sidestep)
+    prev_event = events[-1]
+    prev_action = _get_tag(prev_event, "A")
+    
+    # Extract proof from previous movement
+    if prev_action == "sidestep":
+        # For sidestep, use the proof_hash tag
+        proof_hex = _get_tag(prev_event, "proof") or ""
+        if not proof_hex:
+            typer.echo("ERROR: Previous sidestep event missing proof tag.", err=True)
+            raise typer.Exit(code=2)
+    elif prev_action in ("hop", "spawn"):
+        # For hop, use the proof tag
+        proof_hex = _get_tag(prev_event, "proof") or ""
+        if not proof_hex:
+            typer.echo("ERROR: Previous hop event missing proof tag.", err=True)
+            raise typer.Exit(code=2)
+    else:
+        # If previous action was enter-hyperspace or hyperjump, we're already on Hyperspace
+        typer.echo(
+            f"ERROR: Previous action is '{prev_action}'. Enter-hyperspace must follow a hop or sidestep.",
+            err=True
+        )
+        raise typer.Exit(code=2)
     
     created_at = int(time.time())
     pubkey_hex = pubkey_hex_from_privkey(privkey_bytes_from_nsec_or_hex(state.privkey))
@@ -2677,6 +2699,32 @@ def move(
                 proof_hash_hex=proof.proof_hash,
             )
         else:
+            # Hyperjump action with DECK-0001 tags
+            # Get current block height (from_height) from hyperjump system state
+            in_hj_system = _hyperjump_block_height_from_event(events[-1])
+            if in_hj_system is None:
+                typer.echo("Must be on hyperjump system to create hyperjump action.", err=True)
+                raise typer.Exit(code=2)
+            from_height = in_hj_system
+            
+            # Query anchor for from_height to get from_hj Merkle root
+            from_anchor_result = _query_hyperjump_anchor_for_height(
+                block_height=from_height,
+                relay=hyperjump_relay,
+                limit=hyperjump_query_limit,
+            )
+            if from_anchor_result is None:
+                typer.echo(f"Could not find anchor for from_height={from_height}", err=True)
+                raise typer.Exit(code=2)
+            from_hj_hex = from_anchor_result[0]  # c_tag is the Merkle root
+            
+            # Build Cantor tree proof with temporal seed per DECK-0001 §8
+            prev_event_id_bytes = bytes.fromhex(prev_event_id)
+            temporal_seed = compute_temporal_seed(prev_event_id_bytes)
+            leaves = [temporal_seed, from_height, int(hyperjump_to_height)]
+            proof_root = build_hyperspace_proof(leaves)
+            cantorian_proof_hex = format(proof_root, 'x')
+            
             movement_event = make_hyperjump_event(
                 pubkey_hex=state.pubkey_hex,
                 created_at=created_at,
@@ -2685,6 +2733,9 @@ def move(
                 prev_coord_hex=state.coord_hex,
                 coord_hex=coord_hex,
                 to_height=hyperjump_to_height,
+                from_height=from_height,
+                from_hj_hex=from_hj_hex,
+                proof_hex=cantorian_proof_hex,
             )
         chains.append_event(label, movement_event)
 
@@ -3038,6 +3089,65 @@ def chain_status() -> None:
     if cur != last:
         typer.echo("warning: state coord != last chain coord", err=True)
     typer.echo(f"delta_xyz: dx={dx} dy={dy} dz={dz} (plane={cplane} {_plane_label(cplane)})")
+
+
+@app.command("benchmark-sidestep")
+def benchmark_sidestep(
+    max_lca_height: int = typer.Option(
+        25,
+        "--max-height",
+        help="Maximum LCA height to benchmark (default: 25).",
+    ),
+) -> None:
+    """Benchmark sidestep (Merkle proof) computation for various LCA heights.
+    
+    This command runs performance benchmarks for computing Merkle sidestep proofs
+    at different LCA heights, showing timing and estimated cloud costs.
+    
+    Based on benchmark_merkle.py script.
+    """
+    from cyberspace_core.movement import compute_axis_merkle_root_streaming
+    
+    typer.echo("=" * 70)
+    typer.echo("Sidestep (Merkle Proof) Benchmark")
+    typer.echo("=" * 70)
+    typer.echo("")
+    typer.echo("LCA Height |  Leaves     |   Time (s)   | Leaves/sec  | Est. Cloud Cost")
+    typer.echo("-" * 70)
+    
+    # Cloud cost estimate: ~$0.09 for h=33 (from DECK-0001 §5)
+    # h=33: 2^33 = 8,589,934,592 leaves, ~1.5 minutes, ~$0.09
+    # Cost per leaf = $0.09 / 2^33
+    CLOUD_COST_PER_LEAF = 0.09 / (2**33)
+    
+    for h in range(16, min(max_lca_height + 1, 41)):
+        try:
+            start = time.time()
+            root, siblings = compute_axis_merkle_root_streaming(0, h)
+            elapsed = time.time() - start
+            
+            leaves = 2**h
+            leaves_per_sec = leaves / elapsed if elapsed > 0 else float('inf')
+            est_cost = leaves * CLOUD_COST_PER_LEAF
+            
+            # Format based on height
+            if h <= 25:
+                time_str = f"{elapsed:.4f}"
+            elif h <= 30:
+                time_str = f"{elapsed:.2f}"
+            else:
+                time_str = f"{elapsed:.1f}"
+            
+            typer.echo(f"   h={h:2d}    | {leaves:11,} | {time_str:>10}    | {leaves_per_sec:>11,.0f} | ${est_cost:>8.6f}")
+        except Exception as e:
+            typer.echo(f"   h={h:2d}    | ERROR: {e}")
+    
+    typer.echo("")
+    typer.echo("=" * 70)
+    typer.echo("Cost estimates based on DECK-0001 §5: ~$0.09 for h=33 (~1.5 min)")
+    typer.echo("Consumer feasible: h≤35 (~$0.35, ~6 min)")
+    typer.echo("Cloud recommended: h>35")
+    typer.echo("=" * 70)
 
 
 if __name__ == "__main__":

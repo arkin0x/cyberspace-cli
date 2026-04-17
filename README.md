@@ -8,8 +8,12 @@ This repo is intentionally separate from the current research/prototype code und
 - Creates and manages **local movement chains** (multiple labeled chains, status/history, JSON export)
 - Computes and stores **v2 movement proofs** (per-axis Cantor tree) in hop events
 - Supports movement workflows: `move --by`, `move --to`, `move --toward`, plane switching, and target-driven movement
-- Supports DECK-0001 hyperjump tooling: nearest/show/to/next/prev queries plus hyperjump movement-event creation
-- Includes coordinate and proof tooling: `whereami`, `sector`, `gps` (both directions), `cantor`, `bench`
+- Supports DECK-0001 Hyperspace protocol:
+  - `enter-hyperspace` action (kind=3333, A=enter-hyperspace) for sector-plane entry
+  - `hyperjump` action (kind=3333, A=hyperjump) with Cantor tree traversal proofs
+  - `hyperjump enterable` command for finding enterable hyperjumps by sector-plane matching
+  - Automatic DECK-0001 tag construction (from_height, from_hj, proof) for hyperjump actions
+- Includes benchmarking tools: `bench` (Cantor), `benchmark-sidestep` (Merkle)
 - Supports location-encrypted content workflows: `encrypt`, `decrypt`, and `scan`
 - Supports persisted local config and target management (`config`, `target` commands)
 - Includes optional visual tools (`3d`, `lcaplot`) with extra dependencies
@@ -143,12 +147,29 @@ cyberspace 3d
 # set the default "View Earth" altitude (km above Earth surface)
 cyberspace 3d --earth-altitude-km 8000
 
-# sector-local 3D view (renders only the current sector cube; spawn renders only if in the same sector)
+# sector-local 3D view (renders only the current sector cube; spawn renders only if the same sector)
 cyberspace 3d --sector
 
 # plot LCA spikes + 2^h boundaries around your current axis value (optional deps)
 cyberspace lcaplot
 cyberspace lcaplot --axis z --span 2048 --max-lca-height 17
+
+# DECK-0001 Hyperspace commands
+# Find enterable hyperjumps (matching your current sector plane)
+cyberspace hyperjump enterable
+cyberspace hyperjump enterable --axis Y
+cyberspace hyperjump enterable --axis any
+
+# Enter Hyperspace via sector-plane entry (boards the Hyperspace network)
+cyberspace enter-hyperspace --merkle <merkle_root_hex> --block-height <height> --axis Y
+
+# Benchmark sidestep (Merkle proof) computation for various LCA heights
+cyberspace benchmark-sidestep
+cyberspace benchmark-sidestep --max-lca-height 25
+
+# Move with hyperjump traversal (DECK-0001 Cantor tree proof)
+# Automatically builds from_height, from_hj, and proof tags
+cyberspace move --to 0x2b50e88 --hyperjump
 
 cyberspace gps 37.7749,-122.4194
 # or
