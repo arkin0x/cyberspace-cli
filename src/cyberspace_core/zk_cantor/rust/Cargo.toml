@@ -1,0 +1,18 @@
+[package]
+name = "zk_cantor"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "zk_cantor"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+winter-fri = "0.9"
+winter-air = "0.9"
+winter-prover = "0.9"
+winter-verifier = "0.9"
+winter-crypto = "0.9"
+winter-math = "0.9"
+sha3 = "0.10"
