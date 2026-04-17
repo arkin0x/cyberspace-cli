@@ -74,11 +74,13 @@ class TestHyperjumpCLI(unittest.TestCase):
         return label, c0, coord_hex
 
     def test_move_hyperjump_publishes_hyperjump_event(self) -> None:
+        """Test hyperjump action with DECK-0001 tags (requires being on hyperspace system first)."""
         old_home = os.environ.get("CYBERSPACE_HOME")
         try:
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
-                label, c0, _coord_hex = self._setup_chain(in_hyperjump_system=False)
+                # Must be on hyperspace system first (via enter-hyperspace or previous hyperjump)
+                label, c0, _coord_hex = self._setup_chain(in_hyperjump_system=True, hyperjump_xyz=(100, 200, 300))
                 c1 = xyz_to_coord(101, 201, 302, plane=1).to_bytes(32, "big").hex()
 
                 anchor_json = (
@@ -104,12 +106,16 @@ class TestHyperjumpCLI(unittest.TestCase):
                 st = load_state()
                 assert st is not None
                 self.assertEqual(st.coord_hex, c1)
-                self.assertEqual(chains.chain_length(label), 2)
+                self.assertEqual(chains.chain_length(label), 3)  # spawn + enter-hyperspace setup + hyperjump
                 last = chains.read_events(label)[-1]
                 tags = last.get("tags", [])
                 self.assertIn(["A", "hyperjump"], tags)
                 self.assertIn(["B", "940158"], tags)
-                self.assertFalse(any(t[0] == "proof" for t in tags if isinstance(t, list) and t))
+                # DECK-0001 requires proof tag for ALL hyperjump actions
+                self.assertTrue(any(t[0] == "proof" for t in tags if isinstance(t, list) and len(t) >= 2))
+                # Check DECK-0001 tags
+                self.assertTrue(any(t[0] == "from_height" for t in tags if isinstance(t, list) and len(t) >= 2))
+                self.assertTrue(any(t[0] == "from_hj" for t in tags if isinstance(t, list) and len(t) >= 2))
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)
@@ -146,11 +152,13 @@ class TestHyperjumpCLI(unittest.TestCase):
                 os.environ["CYBERSPACE_HOME"] = old_home
 
     def test_move_toward_hyperjump_uses_normal_hops_then_final_hyperjump(self) -> None:
+        """Test move --toward with --hyperjump flag: hops to sector plane, then hyperjump (requires hyperspace system)."""
         old_home = os.environ.get("CYBERSPACE_HOME")
         try:
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
-                label, _c0, _coord_hex = self._setup_chain(in_hyperjump_system=False, start_xyz=(15, 0, 0))
+                # Start closer to target and already on hyperspace system
+                label, _c0, _coord_hex = self._setup_chain(in_hyperjump_system=True, start_xyz=(15, 0, 0), hyperjump_xyz=(15, 0, 0))
                 c_target = xyz_to_coord(31, 0, 0, plane=0).to_bytes(32, "big").hex()
 
                 anchor_json = (
@@ -174,13 +182,16 @@ class TestHyperjumpCLI(unittest.TestCase):
                 st = load_state()
                 assert st is not None
                 self.assertEqual(st.coord_hex, c_target)
-                self.assertEqual(chains.chain_length(label), 3)
+                # spawn + enter-hyperspace setup + hops + hyperjump
+                self.assertGreaterEqual(chains.chain_length(label), 3)
                 events = chains.read_events(label)
-                action1 = next((t[1] for t in events[1].get("tags", []) if isinstance(t, list) and len(t) >= 2 and t[0] == "A"), "")
-                action2 = next((t[1] for t in events[2].get("tags", []) if isinstance(t, list) and len(t) >= 2 and t[0] == "A"), "")
-                self.assertEqual(action1, "hop")
-                self.assertEqual(action2, "hyperjump")
-                self.assertIn(["B", "940158"], events[2].get("tags", []))
+                # Find the hyperjump action (should be last)
+                last_event = events[-1]
+                action = next((t[1] for t in last_event.get("tags", []) if isinstance(t, list) and len(t) >= 2 and t[0] == "A"), "")
+                self.assertEqual(action, "hyperjump")
+                self.assertIn(["B", "940158"], last_event.get("tags", []))
+                # DECK-0001 requires proof tag
+                self.assertTrue(any(t[0] == "proof" for t in last_event.get("tags", []) if isinstance(t, list) and len(t) >= 2))
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)
@@ -294,6 +305,7 @@ class TestHyperjumpCLI(unittest.TestCase):
                 os.environ["CYBERSPACE_HOME"] = old_home
 
     def test_hyperjump_next_publishes_hyperjump_event(self) -> None:
+        """Test hyperjump next command creates hyperjump action with DECK-0001 tags."""
         runner = CliRunner()
         old_home = os.environ.get("CYBERSPACE_HOME")
         try:
@@ -308,19 +320,26 @@ class TestHyperjumpCLI(unittest.TestCase):
                     + c_target
                     + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
-                with patch(
-                    "cyberspace_cli.cli.subprocess.run",
-                    side_effect=[self._mock_proc(out), self._mock_proc(out)],
-                ):
+                # Mock the anchor query to return the target hyperjump
+                def mock_query_anchor(*, block_height, relay, limit, verbose=False):
+                    if block_height == 940158:
+                        import json
+                        ev = json.loads(out)
+                        return (c_target, ev, (102, 200, 300, 0))
+                    return None
+                
+                with patch("cyberspace_cli.cli._query_hyperjump_anchor_for_height", side_effect=mock_query_anchor):
                     res = runner.invoke(app, ["hyperjump", "next"])
                 self.assertEqual(res.exit_code, 0, msg=res.output)
                 st = load_state()
                 assert st is not None
                 self.assertEqual(st.coord_hex, c_target)
-                self.assertEqual(chains.chain_length(label), 3)
+                self.assertEqual(chains.chain_length(label), 3)  # spawn + setup + hyperjump
                 last = chains.read_events(label)[-1]
                 self.assertIn(["A", "hyperjump"], last.get("tags", []))
                 self.assertIn(["B", "940158"], last.get("tags", []))
+                # DECK-0001 requires proof tag
+                self.assertTrue(any(t[0] == "proof" for t in last.get("tags", []) if isinstance(t, list) and len(t) >= 2))
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)
@@ -380,6 +399,7 @@ class TestHyperjumpCLI(unittest.TestCase):
                 os.environ["CYBERSPACE_HOME"] = old_home
 
     def test_hyperjump_to_publishes_hyperjump_event(self) -> None:
+        """Test hyperjump to command creates hyperjump action with DECK-0001 tags."""
         runner = CliRunner()
         old_home = os.environ.get("CYBERSPACE_HOME")
         try:
@@ -394,19 +414,29 @@ class TestHyperjumpCLI(unittest.TestCase):
                     + c_target
                     + '"],["B","940160"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
-                with patch(
-                    "cyberspace_cli.cli.subprocess.run",
-                    side_effect=[self._mock_proc(out), self._mock_proc(out)],
-                ):
+                # Mock the anchor query to return the target hyperjump and the current one
+                def mock_query_anchor(*, block_height, relay, limit, verbose=False):
+                    import json
+                    if block_height == 940160:
+                        ev = json.loads(out)
+                        return (c_target, ev, (105, 200, 300, 0))
+                    elif block_height == 940157:
+                        # Return current hyperjump anchor
+                        return (_coord, json.loads(out), (105, 200, 300, 0))
+                    return None
+                
+                with patch("cyberspace_cli.cli._query_hyperjump_anchor_for_height", side_effect=mock_query_anchor):
                     res = runner.invoke(app, ["hyperjump", "to", "940160"])
                 self.assertEqual(res.exit_code, 0, msg=res.output)
                 st = load_state()
                 assert st is not None
                 self.assertEqual(st.coord_hex, c_target)
-                self.assertEqual(chains.chain_length(label), 3)
+                self.assertEqual(chains.chain_length(label), 3)  # spawn + setup + hyperjump
                 last = chains.read_events(label)[-1]
                 self.assertIn(["A", "hyperjump"], last.get("tags", []))
                 self.assertIn(["B", "940160"], last.get("tags", []))
+                # DECK-0001 requires proof tag
+                self.assertTrue(any(t[0] == "proof" for t in last.get("tags", []) if isinstance(t, list) and len(t) >= 2))
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)

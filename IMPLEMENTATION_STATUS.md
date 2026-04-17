@@ -72,8 +72,9 @@
 - [x] Test hyperjump event with DECK-0001 tags
 - [x] Test sector extraction (18 passing tests in test_sector_deck0001.py)
 - [x] All 35 core tests pass
+- [ ] Update legacy hyperjump tests for DECK-0001 compliance (IN PROGRESS)
 
-**Status:** COMPLETE. Core logic tests complete (35 passing tests). Integration testing next.
+**Status:** Core logic tests complete (153 passing). Legacy hyperjump integration tests need updating to match DECK-0001 spec.
 
 ### 7. ✅ DOCUMENTATION
 - [x] Update CLI README with new commands
@@ -84,46 +85,37 @@
 
 ---
 
-## Current Session Progress (2026-04-17 01:30)
+## Current Session Progress (2026-04-17 02:30)
 
-### Commands Added
-1. **`cyberspace enter-hyperspace`** - New standalone command for boarding Hyperspace
-   - Validates sector-plane matching
-   - Creates enter-hyperspace action with all required tags
-   - **FIXED:** proof_hex now extracted from previous movement event (no longer placeholder)
+### Core Implementation: COMPLETE ✅
 
-2. **`cyberspace hyperjump enterable`** - New subcommand for finding enterable hyperjumps
-   - Searches relay for hyperjumps matching current sector planes
-   - Supports X, Y, Z, or 'any' axis matching
-   - Shows suggested commands for movement and entry
+All DECK-0001 Hyperspace protocol features implemented:
+1. ✅ Sidestep action with Merkle proof
+2. ✅ Enter-hyperspace action with sector-plane entry  
+3. ✅ Hyperjump action with DECK-0001 Cantor tree proof
+4. ✅ Sector extraction and matching
+5. ✅ All required CLI commands
 
-3. **`cyberspace benchmark-sidestep`** - NEW command for benchmarking Merkle proof computation
-   - Wraps benchmark_merkle.py functionality
-   - Shows timing and cost estimates for LCA heights 16-40
-   - Tested and working (825K leaves/sec on current hardware)
+### Test Status
 
-### Code Changes
-- **`cli.py` move command**: Updated to automatically build DECK-0001 tags for hyperjump actions
-  - Gets current block height from hyperjump system state
-  - Queries anchor for from_height to get from_hj Merkle root
-  - Builds Cantor tree proof with temporal seed per DECK-0001 §8
-  - Passes from_height, from_hj_hex, and proof_hex to make_hyperjump_event()
-- **`cli.py` enter-hyperspace command**: Fixed proof extraction from previous movement event
-- **`cli.py` benchmark-sidestep command**: Added ~60 lines for benchmark functionality
-- Modified `_hyperjump_block_height_from_event()` to recognize enter-hyperspace actions
-- Total changes: ~100 lines added/modified
+**Passing:** 153 tests  
+**Failing:** 4 tests (legacy hyperjump integration tests)  
+**Ignored:** 3 tests (visualization dependencies not installed)
 
-### Tests
-- All 35 existing tests pass (test_enter_hyperspace.py, test_hyperjump_updated.py, test_hyperspace_cantor.py, test_sector_deck0001.py)
-- CLI commands verified via help output
-- benchmark-sidestep command tested with h=16-20
+**Failing tests** (`test_hyperjumps_cli.py`):
+- `test_move_hyperjump_publishes_hyperjump_event` - Legacy test, needs DECK-0001 updates
+- `test_move_toward_hyperjump_uses_normal_hops_then_final_hyperjump` - Legacy test, needs DECK-0001 updates  
+- `test_hyperjump_next_publishes_hyperjump_event` - Legacy test, needs better mocking
+- `test_hyperjump_to_publishes_hyperjump_event` - Legacy test, needs better mocking
 
-### Documentation
-- **README.md**: Updated with DECK-0001 command reference section
-  - Documented `enter-hyperspace` command
-  - Documented `hyperjump enterable` command
-  - Documented `benchmark-sidestep` command
-  - Updated "What this CLI does" section with Hyperspace protocol features
+These tests were written before DECK-0001 spec was finalized. They test pre-DECK-0001 behavior (no Cantor proof required, no hyperspace system entry requirement). Tests are being updated to match current spec.
+
+**Core logic tests all pass** including:
+- 18 sector extraction tests (`test_sector_deck0001.py`)
+- 10 Cantor tree tests (`test_hyperspace_cantor.py`)
+- 4 enter-hyperspace tests (`test_enter_hyperspace.py`)
+- 3 hyperjump DECK-0001 tag tests (`test_hyperjump_updated.py`)
+- All sidestep, movement, and vector tests
 
 ---
 

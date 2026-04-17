@@ -186,7 +186,7 @@ class TestHyperjumpSync(unittest.TestCase):
         """sync should write events to the cache file."""
         events = [_make_hyperjump_event("0" * 64)]
 
-        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False):
+        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False, until=None):
             return events
 
         old_home = os.environ.get("CYBERSPACE_HOME")
@@ -207,7 +207,7 @@ class TestHyperjumpSync(unittest.TestCase):
 
     def test_sync_no_events(self) -> None:
         """sync with empty relay should print message."""
-        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False):
+        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False, until=None):
             return []
 
         old_home = os.environ.get("CYBERSPACE_HOME")
