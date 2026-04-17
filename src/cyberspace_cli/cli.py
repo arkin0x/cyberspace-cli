@@ -780,6 +780,61 @@ def bench(
 
 
 @app.command()
+def verify_zk(
+    event_id: str = typer.Argument(..., help="Nostr event ID to verify ZK proof for"),
+) -> None:
+    """Verify ZK-STARK proof for a movement event (fast path).
+    
+    This command verifies the ZK proof attached to a movement event.
+    Verification is O(1) regardless of tree height (compared to O(N) for
+    standard Cantor verification).
+    
+    Note: This is a PoC/mock implementation. Production would use cairo-lang
+    or a Rust-based STARK backend for cryptographic verification.
+    
+    Example:
+        cyberspace verify-zk <event_id>
+        # Output: "ZK proof valid (verified in 0.042ms)"
+    """
+    import time as _time
+    from cyberspace_core.zk_cantor import verify_cantor_tree, prove_cantor_tree
+    
+    # For PoC purposes, we demonstrate the verification interface
+    # In production, this would:
+    # 1. Fetch the event from Nostr relay
+    # 2. Extract ZK proof from tags
+    # 3. Verify the proof cryptographically
+    
+    typer.echo("verify-zk: ZK-STARK proof verification (PoC/mock implementation)")
+    typer.echo(f"event_id: {event_id}")
+    typer.echo("")
+    
+    # Demo: Create a sample proof and verify it
+    import os
+    prev_event_id = os.urandom(32)
+    leaves = [100, 200, 300, 400, 500]
+    
+    start = _time.perf_counter()
+    root, proof = prove_cantor_tree(leaves)
+    proof_time = _time.perf_counter() - start
+    
+    start = _time.perf_counter()
+    is_valid = verify_cantor_tree(root, leaves, proof)
+    verify_time = _time.perf_counter() - start
+    
+    typer.echo(f"Demo verification (sample tree with {len(leaves)} leaves):")
+    typer.echo(f"  Root: 0x{root:x}")
+    typer.echo(f"  Proof size: {len(proof.stark_proof)} bytes")
+    typer.echo(f"  Constraint count: {proof.constraint_count}")
+    typer.echo(f"  Valid: {is_valid}")
+    typer.echo(f"  Verification time: {verify_time*1000:.3f}ms")
+    typer.echo(f"  Proof generation time: {proof_time*1000:.3f}ms")
+    typer.echo("")
+    typer.echo("Note: In production, this would fetch and verify the actual event's ZK proof.")
+    typer.echo("      Current implementation demonstrates the interface pattern.")
+
+
+@app.command()
 def lcaplot(
     axis: str = typer.Option(
         "x",
