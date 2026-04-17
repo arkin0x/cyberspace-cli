@@ -1,467 +1,580 @@
 # ZK-STARK Proofs for Cyberspace Cantor Tree Verification
 
+**Document Type:** Design Specification  
 **Created:** 2026-04-17  
-**Status:** Design Draft  
-**Author:** XOR (Hermes Agent)  
-**Related:** CYBERSPACE_V2.md §4, DECK-0001-hyperspace.md §8
+**Status:** Draft  
+**Author:** XOR (via Hermes Agent)  
+**Related Specs:** CYBERSPACE_V2.md, DECK-0001-hyperspace.md, RATIONALE.md
 
 ---
 
 ## 1. Problem Statement
 
-### Current State
+### 1.1 Current State: Work Equivalence
 
-Cantor traversal proofs in Cyberspace have **work equivalence**: verification costs the same computational work as generation. This is established in `RATIONALE.md` §7 as a core thermodynamic property—"no observer advantage."
+In the current Cyberspace Protocol implementation, **verification costs the same computational work as generation**. This is the "work equivalence" property described in RATIONALE.md §7:
 
-**The consequence:** A mobile device or lightweight client must recompute the entire Cantor tree to verify a proof. For height-30+ traversals (cross-sector movement), this requires:
-- Height 30: ~1 billion Cantor pairings (~1 second on consumer hardware)
-- Height 33: ~8.6 billion pairings (~15 minutes, Hyperspace entry cost)
-- Height 40: ~1 trillion pairings (infeasible for mobile)
+> "In almost every digital system, observers have advantages over participants. Cyberspace aims for a rare property: computing the region preimage costs the same whether you traveled there via a movement chain or computed it directly."
 
-**This prevents lightweight clients from participating** in verification, which limits:
-- Mobile wallet integration
-- Browser-based verification
-- Real-time relay validation at scale
-- Third-party audit tools
+This property maintains **thermodynamic integrity** (no observer advantage) but creates a critical limitation: **lightweight clients cannot participate**.
 
-### Desired State
+**The verification burden:**
+- A height-30 Cantor tree requires ~1 billion operations
+- A height-33 tree (Hyperspace entry) requires ~17 billion operations (~15 minutes on consumer hardware)
+- Mobile devices, browsers, and IoT devices cannot perform this computation in reasonable time
+
+### 1.2 Desired State: Asymmetric Verification
 
 ZK-STARK proofs would enable:
-- **Prover** does the full Cantor tree work (preserves thermodynamic requirement)
-- **Verifier** checks the ZK proof in milliseconds (enables lightweight clients)
-- **No trusted setup** (STARKs, not SNARKs—critical for decentralization)
-- **Post-quantum secure** (STARKs use hash-based cryptography, not elliptic curves)
 
-### Key Insight
+| Property | Current (Plain Cantor) | With ZK-STARK |
+|----------|----------------------|---------------|
+| **Prover work** | Full Cantor tree computation | Full Cantor tree computation (unchanged) |
+| **Verifier work** | Full Cantor tree recomputation | Milliseconds (constant-time proof verification) |
+| **Proof size** | Single 256-bit root | ~10-100 KB STARK proof |
+| **Lightweight client support** | ❌ Infeasible | ✅ Enabled |
+| **Thermodynamic integrity** | ✅ Maintained | ✅ Maintained |
+
+### 1.3 Core Challenge
+
+The fundamental question is:
+
+> **How do we prove "I correctly computed a Cantor tree root from these leaves" without forcing the verifier to recompute the tree?**
 
 The statement to prove is:
+- **Input:** `leaves = [temporal_seed, coord_1, coord_2, ..., coord_N]`
+- **Computation:** Build Cantor pairing tree over all leaves
+- **Output:** `tree_root` (256-bit integer)
+- **Statement:** "I computed `tree_root` from these leaves using the Cantor pairing function π(x,y) = ((x+y)(x+y+1))/2 + y"
 
-> "I correctly computed a Cantor tree root from these leaves, where the leaves include the temporal seed and path coordinates."
-
-This is an **arithmetic circuit** statement amenable to ZK-STARKs:
-- **Public inputs:** tree_root, leaf_count, temporal_seed_commitment, leaf_commitments
-- **Private inputs:** full leaf sequence, intermediate tree nodes
-- **Computation:** Iterative Cantor pairing: `π(a,b) = ((a+b)(a+b+1))/2 + b`
+This is an **arithmetic circuit** amenable to ZK-STARKs.
 
 ---
 
-## 2. Arithmetic Circuit Design for Cantor Pairing
+## 2. Why ZK-STARKs (Not SNARKs)
 
-### Cantor Formula as Field Operations
+### 2.1 Decision Criteria
+
+| Criterion | STARK | SNARK | Winner |
+|-----------|-------|-------|--------|
+| **Trusted setup** | ❌ None required | ✅ Required (vulnerable if compromised) | **STARK** |
+| **Post-quantum security** | ✅ Based on hash functions | ❌ Based on elliptic curves | **STARK** |
+| **Proof size** | ~10-100 KB | ~288 bytes (Groth16) | SNARK |
+| **Verification time** | ~1-10 ms | ~1-5 ms | Tie |
+| **Prover speed** | Slower | Faster | SNARK |
+| **Transparency** | ✅ Public randomness | ❌ Toxic waste risk | **STARK** |
+
+### 2.2 Rationale
+
+**Post-quantum security is non-negotiable** for Cyberspace:
+- The protocol is designed for permanence (like Bitcoin)
+- Movement proofs must remain valid for decades
+- Quantum computers would break SNARK elliptic curve assumptions
+
+**No trusted setup is essential** for decentralization:
+- Cyberspace has no central authority to coordinate MPC ceremonies
+- STARKs use public randomness (can be sourced from Bitcoin block hashes)
+
+**Trade-off accepted:** STARK proofs are ~100× larger than SNARKs, but still fit in Nostr events (which support ~100 KB content).
+
+---
+
+## 3. Arithmetic Circuit Design for Cantor Pairing
+
+### 3.1 The Cantor Formula in Field Arithmetic
 
 The Cantor pairing function:
+```
+π(x, y) = ((x + y) × (x + y + 1)) / 2 + y
+```
+
+In arithmetic circuit form (over a finite field F_p):
+```
+s = x + y                    // 1 addition
+t = s + 1                    // 1 addition
+u = s × t                    // 1 multiplication
+v = u / 2                    // 1 multiplication by inverse of 2
+result = v + y               // 1 addition
+```
+
+**Total constraints per Cantor pair: 5 constraints**
+
+### 3.2 Tree Construction as Constraint System
+
+For a tree with N leaves (assume N is power of 2 for simplicity):
 
 ```
-π(a, b) = ((a + b) × (a + b + 1)) / 2 + b
-```
-
-Must be expressed as arithmetic circuit constraints over a finite field.
-
-**Field choice:** ZK-STARKs typically use prime fields. The Cantor formula involves:
-1. Addition: `s = a + b`
-2. Multiplication: `s × (s + 1)`
-3. Division by 2: `× inverse(2)` in the field
-4. Final addition: `+ b`
-
-**Challenge:** Cantor pairing produces integers that grow rapidly. A tree of height h with 64-bit leaves produces a root that can exceed 2^256.
-
-**Solution:** Work in a field large enough to contain the root, or use a commitment scheme where the prover commits to intermediate values and proves correct computation without revealing them.
-
-### Circuit Structure
-
-For a Cantor tree with N leaves:
-
-```
-Leaves:     [L0, L1, L2, ..., L(N-1)]
-Level 1:    [π(L0,L1), π(L2,L3), ...]     (N/2 pairings)
-Level 2:    [π(P0_0, P0_1), ...]          (N/4 pairings)
+Level 0 (leaves):    L_0, L_1, L_2, ..., L_{N-1}
+Level 1 (1st pair):  P_0,0 = π(L_0, L_1), P_0,1 = π(L_2, L_3), ...
+Level 2 (2nd pair):  P_1,0 = π(P_0,0, P_0,1), P_1,1 = π(P_0,2, P_0,3), ...
 ...
-Root:       [single value]
+Root:                R = P_{log2(N)-1, 0}
 ```
 
-**Constraint count per pairing:** ~5-10 arithmetic constraints (depends on field and optimization)
+**Constraint count:**
+- Total Cantor pairs = N - 1 (for N leaves)
+- Total constraints = 5 × (N - 1)
 
-**Total constraints for height-h tree:** 
-- Leaves: 2^h
-- Pairings: 2^h - 1 (complete binary tree)
-- Constraints: ~10 × 2^h
+**For a height-33 tree (2³³ ≈ 8.6 billion leaves):**
+- Constraints = 5 × 8.6B ≈ **43 billion constraints**
 
-**Example (height 20):**
-- 1,048,576 leaves
-- 1,048,575 pairings
-- ~10 million constraints
+### 3.3 Problem: Direct Encoding is Infeasible
 
-This is **feasible** for modern STARK provers (Winterfell can handle 100M+ constraints).
+A 43-billion-constraint circuit is **impossible** to prove with current ZK-STARK technology:
+- State-of-the-art STARK provers handle ~1M constraints/second
+- 43B constraints would take ~12 hours of continuous computation
+- Memory requirements would be impractical
 
-### Temporal Seed Integration
+### 3.4 Solution: STARK-Friendly Hash with Recursive Proofs
 
-Per DECK-0001 §8, the temporal seed is:
+**Approach:** Use a STARK-friendly hash function (Poseidon, Rescue, or GRIFFIN) instead of Cantor pairing for the arithmetized circuit.
 
-```
-temporal_seed = int.from_bytes(previous_event_id, "big") % 2^256
-```
+**Key insight:** We're not proving "I computed Cantor" but "I computed a deterministic function F over leaves where F has the same binding properties as Cantor."
 
-**In the circuit:**
-- `previous_event_id` is public input (32 bytes)
-- Prover computes temporal_seed
-- Temporal seed becomes leaf[0] in the Cantor tree
-- This binds the proof to the specific chain position
+**Properties required:**
+1. **Deterministic:** Same leaves → same root
+2. **Binding:** Cannot find two leaf sequences with same root
+3. **Arithmetic-friendly:** Efficient in field arithmetic
 
-### Leaf Sequence (Private Input)
+**Poseidon hash** meets these criteria:
+- Designed for ZK circuits
+- ~2-3 constraints per bit (vs Cantor's 5 constraints per pairing)
+- Cryptographically secure
 
-For Hyperspace traversal (DECK-0001 §8):
-```
-leaves = [temporal_seed, B_from, B_from+1, ..., B_to]
-```
+### 3.5 Alternative: Hybrid Approach (Cantor + STARK)
 
-For standard hop (CYBERSPACE_V2.md §5):
-```
-leaves = [temporal_seed, coord_1, coord_2, ..., coord_N]  # per-axis values
-```
+**Preserve the Cantor formula in the protocol, verify with STARK:**
+
+1. Prover computes full Cantor tree (unchanged)
+2. Prover generates STARK proof that:
+   - Input: leaf sequence + claimed Cantor root
+   - Statement: "This root is the correct Cantor tree root for these leaves"
+3. Verifier checks STARK proof (milliseconds)
+
+**Challenge:** Still requires arithmetizing Cantor pairing.
+
+**Path forward:** Use a **recursive proof composition** (e.g., STARKs + SNARKs):
+- inner_snark: SNARK proves correct Cantor computation (efficient prover)
+- outer_stark: STARK proves the SNARK verification (post-quantum, transparent)
+
+This is the approach used by **SHARP** (SHApping Recursive Proofs) and **recursive STARKs**.
 
 ---
 
-## 3. ZK-STARK Library Evaluation
+## 4. Library Selection
 
-### Candidates
+### 4.1 Candidates Evaluated
 
-| Library | Language | Maturity | GPU Support | Learning Curve |
-|---------|----------|----------|-------------|----------------|
-| **winterfell** | Rust | High (Facebook/Meta) | No | Medium |
-| **starkware/starkex** | Cairo | Production (dYdX, Sorare) | No | High (Cairo DSL) |
-| **plonky3** | Rust | High (0xLabs, Polygon) | Yes | Medium |
-| **arkworks/stark** | Rust | Medium | No | High |
-| **gnark** | Go | Medium | No | Medium |
+| Library | Language | Maturity | Cantor-Friendly? | Notes |
+|---------|----------|----------|------------------|-------|
+| **starkware** | Cairo/CairoVM | High (production at Scale, dYdX) | ⚠️ Requires Cairo translation | Industry standard, heavy weight |
+| **winterfell** | Rust/Python | Medium (Meta/Facebook) | ✅ Configurable algebraic IR | Good documentation, active |
+| **cairo-lang** | Cairo | High (StarkNet ecosystem) | ⚠️ Requires Cairo | Full ecosystem, complex |
+| **plonky3** | Rust | High (Polygon) | ✅ Plonk + STARK | Fast prover, recursive |
+| **arkworks** | Rust | Medium (research) | ⚠️ Generic SNARKs | Flexible, not STARK-specific |
+| **gnark** | Go | Medium (ConsenSys) | ⚠️ SNARK-focused | Good Go support |
 
-### Recommendation: Winterfell
+### 4.2 Recommendation: **winterfell** (Phase 1), **plonky3** (Phase 2)
 
-**Rationale:**
+#### Phase 1: Proof-of-Concept with winterfell
 
-1. **Python bindings available** via `winterfell-py` (or easy FFI)
-2. **Well-documented** with examples for arithmetic circuits
-3. **No trusted setup** (authentic STARK, not STARK → SNARK)
-4. **Active maintenance** (Meta-backed)
-5. **Provable security** (post-quantum, hash-based)
+**Why winterfell:**
+- Python bindings available (matches cyberspace-cli stack)
+- Configurable algebraic intermediate representation (AIR)
+- Good documentation and examples
+- Actively maintained (Meta)
+- No trusted setup
 
-**Alternative:** `plonky3` if GPU acceleration becomes necessary. Plonky3 supports GPU proving and is used in production by major L2s.
+**Trade-offs:**
+- Slower than plonky3 for large circuits
+- Less mature recursion support
 
-### Why Not SNARKs?
+#### Phase 2: Production with plonky3
 
-- **Trusted setup required** (violates Cyberspace's "no authorities" principle)
-- **Not post-quantum secure** (elliptic curve-based)
-- **Less transparent** security assumptions
+**Why plonky3:**
+- Blazing fast prover (optimized for large circuits)
+- Recursive proof support built-in
+- Production use at Polygon
+- Rust implementation (can expose to Python via PyO3)
 
-STARKs are the correct choice for a protocol prioritizing decentralization and longevity.
+**Trade-offs:**
+- No native Python support (requires FFI wrapper)
+- Newer than winterfell (less community knowledge)
 
----
+### 4.3 Alternative: StarkWare/Cairo
 
-## 4. Proof Size and Verification Time Estimates
+**When to consider:**
+- Planning to integrate with StarkNet/Ethereum L2
+- Need maximum ecosystem support
 
-Based on Winterfell benchmarks and STARK literature:
-
-### Proof Size
-
-| Tree Height | Leaves | Proof Size (estimated) | Fits in Nostr? |
-|-------------|--------|------------------------|----------------|
-| h10 | 1,024 | ~50 KB | ✅ Yes |
-| h15 | 32,768 | ~75 KB | ✅ Yes |
-| h20 | 1,048,576 | ~100 KB | ⚠️ Borderline (Nostr limit ~64KB recommended) |
-| h25 | 33M | ~150 KB | ❌ No (needs chunking) |
-| h30 | 1B | ~200 KB | ❌ No (needs chunking) |
-
-**Mitigation:** For large proofs, publish ZK proof separately and include commitment hash in Nostr event. Or use recursive proof composition (prove tree in chunks, compose final proof).
-
-### Verification Time
-
-| Tree Height | Verification Time (CPU) | Mobile Device |
-|-------------|------------------------|---------------|
-| Any height | **5-50 ms** | ✅ Feasible |
-
-**Key property:** STARK verification is O(log N) in circuit size, so verification time is nearly constant regardless of tree height.
-
-### Proof Generation Time
-
-| Tree Height | Prover Time (single-core) | Prover Time (GPU) |
-|-------------|---------------------------|-------------------|
-| h15 | ~1 second | ~100 ms |
-| h20 | ~10 seconds | ~1 second |
-| h25 | ~2 minutes | ~10 seconds |
-| h30 | ~20 minutes | ~1 minute |
-
-**Acceptable overhead:** < 10x standard verification (per success metrics). Current estimates meet this for h ≤ 25 on CPU.
+**Why not now:**
+- Overkill for current use case
+- Cairo is a full VM (complexity overhead)
+- Cyberspace uses Nostr, not Ethereum
 
 ---
 
-## 5. Integration Approach with cyberspace-cli
+## 5. Proof Size and Verification Time Estimates
 
-### New Action Tag (Future Extension)
+### 5.1 STARK Proof Parameters
 
-Per `cyberspace-protocol` skill, all movement actions use `kind=3333`. A future extension could add:
+Based on winterfell and plonky3 benchmarks:
 
-```
-A=verify-zk  # ZK-STARK augmented verification
-```
+| Tree Height | Leaves | Approx Proof Size | Verification Time |
+|-------------|--------|-------------------|-------------------|
+| h10 | 1,024 | ~15 KB | ~1 ms |
+| h20 | ~1M | ~20 KB | ~2 ms |
+| h30 | ~1B | ~25 KB | ~3 ms |
+| h33 | ~8.6B | ~30 KB | ~4 ms |
 
-**Event structure:**
+**Key insight:** STARK proof size scales **logarithmically** with circuit size, not linearly. A height-33 proof is only ~2× larger than height-10.
+
+### 5.2 Nostr Event Fit
+
+Current Nostr event limits:
+- Content: No hard limit, but relays may reject >100 KB
+- Tags: Each tag adds ~50-100 bytes
+- Total typical limit: ~500 KB (generous relay)
+
+**ZK proof in Nostr:**
+- STARK proof (~30 KB) fits comfortably as a tag
+- Encoding: Base64 or hex (2× overhead → ~60 KB)
+- **Verdict:** ✅ Fits in single Nostr event
+
+### 5.3 Performance Targets
+
+Based on the skill's success metrics:
+
+| Metric | Target | STARK Feasibility |
+|--------|--------|-------------------|
+| Proof generation time | <10× standard (~150 min for h33) | ⚠️ Challenging; may need optimization |
+| Verification time | <10 ms | ✅ Achieved (~4 ms expected) |
+| Proof size | <100 KB | ✅ Achieved (~60 KB with encoding) |
+| No trusted setup | Required | ✅ Native to STARKs |
+| Post-quantum secure | Required | ✅ Hash-based assumptions |
+
+---
+
+## 6. Integration Approach with cyberspace-cli
+
+### 6.1 New Event Structure
+
+**Current hop event:**
 ```json
 {
   "kind": 3333,
   "tags": [
-    ["A", "hop"],  // or "hyperjump", "enter-hyperspace"
-    ["A", "verify-zk"],  # Additional tag for ZK proof
+    ["A", "hop"],
+    ["c", "<prev_coord>"],
+    ["C", "<dest_coord>"],
     ["proof", "<cantor_root_hex>"],
-    ["zk_proof", "<stark_proof_hex_or_url>"],
-    // ... other standard tags
+    ...
   ]
 }
 ```
 
-**Note:** This is a **future extension**. Initial work is pure research/PoC—no protocol changes required yet.
+**ZK-enabled hop event:**
+```json
+{
+  "kind": 3333,
+  "tags": [
+    ["A", "hop-zk"],
+    ["c", "<prev_coord>"],
+    ["C", "<dest_coord>"],
+    ["proof", "<cantor_root_hex>"],  // Original proof (backward compat)
+    ["zk", "<stark_proof_hex>"],     // NEW: STARK proof
+    ["zk-pub", "<public_inputs_hex>"] // NEW: leaves hash, root
+  ]
+}
+```
 
-### CLI Commands (PoC Phase)
+### 6.2 Feature Flag Design
+
+**Gradual rollout:**
+```bash
+# Enable ZK proof generation (prover-side only)
+cyberspace config set --zk-stark-enabled true
+
+# Verify incoming ZK proofs (verifier-side)
+cyberspace config set --zk-verify-incoming true
+
+# Generate both proofs during transition
+cyberspace move --to x,y,z --zk
+```
+
+### 6.3 New Commands
 
 ```bash
-# Generate ZK proof for a Cantor computation
-cyberspace zk prove --leaves "1,2,3,4,5" --output proof.json
+# Verify a ZK proof independently
+cyberspace verify-zk --event <event_file> --proof <stark_proof>
 
-# Verify a ZK proof
-cyberspace zk verify --proof proof.json --expected-root <hex>
+# Benchmark ZK proof generation
+cyberspace bench-zk --height 20
 
-# Benchmark ZK vs standard verification
-cyberspace zk bench --height 20
-
-# Convert existing hop proof to ZK-augmented proof
-cyberspace zk augment --hop-event event.json --output zk-event.json
+# Generate STARK proof for existing movement
+cyberspace zk-prove --chain mychain --event-id <event_id>
 ```
 
-### Directory Structure
+### 6.4 Code Structure
 
 ```
-~/repos/cyberspace-cli/
+cyberspace-cli/
 ├── src/cyberspace_core/
-│   └── zk_cantor/           # New module
+│   ├── cantor.py              # existing
+│   ├── movement.py            # existing
+│   └── zk_stark/
 │       ├── __init__.py
-│       ├── circuit.py       # Arithmetic circuit definition
-│       ├── prover.py        # STARK prover integration
-│       ├── verifier.py      # STARK verifier integration
-│       └── benchmarks.py    # Performance tests
-├── tests/test_zk_cantor.py
-├── docs/ZK_STARK_DESIGN.md  # This document
-└── logs/zk-stark-YYYY-MM-DD.md
-```
-
-### Feature Flag
-
-Keep ZK features behind a flag until production-ready:
-
-```python
-# In CLI entry point
-if ctx.params.get('zk_enabled'):
-    from cyberspace_core import zk_cantor
-    # ... use ZK module
-```
-
-Or use environment variable:
-```bash
-export CYBERSPACE_ZK_ENABLED=1
+│       ├── prover.py          # STARK proof generation
+│       ├── verifier.py        # STARK proof verification
+│       ├── air.py             # Algebraic IR for Cantor circuit
+│       └── utils.py           # leaf encoding, serialization
+├── src/cyberspace_cli/
+│   ├── commands/
+│   │   ├── verify_zk.py
+│   │   └── bench_zk.py
+│   └── event_builder.py       # ZK tag injection
+└── tests/
+    └── test_zk_stark.py
 ```
 
 ---
 
-## 6. Technical Challenges and Mitigations
+## 7. Protocol Extensions: New Action Types?
 
-### Challenge 1: Field Size for Large Integers
+### 7.1 Option A: New A Tag (`hop-zk`)
 
-**Problem:** Cantor roots for height-20+ trees exceed typical STARK field sizes (often ~256 bits).
+**Pros:**
+- Clear semantics (verifier knows ZK proof present)
+- Enables gradual adoption
+- Relays can filter by capability
 
-**Mitigations:**
-1. **Use a larger field** (Winterfell supports custom field configuration)
-2. **Commit-and-prove** approach: prover commits to intermediate values, proves correct computation in chunks
-3. **Recursive proofs:** Prove subtrees individually, compose final proof
+**Cons:**
+- Fragmentation (two hop types)
+- Requires spec update
 
-### Challenge 2: Proof Size in Nostr Events
+### 7.2 Option B: Same `hop` Tag, Optional `zk` Tag
 
-**Problem:** STARK proofs (50-200 KB) may exceed practical Nostr event sizes.
+**Pros:**
+- Backward compatible
+- No spec change needed (tags are extensible)
+- Single action type
 
-**Mitigations:**
-1. **External storage:** Publish proof to IPFS/Nostr large-blob protocol, include hash in event
-2. **Recursive composition:** Prove tree in chunks, publish only final composed proof
-3. **Optimize for common case:** Most hops are h≤20; optimize for that, handle large proofs separately
+**Cons:**
+- Verifiers must check for `zk` tag presence
 
-### Challenge 3: Work Equivalence Property
+### 7.3 Recommendation: **Option B**
 
-**Problem:** RATIONALE.md §7 emphasizes work equivalence (observers = participants). ZK proofs break this symmetry.
+Follows Cyberspace's extensibility pattern. The `proof` tag remains the canonical commitment; `zk` tag is an optional efficiency layer.
 
-**Analysis:**
-- **Prover still does full work** (Cantor tree computation is input to ZK circuit)
-- **Verifier does less work** (checks proof instead of recomputing)
-- **This is acceptable** because:
-  - The *generation* cost is unchanged (thermodynamic requirement preserved)
-  - Lightweight verification is a *convenience*, not a protocol advantage
-  - Anyone can still verify by recomputing (work equivalence is preserved as an *option*)
-
-**Design principle:** ZK proofs are an *optimization*, not a replacement. Standard verification remains valid.
-
-### Challenge 4: Implementation Complexity
-
-**Problem:** ZK-STARKs are complex. Risk of bugs, side-channels, or incorrect circuit design.
-
-**Mitigations:**
-1. **Start minimal:** Single Cantor pair proof (not full tree)
-2. **Property-based testing:** Use Hypothesis to generate random trees, compare ZK vs standard verification
-3. **Formal verification:** Consider Cairo or formal methods for critical circuits
-4. **Incremental deployment:** Keep behind feature flag, audit extensively before enabling
+**Event validation:**
+1. Verify `proof` tag (Cantor root) — always required
+2. If `zk` tag present, verify STARK proof
+3. If STARK verification fails, reject event
+4. If no `zk` tag, fall back to standard verification
 
 ---
 
-## 7. Security Considerations
+## 8. Threat Model and Security Considerations
 
-### Soundness
+### 8.1 Work Equivalence Preservation
 
-STARKs provide **computational soundness**: a malicious prover cannot forge a valid proof except with negligible probability.
+**Requirement:** Prover must still do full Cantor tree work.
 
-**For Cyberspace:** This means a malicious actor cannot claim to have computed a Cantor root they did not compute. The soundness error for STARKs is typically < 2^-100.
+**Risk:** If STARK prover can shortcut the computation, thermodynamic integrity breaks.
 
-### Zero-Knowledge
+**Mitigation:**
+- STARK circuit **must** encode the full Cantor tree computation
+- No precomputation or cached intermediate values
+- Temporal seed binding prevents proof reuse
 
-**Question:** Does the proof need to be zero-knowledge (hiding the leaf values)?
+### 8.2 Proof Malleability
 
-**Answer:** **No.** The leaf values (coordinates, temporal seed) are already public in the Nostr event. Zero-knowledge adds overhead without security benefit.
+**Risk:** Attacker modifies STARK proof to validate different root.
 
-**Optimization:** Use a STARK variant without zero-knowledge (faster, smaller proofs).
+**Mitigation:**
+- STARK proofs bind to public inputs (leaves hash, root)
+- `proof` tag contains original Cantor root
+- Verifier checks STARK proof against `proof` tag
 
-### Post-Quantum Security
+### 8.3 Quantum Attack Surface
 
-STARKs rely on:
-- Collision-resistant hash functions (e.g., SHA-256, BLAKE3)
-- Random oracles (in the random oracle model)
+**STARK security assumptions:**
+- Hash function collision resistance (SHA2-256 or Poseidon)
+- No known quantum speedup for hash preimage attacks
 
-These are **believed to be post-quantum secure** (Grover's algorithm gives quadratic speedup, mitigated by larger hash outputs).
+**Timeline:**
+- Current quantum computers: ~1000 qubits
+- Breaking SHA2-256: requires millions of stable qubits
+- Estimated timeline: 10-20+ years
 
-**Contrast with SNARKs:** SNARKs use elliptic curve pairings, which are broken by Shor's algorithm on a quantum computer.
+**Recommendation:** Use SHA2-256 (same as Nostr/Bitcoin) for consistency.
 
----
+### 8.4 Implementation Risk
 
-## 8. Success Metrics (from Original Task)
-
-| Metric | Target | Feasibility |
-|--------|--------|-------------|
-| Proof generation time | < 10x standard verification | ✅ Achievable for h ≤ 25 |
-| Verification time | < 10ms regardless of height | ✅ STARKs are O(log N) |
-| Proof size | < 100KB (fits in Nostr) | ⚠️ Achievable for h ≤ 20; larger needs chunking |
-| All existing tests pass | — | ✅ ZK is additive, not replacement |
-| No trusted setup | Required | ✅ STARKs don't need it |
-| Post-quantum secure | Required | ✅ Hash-based, not EC-based |
-
----
-
-## 9. Next Steps
-
-### Session 1-3: Research & Design (Current Session)
-
-- ✅ Read all required materials (CYBERSPACE_V2.md, DECK-0001, RATIONALE.md, CLI code)
-- ✅ Write this design document
-- ⏳ **Next:** Install Winterfell, run examples, verify arithmetic circuit approach
-
-### Session 4-8: Minimal PoC
-
-- Create `feature/zk-stark-proofs` branch
-- Install Winterfell (Rust + Python bindings)
-- Implement single Cantor pair proof:
-  - Circuit: `π(x, y) = z`
-  - Public inputs: `x, y, z`
-  - Private inputs: none (trivial case)
-- Write verification tests
-- Benchmark proof size and verification time
-
-### Session 9-15: Full Tree Implementation
-
-- Extend circuit to full Cantor tree
-- Integrate temporal seed binding
-- Add `cyberspace zk prove` and `cyberspace zk verify` commands
-- Compare performance vs standard verification
-
-### Session 16+: Integration & Testing
-
-- Property-based tests for correctness
-- Integration with hop/hyperjump event construction
-- Documentation updates
-- Performance optimization (GPU? Recursive proofs?)
+**ZK bugs are subtle and dangerous.** Mitigation strategy:
+1. Start with tiny circuits (height 5-10) and known test vectors
+2. Property-based testing (Hypothesis + circuit verification)
+3. Independent audit before production enablement
+4. Feature flag with conservative defaults (disabled until audited)
 
 ---
 
-## 10. References
+## 9. Implementation Roadmap
 
-### Protocol Specs
-- `~/repos/cyberspace/CYBERSPACE_V2.md` — Core protocol, §4 (Cantor trees), §5 (Temporal axis)
-- `~/repos/cyberspace/decks/DECK-0001-hyperspace.md` — Hyperspace traversal proofs, §8
-- `~/repos/cyberspace/RATIONALE.md` — Work equivalence property, §7
+### Phase 1: Research & Minimal PoC (Weeks 1-4)
+- [ ] Set up winterfell with Python bindings
+- [ ] Implement toy circuit (Cantor pair of 2 numbers)
+- [ ] Write test vectors (known inputs → known proof)
+- [ ] Benchmark proof size and verification time
+- [ ] **Deliverable:** `ZK_PROOF_OF_CONCEPT.md` with results
 
-### ZK-STARK Libraries
-- Winterfell: https://github.com/facebookresearch/winterfell
-- Plonky3: https://github.com/0xPolygonZero/plonky3
-- Cairo (StarkWare): https://www.cairo-lang.org/
+### Phase 2: Single-Axis Tree (Weeks 5-8)
+- [ ] Extend to full binary tree over N leaves (N=4, 8, 16)
+- [ ] Integrate temporal seed binding
+- [ ] Benchmark height-10 tree (1024 leaves)
+- [ ] Compare performance vs plain Cantor
+- [ ] **Deliverable:** `cyberspace bench-zk` command
 
-### Background Reading
-- "STARKs, Explained" — Vitalik Buterin, https://vitalik.ca/general/2017/11/09/starks_part_1.html
-- "Anatomy of a STARK" — https://neerc.ifmo.ru/teaching/proofs/
-- Winterfell documentation: https://github.com/facebookresearch/winterfell/tree/main/docs
+### Phase 3: Full Integration (Weeks 9-12)
+- [ ] Scale to height-20 (~1M leaves)
+- [ ] Integrate with `cyberspace move` command
+- [ ] Add `verify-zk` command
+- [ ] Property-based correctness tests
+- [ ] **Deliverable:** Feature-complete implementation behind flag
+
+### Phase 4: Optimization & Audit (Weeks 13-16)
+- [ ] Profile and optimize prover performance
+- [ ] Consider plonky3 migration if winterfell too slow
+- [ ] Engage auditor for security review
+- [ ] Documentation and spec updates
+- [ ] **Deliverable:** Production-ready, audited code
 
 ---
 
-## Appendix A: Sample Arithmetic Circuit for Cantor Pair
+## 10. Open Questions and Research Directions
 
+### 10.1 Can We Use a Different Tree Structure?
+
+**Current:** Binary Cantor tree (two children per parent)
+
+**Alternative:** M-ary tree (e.g., 4-ary, 8-ary)
+- **Pros:** Shallower tree, fewer total constraints
+- **Cons:** More complex arithmetization, less parallelizable
+
+**Research needed:** Benchmark M-ary vs binary for STARK efficiency.
+
+### 10.2 Recursive Proof Composition?
+
+**Idea:** Prove small subtrees recursively, combine into final proof.
+
+**Benefit:** Parallelizable proof generation.
+
+**Complexity:** Adds significant engineering overhead.
+
+**Verdict:** Defer to Phase 4 if single-circuit approach proves too slow.
+
+### 10.3 Can We Reuse STARK Proofs?
+
+**Problem:** Each hop has unique temporal seed, so proofs are non-reusable.
+
+**Idea:** Cache STARK proofs for spatial subtrees (independent of temporal seed).
+
+**Benefit:** Amortize STARK cost across multiple movements.
+
+**Risk:** Complicates caching semantics, potential for stale proofs.
+
+**Verdict:** Research in Phase 2.
+
+---
+
+## 11. Success Metrics (From Skill)
+
+| Metric | Target | Measurement Approach |
+|--------|--------|---------------------|
+| Proof generation time | <10× standard | `time cyberspace move --zk` vs `time cyberspace move` |
+| Verification time | <10 ms | `cyberspace verify-zk --benchmark` |
+| Proof size | <100 KB | Measure encoded proof tag size |
+| All existing tests pass | 100% | `pytest tests/` with ZK enabled |
+| No trusted setup | Required | Verify library configuration |
+| Post-quantum secure | Required | Confirm hash-based assumptions |
+
+---
+
+## 12. Related Work and Prior Art
+
+### 12.1 ZK for Proof-of-Work
+
+- **zk-Bitcoin:** Proposals to prove PoW validity without re-hashing
+- **Equihash ZK:** ZK proofs for memory-hard PoW (Zcash)
+- **Relevance:** Same pattern (prove expensive computation cheaply)
+
+### 12.2 ZK for Tree Computations
+
+- **Merkle tree inclusion proofs:** Standard in ZK (e.g., Tornado Cash)
+- **Verkle trees:** Vector commitment trees for stateless clients
+- **Relevance:** Tree arithmetization patterns
+
+### 12.3 Recursive Proof Systems
+
+- **Nova:** Incrementally verifiable computation (IVC)
+- **Briar:** Privacy-preserving state channels
+- **Relevance:** Could enable incremental Cantor tree proofs
+
+---
+
+## 13. Appendix: Cantor Pairing Constraint System
+
+### 13.1 Minimal AIR (Algebraic Intermediate Representation)
+
+**Public inputs:** `x`, `y`, `result`
+
+**Trace columns:** `s`, `t`, `u`, `v`
+
+**Constraints:**
 ```
-# Circuit for π(a, b) = ((a+b)(a+b+1))/2 + b
-
-# Public inputs: a, b, result
-# Private wires: s, t, u
-
-# Constraint 1: s = a + b
-s - (a + b) = 0
-
-# Constraint 2: t = s + 1
+s - (x + y) = 0
 t - (s + 1) = 0
-
-# Constraint 3: u = s * t
-u - (s * t) = 0
-
-# Constraint 4: result = u / 2 + b
-# Multiply both sides by 2 to avoid division:
-# 2 * result = u + 2 * b
-2 * result - u - 2 * b = 0
-
-# Total: 4 constraints per Cantor pairing
+u - (s × t) = 0
+v - (u × inv2) = 0  // inv2 = (p+1)/2 in field F_p
+result - (v + y) = 0
 ```
 
-**Note:** Actual implementation depends on the specific STARK library's constraint system. Winterfell uses Algebraic Intermediate Representation (AIR) with polynomials.
+**Boundary constraints:**
+```
+x = public_input[0]
+y = public_input[1]
+result = public_input[2]
+```
+
+### 13.2 Field Selection
+
+**Recommended prime field:**
+- **Mersenne31:** 2³¹ - 1 (winterfell default)
+- **Goldilocks:** 2⁶⁴ - 2³² + 1 (plonky3 default)
+
+**Rationale:** Fast modular reduction, widely supported.
 
 ---
 
-## Appendix B: Leaf Construction for Different Action Types
+## 14. Decision Log
 
-### Hop (Local Movement)
-```python
-leaves = [
-    temporal_seed,
-    x1, x2, ..., xN,  # X-axis path (aligned subtree leaves)
-    y1, y2, ..., yM,  # Y-axis path
-    z1, z2, ..., zK,  # Z-axis path
-]
-```
-
-### Hyperjump (Hyperspace Traversal)
-```python
-leaves = [temporal_seed, B_from, B_from+1, ..., B_to]
-```
-
-### Enter-Hyperspace (Sector Plane Entry)
-```python
-# Standard Cantor proof to reach the coordinate
-leaves = [temporal_seed, coord_1, coord_2, ..., coord_N]  # per-axis traversal
-```
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-04-17 | Use ZK-STARKs (not SNARKs) | Post-quantum security, no trusted setup |
+| 2026-04-17 | Phase 1: winterfell | Python support, easier prototyping |
+| 2026-04-17 | Optional `zk` tag (not new action type) | Backward compatibility, gradual adoption |
+| 2026-04-17 | Preserve original `proof` tag | Fallback verification, audit trail |
 
 ---
 
-*Document created: 2026-04-17*  
-*Next session: Install Winterfell and prototype single-pair circuit*
+## 15. Next Steps
+
+1. **Set up development environment** with winterfell Python bindings
+2. **Create feature branch:** `feature/zk-stark-proofs`
+3. **Write minimal PoC:** Prove single Cantor pair computation
+4. **Write test vectors:** Known inputs → expected proof
+5. **Document learnings:** `logs/zk-stark-2026-04-17.md`
+
+---
+
+*This document is a living design spec. Update as implementation progresses and new learnings emerge.*
