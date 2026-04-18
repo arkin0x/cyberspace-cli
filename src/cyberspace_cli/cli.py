@@ -34,6 +34,7 @@ from cyberspace_cli.nostr_keys import (
     pubkey_hex_from_privkey,
 )
 from cyberspace_cli.state import CyberspaceState, STATE_VERSION, load_state, save_state
+from cyberspace_cli.commands import verify_zk
 from cyberspace_core.cantor import build_hyperspace_proof, compute_temporal_seed, int_to_bytes_be_min, int_to_hex_be_min, sha256, sha256_int_hex
 from cyberspace_core.coords import AXIS_MAX, coord_to_xyz, dataspace_coord_to_gps, gps_to_dataspace_coord, xyz_to_coord
 from cyberspace_core.geoid import (
@@ -78,6 +79,11 @@ app.add_typer(
     hyperjump_app,
     name="hyperjump",
     help="Inspect hyperjumps from anywhere (show/nearest); creating hyperjump actions (to/next/prev) requires being on the hyperjump system.",
+)
+app.add_typer(
+    verify_zk.app,
+    name="verify-zk",
+    help="Verify ZK-STARK proofs for Cantor tree movement events.",
 )
 
 
