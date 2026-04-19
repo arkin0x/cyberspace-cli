@@ -190,8 +190,8 @@ class HosakaClient:
             raise typer.Exit(code=1)
         
         # Create 9734 zap request with relays tag
-        from cyberspace_cli.nostr_event import create_zap_request, sign_event
-        from cyberspace_cli.nostr_keys import privkey_bytes_from_nsec_or_hex
+        from cyberspace_cli.nostr_event import create_zap_request
+        from cyberspace_cli.nostr_signer import sign_event
         
         RELAYS = ["wss://cyberspace.nostr1.com"]  # Primary relay for receipts
         
