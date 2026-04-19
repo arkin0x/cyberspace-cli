@@ -38,8 +38,8 @@ def sign_event(event: Dict[str, Any], privkey_hex: str) -> Dict[str, Any]:
     # Event ID is already computed - sign it
     event_id_bytes = bytes.fromhex(event['id'])
     
-    # Schnorr sign (no double-hash - the event ID is already SHA256)
-    sig = seckey.schnorr_sign(event_id_bytes, raw=True)
+    # Schnorr sign (bip340tag=None for plain Nostr signing per NIP-01)
+    sig = seckey.schnorr_sign(event_id_bytes, None, raw=True)
     
     # Add signature to event
     event['sig'] = sig.hex()
