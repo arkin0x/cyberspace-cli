@@ -26,8 +26,11 @@ class NostrRelayListener:
     # HOSAKA's Nostr pubkey (from Strike: arkin0x@strike.me)
     HOSAKA_PUBKEY = "e8ed3798c6ffebffa08501ac39e271662bfd160f688f94c45d692d8767dd345a"
     
+    # Primary relay for zap receipts (configured in 9734 zap request)
+    PRIMARY_RELAY = "wss://cyberspace.nostr1.com"
+    
     def __init__(self, relays: Optional[List[str]] = None):
-        self.relays = relays or self.DEFAULT_RELAYS
+        self.relays = [self.PRIMARY_RELAY]  # Only listen on cyberspace relay
         self.found_receipt = None
         self.found_event = None
     

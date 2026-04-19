@@ -173,11 +173,58 @@ class HosakaClient:
         typer.echo(f"   Job ID: {job_id}")
         typer.echo(f"   Status: {job.get('status', 'pending')}")
     
-        # Step 3: Request invoice for the job
+        # Step 3: Request invoice for the job  
         typer.echo("\n💳 Generating Lightning invoice...")
+        
+        # IMPORTANT: Per NIP-57, we need to create a kind 9734 zap request
+        # and send it to the LNURL callback to get the bolt11 invoice.
+        # The zap request MUST include a "relays" tag specifying where
+        # the receipt (kind 9735) should be published.
+        
+        # Get LNURL callback from API
         deposit = await self.request_deposit(amount_msats)
-        bolt11 = deposit["bolt11"]
+        callback_url = deposit.get("callback_url") or deposit.get("lnurl")
+        
+        if not callback_url:
+            typer.echo("   ❌ Failed to get LNURL callback from API")
+            raise typer.Exit(code=1)
+        
+        # Create 9734 zap request with relays tag
+        from cyberspace_cli.nostr_event import create_zap_request, sign_event
+        from cyberspace_cli.nostr_keys import privkey_bytes_from_nsec_or_hex
+        
+        RELAYS = ["wss://cyberspace.nostr1.com"]  # Primary relay for receipts
+        
+        zap_req = create_zap_request(
+            payer_pubkey_hex=self.pubkey_hex,
+            recipient_pubkey_hex=self.HOSAKA_PUBKEY,
+            amount_msats=amount_msats,
+            relays=RELAYS,
+            callback_url=callback_url,
+            job_id=job_id,
+        )
+        
+        # Sign the zap request with user's key
+        zap_req = sign_event(zap_req, self.privkey_hex)
+        
+        # POST zap request to LNURL callback to get bolt11
+        import httpx
+        async with httpx.AsyncClient() as http:
+            resp = await http.get(
+                callback_url,
+                params={"amount": str(amount_msats), "nostr": json.dumps(zap_req)},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            invoice_data = resp.json()
+        
+        if "pr" not in invoice_data:
+            typer.echo("   ❌ Callback didn't return bolt11 invoice")
+            raise typer.Exit(code=1)
+        
+        bolt11 = invoice_data["pr"]
         typer.echo(f"   Invoice generated for {amount_msats // 1000} sats")
+        typer.echo(f"   Zap receipt will be published to: {RELAYS[0]}")
     
         # Step 4: Display QR and wait for payment
         typer.echo("\n" + "=" * 60)

@@ -200,3 +200,50 @@ def make_sidestep_event(
     ]
     tags.extend(_sector_tags_from_coord_hex(coord_hex))
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content=proof_hash_hex)
+
+def create_zap_request(
+    *,
+    payer_pubkey_hex: str,
+    recipient_pubkey_hex: str,
+    amount_msats: int,
+    relays: List[str],
+    callback_url: str,
+    job_id: str = None,
+) -> Dict[str, Any]:
+    """Create a NIP-57 kind 9734 zap request event.
+    
+    Args:
+        payer_pubkey_hex: Payer's nostr pubkey
+        recipient_pubkey_hex: Recipient's nostr pubkey (HOSAKA/Arkinox)
+        amount_msats: Amount in millisats
+        relays: List of relay URLs where receipt should be published
+        callback_url: LNURL callback URL
+        job_id: Optional job ID to include in custom tags
+    
+    Returns:
+        Unsigned event dict (kind 9734) ready for signing
+    
+    Per NIP-57, the zap request includes:
+    - tags: [["p", recipient], ["amount", msats], ["relays", ...], ["callback", url]]
+    - content: ""
+    - The description tag of the receipt (9735) will contain this event as JSON
+    """
+    import time
+    
+    tags = [
+        ["p", recipient_pubkey_hex],  # Recipient
+        ["amount", str(amount_msats)],  # Amount in millisats
+        ["relays"] + relays,  # Relays for receipt (NIP-57 section 4)
+        ["callback", callback_url],  # LNURL callback
+    ]
+    
+    if job_id:
+        tags.append(["job_id", job_id])  # Custom tag to link to job
+    
+    return new_event(
+        pubkey_hex=payer_pubkey_hex,
+        created_at=int(time.time()),
+        kind=9734,
+        tags=tags,
+        content="",
+    )
