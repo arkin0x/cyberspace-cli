@@ -6,6 +6,8 @@ import subprocess
 from decimal import Decimal, InvalidOperation
 
 import time
+import nest_asyncio
+nest_asyncio.apply()  # Allow asyncio.run() in sync CLI context
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import typer
@@ -23,6 +25,7 @@ from cyberspace_cli.nostr_event import (
     make_sidestep_event,
     make_spawn_event,
 )
+from cyberspace_cli.nostr_signer import create_nip98_auth_header  # For HOSAKA auth
 from cyberspace_cli.parsing import normalize_hex_32, parse_destination_xyz_or_coord
 from cyberspace_cli.toward import choose_next_axis_value_toward
 from cyberspace_cli.nostr_keys import (
@@ -2305,78 +2308,18 @@ def move(
                     typer.echo(f"Failed to compute sidestep proof: {e}", err=True)
                     raise typer.Exit(code=2)
             else:
-                if max(hx, hy, hz) > max_compute_height:
-                    # Cloud compute is automatic (HOSAKA)
-                        from hosaka_client import HosakaClient, display_qr_terminal
-                        import asyncio
-                        
-                        api_url = "https://arkin0x--hosaka-api-api-server.modal.run"
-                        
-                        # Get estimate
-                        typer.echo(f"\n☁️  LCA height {max(hx, hy, hz)} exceeds local limit ({max_compute_height})")
-                        typer.echo("   HOSAKA cloud compute available...\n")
-                        
-                        async def get_hosaka_estimate():
-                            async with HosakaClient(api_url=api_url, nostr_secret=state.privkey_hex) as client:
-                                return await client.get_estimate("hop", {"height": max(hx, hy, hz), "base": 0})
-                        
-                        estimate = asyncio.run(get_hosaka_estimate())
-                        
-                        typer.echo("=" * 60)
-                        typer.echo(f"☁️  Cloud compute ({estimate['tier']} tier)")
-                        typer.echo(f"   Cost: {estimate['cost_sats']} sats (${estimate['cost_usd']:.2f})")
-                        typer.echo(f"   Time: {estimate['est_time']}")
-                        typer.echo(f"   BTC rate: ${estimate['btc_usd_rate']:,.2f}")
-                        typer.echo("=" * 60)
-                        
-                        response = typer.prompt("Proceed with cloud compute", default="Y")
-                        if response.lower() not in ["", "y", "yes"]:
-                            typer.echo("Cancelled.")
-                            raise typer.Exit(code=0)
-                        
-                        # Submit job with payment
-                        async def submit_and_wait():
-                            async with HosakaClient(api_url=api_url, nostr_secret=state.privkey_hex) as client:
-                                result = await client.submit_job_with_payment("hop", {"height": max(hx, hy, hz), "base": 0})
-                                
-                                # Display QR
-                                typer.echo("\n" + "=" * 60)
-                                typer.echo("⚡  LIGHTNING PAYMENT")
-                                typer.echo("=" * 60)
-                                typer.echo(f"\nAmount: {result['amount_sats']} sats (${result['estimate']['cost_usd']:.2f})")
-                                typer.echo(f"Job ID: {result['job_id']}")
-                                typer.echo("\nScan QR code with Lightning wallet:\n")
-                                
-                                display_qr_terminal(
-                                    bolt11=result['bolt11'],
-                                    amount_sats=result['amount_sats'],
-                                    title="⚡ Pay HOSAKA Invoice"
-                                )
-                                
-                                # Wait for user to pay
-                                typer.echo("\n⏳ Waiting for payment...")
-                                typer.echo("   (Press Enter after payment)")
-                                typer.prompt(" ", default="")
-                                
-                                # Poll for completion
-                                typer.echo(f"\n⏳ Polling job {result['job_id'][:8]}...")
-                                final_job = await client.poll_job(result["job_id"], timeout=3600)
-                                return final_job
-                        
-                        final_job = asyncio.run(submit_and_wait())
-                        
-                        if final_job.get("status") == "completed":
-                            typer.echo("\n✅ Cloud compute complete!")
-                            # Use the result from HOSAKA
-                            proof = final_job.get("result")
-                            if not proof:
-                                typer.echo("❌ No proof in result", err=True)
-                                raise typer.Exit(code=2)
-                        else:
-                            typer.echo(f"\n❌ Job failed: {final_job.get('error', 'Unknown')}", err=True)
-                            raise typer.Exit(code=2)
-
-
+                # Cloud compute is automatic when LCA > local capacity
+                from cyberspace_cli.cloud_compute import run_cloud_compute
+                
+                proof = run_cloud_compute(
+                    privkey_hex=state.privkey_hex,
+                    pubkey_hex=state.pubkey_hex,
+                    job_type="hop",
+                    params={"height": max(hx, hy, hz), "base": 0},
+                    lca_height=max(hx, hy, hz),
+                    max_compute_height=max_compute_height,
+                )
+                
                 try:
                     proof = compute_hop_proof(
                         x1,

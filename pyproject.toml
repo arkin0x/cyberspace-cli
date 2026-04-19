@@ -14,7 +14,10 @@ dependencies = [
   "typer>=0.12",
   "coincurve>=20.0.0",
   "cryptography>=42.0.0",
-  "hosaka-client>=0.1.0",  # For --cloud-auto cloud compute fallback
+  "hosaka-client>=0.1.0",  # QR display
+  "nest_asyncio>=1.6.0",   # Async in sync CLI
+  "httpx>=0.25.0",         # HTTP client for HOSAKA
+  "secp256k1>=0.14.0",     # NIP-98 signing
 ]
 
 [project.optional-dependencies]
