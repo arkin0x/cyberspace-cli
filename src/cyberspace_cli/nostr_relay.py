@@ -73,10 +73,11 @@ class NostrRelayListener:
         start_time = time.time()
         self.found_receipt = None
         
-        # Build subscription filter
+        # Build subscription filter per NIP-57 + Fanfares pattern
         filter_dict = {
             "kinds": [9735],
-            "#p": [self.HOSAKA_PUBKEY],  # HOSAKA's npub
+            "#p": [self.HOSAKA_PUBKEY],  # Recipient (HOSAKA)
+            "#P": [user_pubkey],  # Payer (uppercase P per NIP-57)
             "since": int(start_time) - 60,  # Last 60 seconds
         }
         
