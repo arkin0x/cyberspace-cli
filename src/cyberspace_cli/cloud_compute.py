@@ -150,66 +150,80 @@ class HosakaClient:
             await asyncio.sleep(interval)
     
 async def submit_job_with_payment(self, job_type: str, params: Dict) -> Dict:
-    """Submit job with integrated payment flow.
+    """Submit job with integrated payment flow per README.md.
     
-    Flow:
-    1. Get estimate
-    2. Request invoice
-    3. Display QR and wait for payment
-    4. User pays → send zap receipt to redeem
-    5. Submit job (now funded)
-    6. Return job info
+    Correct Flow:
+    1. Submit job (creates pending job)
+    2. Request invoice  
+    3. Display QR and wait
+    4. Listen for zap receipt (TODO: implement relay listener)
+    5. Redeem receipt to credit balance and activate job
+    6. Poll for completion
     """
     import typer
-    from cyberspace_cli.nostr_keys import generate_privkey_bytes, privkey_bytes_from_nsec_or_hex
     
     # Step 1: Get estimate
     estimate = await self.get_estimate(job_type, params)
     amount_msats = estimate["cost_msats"]
     
-    # Step 2: Request invoice
+    # Step 2: Submit job (creates PENDING job, doesn't start compute yet)
+    typer.echo("\n📝 Submitting job request...")
+    job = await self.submit_job(job_type, params, amount_msats)
+    job_id = job["id"]
+    typer.echo(f"   Job ID: {job_id}")
+    typer.echo(f"   Status: {job.get('status', 'pending')}")
+    
+    # Step 3: Request invoice for the job
+    typer.echo("\n💳 Generating Lightning invoice...")
     deposit = await self.request_deposit(amount_msats)
     bolt11 = deposit["bolt11"]
+    typer.echo(f"   Invoice generated for {amount_msats // 1000} sats")
     
-    # Display QR and wait for payment
+    # Step 4: Display QR and wait for payment
     typer.echo("\n" + "=" * 60)
-    typer.echo("⚡  LIGHTNING PAYMENT")
+    typer.echo("⚡  LIGHTNING PAYMENT REQUIRED")
     typer.echo("=" * 60)
     typer.echo(f"\nAmount: {amount_msats // 1000} sats (${estimate.get('cost_usd', 0):.2f})")
-    typer.echo("\nScan QR code with Lightning wallet:\n")
+    typer.echo(f"Job: {job_id}")
+    typer.echo("\nScan QR with Lightning wallet:\n")
     
     display_qr_terminal(
         bolt11=bolt11,
         amount_sats=amount_msats // 1000,
-        title="⚡ Pay HOSAKA Invoice"
+        title="⚡ Pay to Start Compute"
     )
     
-    typer.echo(f"\n📋 Invoice: {bolt11}")
-    typer.echo("\n⏳ Waiting for payment...")
-    typer.echo("   After paying, the zap receipt will be verified automatically.")
+    typer.echo(f"\n📋 Or copy: {bolt11}")
+    typer.echo("\n⏳ After payment, zap receipt will be verified...")
     
-    # For now, just ask user to press Enter after paying
-    # TODO: Automatically listen for zap receipt via Nostr relay
-    typer.echo("   Press Enter after you've paid the invoice:")
+    # TODO: Implement Nostr relay listener to auto-detect zap receipt
+    # For now, just prompt user
+    typer.echo("\nℹ️  IMPORTANT: Zap receipt auto-detection not yet implemented.")
+    typer.echo("   After paying, you would normally:")
+    typer.echo("   1. CLI listens on Nostr relays for kind 9735 receipt")
+    typer.echo("   2. CLI POSTs receipt to /api/v1/deposit/redeem")
+    typer.echo("   3. API credits your balance and starts compute")
+    typer.echo("   4. CLI polls for completion")
+    typer.echo("\n   Press Enter to see next steps:")
     typer.prompt(" ", default="")
     
-    # TODO: Redeem zap receipt to credit balance
-    # For now, we'll skip this step and assume manual balance top-up
-    typer.echo("⚠️  NOTE: Zap receipt redemption not yet implemented.")
-    typer.echo("   Please manually top up your balance or use test mode.")
-    typer.echo("\nℹ️  To complete this flow, you need to:")
-    typer.echo("   1. Pay the invoice above")
-    typer.echo("   2. API will detect zap receipt (coming soon)")
-    typer.echo("   3. Job will auto-submit when payment confirmed")
+    typer.echo("\n" + "=" * 60)
+    typer.echo("📋 MANUAL NEXT STEPS (until auto-detection is implemented):")
+    typer.echo("=" * 60)
+    typer.echo("1. Pay the invoice above with any Lightning wallet")
+    typer.echo("2. The zap receipt (kind 9735) will be broadcast to Nostr")
+    typer.echo("3. Coming soon: CLI will auto-detect and redeem receipt")
+    typer.echo("4. Coming soon: Balance credited, compute starts automatically")
+    typer.echo("5. Coming soon: Proof returned and appended to chain")
     
-    # For testing, return the invoice info without submitting job
     return {
+        "job_id": job_id,
         "bolt11": bolt11,
         "amount_msats": amount_msats,
         "amount_sats": amount_msats // 1000,
-        "status": "payment_pending",
+        "status": "pending_payment",
         "estimate": estimate,
-        "note": "Job submission pending - zap receipt redemption TBD",
+        "note": "Awaiting zap receipt redemption implementation",
     }
 
 
