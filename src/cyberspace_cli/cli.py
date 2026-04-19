@@ -2170,11 +2170,7 @@ def move(
         "--sidestep",
         help="Use Merkle sidestep proof instead of Cantor hop proof. Required for LCA heights above Cantor capacity.",
     ),
-    cloud_auto: bool = typer.Option(
-        False,
-        "--cloud-auto",
-        help="Automatically use HOSAKA cloud compute when LCA height exceeds local capacity. Will prompt for payment confirmation.",
-    ),
+    # cloud_auto is now always enabled (no flag needed)
     exit_hyperjump: bool = typer.Option(
         False,
         "--exit-hyperjump",
@@ -2183,12 +2179,14 @@ def move(
 ) -> None:
     """Move locally by appending a hop, sidestep, or hyperjump event to the active chain.
     
-    When --cloud-auto is enabled and LCA height exceeds local capacity, the CLI will:
-    1. Calculate cost via HOSAKA API
+    Cloud compute (HOSAKA) is automatic when LCA height exceeds local capacity:
+    1. Calculate cost via HOSAKA API (dynamic BTC rate)
     2. Display QR code for Lightning payment
     3. Wait for payment confirmation
-    4. Automatically submit job and poll for completion
+    4. Submit job and poll for completion
     5. Append proof to chain when complete
+    
+    To force local-only computation: use --max-lca-height to set a lower limit.
     """
     if isinstance(hyperjump, OptionInfo):
         hyperjump = False
@@ -2307,10 +2305,8 @@ def move(
                     typer.echo(f"Failed to compute sidestep proof: {e}", err=True)
                     raise typer.Exit(code=2)
             else:
-if max(hx, hy, hz) > max_compute_height:
-                    # Check if cloud_auto is enabled
-                    if cloud_auto:
-                        # Try HOSAKA cloud compute
+                if max(hx, hy, hz) > max_compute_height:
+                    # Cloud compute is automatic (HOSAKA)
                         from hosaka_client import HosakaClient, display_qr_terminal
                         import asyncio
                         
@@ -2379,17 +2375,7 @@ if max(hx, hy, hz) > max_compute_height:
                         else:
                             typer.echo(f"\n❌ Job failed: {final_job.get('error', 'Unknown')}", err=True)
                             raise typer.Exit(code=2)
-                    else:
-                        # Original behavior - fail with error
-                        typer.echo(
-                            "Move is too large for a single hop. "
-                            f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
-                            f"limit={max_compute_height}. "
-                            "Use --sidestep for Merkle proof, --cloud-auto for cloud compute, "
-                            "or raise --max-lca-height for an expensive Cantor hop.",
-                            err=True,
-                        )
-                        raise typer.Exit(code=2)
+
 
                 try:
                     proof = compute_hop_proof(
