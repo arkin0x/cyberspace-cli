@@ -64,7 +64,8 @@ def sign_nip98_request(
     
     # Sign with private key
     sk = PrivateKey(bytes.fromhex(privkey_hex), raw=True)
-    sig = sk.schnorr_sign(bytes.fromhex(event_id), raw=True)
+    sig = sk.schnorr_sign(bytes.fromhex(event_id), bip340tag=None, raw=True)
+    sig_hex = sig.hex()
     
     # Build event
     event = {
@@ -74,7 +75,7 @@ def sign_nip98_request(
         "created_at": created_at,
         "tags": tags,
         "content": "",
-        "sig": sig.hex(),
+        "sig": sig_hex,
     }
     
     # Encode as Authorization header

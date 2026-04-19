@@ -2310,14 +2310,18 @@ def move(
             else:
                 # Cloud compute is automatic when LCA > local capacity
                 from cyberspace_cli.cloud_compute import run_cloud_compute
+                import asyncio
                 
-                proof = run_cloud_compute(
-                    privkey_hex=state.privkey_hex,
-                    pubkey_hex=state.pubkey_hex,
-                    job_type="hop",
-                    params={"height": max(hx, hy, hz), "base": 0},
-                    lca_height=max(hx, hy, hz),
-                    max_compute_height=max_compute_height,
+                # Run async cloud compute in sync context
+                proof = asyncio.run(
+                    run_cloud_compute(
+                        privkey_hex=state.privkey_hex,
+                        pubkey_hex=state.pubkey_hex,
+                        job_type="hop",
+                        params={"height": max(hx, hy, hz), "base": 0},
+                        lca_height=max(hx, hy, hz),
+                        max_compute_height=max_compute_height,
+                    )
                 )
                 
                 try:
