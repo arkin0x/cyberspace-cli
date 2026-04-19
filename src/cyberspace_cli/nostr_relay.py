@@ -77,11 +77,12 @@ class NostrRelayListener:
         self.found_receipt = None
         
         # Build subscription filter per NIP-57 + Fanfares pattern
+        # Look back 10 minutes to catch receipts from payments made during invoice display
         filter_dict = {
             "kinds": [9735],
-            "#p": [self.HOSAKA_PUBKEY],  # Recipient (HOSAKA)
+            "#p": [self.HOSAKA_PUBKEY],  # Recipient (HOSAKA/Arkinox)
             "#P": [user_pubkey],  # Payer (uppercase P per NIP-57)
-            "since": int(start_time) - 60,  # Last 60 seconds
+            "since": int(start_time) - 600,  # Last 10 minutes
         }
         
         # Connect to relays and subscribe
