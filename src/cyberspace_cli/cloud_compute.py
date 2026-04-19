@@ -15,6 +15,9 @@ from cyberspace_cli.nostr_signer import create_nip98_auth_header
 import nest_asyncio
 nest_asyncio.apply()
 
+# HOSAKA/Arkinox recipient pubkey (from Strike LNURL)
+HOSAKA_RECIPIENT_PUBKEY = "e8ed3798c6ffebffa08501ac39e271662bfd160f688f94c45d692d8767dd345a"
+
 try:
     import httpx
     from hosaka_client import display_qr_terminal
@@ -197,7 +200,7 @@ class HosakaClient:
         
         zap_req = create_zap_request(
             payer_pubkey_hex=self.pubkey_hex,
-            recipient_pubkey_hex=self.HOSAKA_PUBKEY,
+            recipient_pubkey_hex=HOSAKA_RECIPIENT_PUBKEY,
             amount_msats=amount_msats,
             relays=RELAYS,
             callback_url=callback_url,
