@@ -5,6 +5,7 @@ Uses cyberspace-cli's Nostr keys for authentication (NIP-98).
 """
 import asyncio
 import sys
+import json
 from typing import Optional, Dict, Any
 from pathlib import Path
 
