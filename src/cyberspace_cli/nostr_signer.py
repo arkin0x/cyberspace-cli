@@ -16,6 +16,36 @@ except ImportError:
     HAS_SECP = False
 
 
+def sign_event(event: Dict[str, Any], privkey_hex: str) -> Dict[str, Any]:
+    """Sign any Nostr event using Schnorr signature.
+    
+    Args:
+        event: Event dict with 'id' already computed
+        privkey_hex: Private key in hex format
+    
+    Returns:
+        Event dict with 'sig' field populated
+    
+    Works for any event kind: 9734 (zap request), 27235 (NIP-98), etc.
+    Per NIP-01, signature is Schnorr signature of the event ID.
+    """
+    if not HAS_SECP:
+        raise ImportError("secp256k1 package required for signing. Install with: pip install secp256k1")
+    
+    # Private key
+    seckey = PrivateKey(bytes.fromhex(privkey_hex), raw=True)
+    
+    # Event ID is already computed - sign it
+    event_id_bytes = bytes.fromhex(event['id'])
+    
+    # Schnorr sign (no hash needed - event ID is already SHA256)
+    sig = seckey.schnorr_sign(event_id_bytes, raw=True, digest=None)
+    
+    # Add signature to event
+    event['sig'] = sig.hex()
+    return event
+
+
 def sign_nip98_request(
     privkey_hex: str,
     pubkey_hex: str,

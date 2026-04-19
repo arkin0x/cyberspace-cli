@@ -1,0 +1,28 @@
+def sign_event(event: Dict[str, Any], privkey_hex_or_nsec: str) -> Dict[str, Any]:
+    """Sign a Nostr event with private key.
+    
+    Args:
+        event: Event dict (from new_event, must have id computed)
+        privkey_hex_or_nsec: Private key as hex or nsec string
+    
+    Returns:
+        Event dict with 'sig' field populated
+    
+    For kind 9734 zap requests, sign this before sending to LNURL callback.
+    """
+    from cyberspace_core import secp256k1
+    
+    # Get private key bytes
+    if privkey_hex_or_nsec.startswith('nsec'):
+        privkey_bytes = decode_nsec(privkey_hex_or_nsec)
+    else:
+        privkey_bytes = bytes.fromhex(privkey_hex_or_nsec)
+    
+    # Sign the event ID
+    event_id_bytes = bytes.fromhex(event['id'])
+    seckey = secp256k1.PrivateKey(privkey_bytes)
+    sig = seckey.schnorr_sign(event_id_bytes, raw=True, algo=None)
+    
+    # Add signature to event
+    event['sig'] = sig.hex()
+    return event
