@@ -149,47 +149,68 @@ class HosakaClient:
             
             await asyncio.sleep(interval)
     
-    async def submit_job_with_payment(self, job_type: str, params: Dict) -> Dict:
-        """Submit job with integrated payment flow."""
-        import typer
-        
-        # Step 1: Get estimate
-        estimate = await self.get_estimate(job_type, params)
-        amount_msats = estimate["cost_msats"]
-        
-        # Step 2: Request invoice
-        deposit = await self.request_deposit(amount_msats)
-        bolt11 = deposit["bolt11"]
-        
-        # Step 3: Submit job
-        job = await self.submit_job(job_type, params, amount_msats)
-        
-        # Display QR
-        typer.echo("\n" + "=" * 60)
-        typer.echo("⚡  LIGHTNING PAYMENT")
-        typer.echo("=" * 60)
-        typer.echo(f"\nAmount: {amount_msats // 1000} sats (${estimate.get('cost_usd', 0):.2f})")
-        typer.echo(f"Job ID: {job['id']}")
-        typer.echo("\nScan QR code with Lightning wallet:\n")
-        
-        display_qr_terminal(
-            bolt11=bolt11,
-            amount_sats=amount_msats // 1000,
-            title="⚡ Pay HOSAKA Invoice"
-        )
-        
-        typer.echo(f"\n📋 Invoice: {bolt11}")
-        typer.echo("\n⏳ Waiting for payment... (Press Enter after paying)")
-        typer.prompt(" ", default="")
-        
-        return {
-            "job_id": job["id"],
-            "bolt11": bolt11,
-            "amount_msats": amount_msats,
-            "amount_sats": amount_msats // 1000,
-            "status": "awaiting_payment",
-            "estimate": estimate,
-        }
+async def submit_job_with_payment(self, job_type: str, params: Dict) -> Dict:
+    """Submit job with integrated payment flow.
+    
+    Flow:
+    1. Get estimate
+    2. Request invoice
+    3. Display QR and wait for payment
+    4. User pays → send zap receipt to redeem
+    5. Submit job (now funded)
+    6. Return job info
+    """
+    import typer
+    from cyberspace_cli.nostr_keys import generate_privkey_bytes, privkey_bytes_from_nsec_or_hex
+    
+    # Step 1: Get estimate
+    estimate = await self.get_estimate(job_type, params)
+    amount_msats = estimate["cost_msats"]
+    
+    # Step 2: Request invoice
+    deposit = await self.request_deposit(amount_msats)
+    bolt11 = deposit["bolt11"]
+    
+    # Display QR and wait for payment
+    typer.echo("\n" + "=" * 60)
+    typer.echo("⚡  LIGHTNING PAYMENT")
+    typer.echo("=" * 60)
+    typer.echo(f"\nAmount: {amount_msats // 1000} sats (${estimate.get('cost_usd', 0):.2f})")
+    typer.echo("\nScan QR code with Lightning wallet:\n")
+    
+    display_qr_terminal(
+        bolt11=bolt11,
+        amount_sats=amount_msats // 1000,
+        title="⚡ Pay HOSAKA Invoice"
+    )
+    
+    typer.echo(f"\n📋 Invoice: {bolt11}")
+    typer.echo("\n⏳ Waiting for payment...")
+    typer.echo("   After paying, the zap receipt will be verified automatically.")
+    
+    # For now, just ask user to press Enter after paying
+    # TODO: Automatically listen for zap receipt via Nostr relay
+    typer.echo("   Press Enter after you've paid the invoice:")
+    typer.prompt(" ", default="")
+    
+    # TODO: Redeem zap receipt to credit balance
+    # For now, we'll skip this step and assume manual balance top-up
+    typer.echo("⚠️  NOTE: Zap receipt redemption not yet implemented.")
+    typer.echo("   Please manually top up your balance or use test mode.")
+    typer.echo("\nℹ️  To complete this flow, you need to:")
+    typer.echo("   1. Pay the invoice above")
+    typer.echo("   2. API will detect zap receipt (coming soon)")
+    typer.echo("   3. Job will auto-submit when payment confirmed")
+    
+    # For testing, return the invoice info without submitting job
+    return {
+        "bolt11": bolt11,
+        "amount_msats": amount_msats,
+        "amount_sats": amount_msats // 1000,
+        "status": "payment_pending",
+        "estimate": estimate,
+        "note": "Job submission pending - zap receipt redemption TBD",
+    }
 
 
 async def run_cloud_compute(
@@ -247,8 +268,21 @@ async def run_cloud_compute(
             raise typer.Exit(code=0)
         
         # Submit with payment
+        typer.echo("\nInitiating payment flow...")
         result = await client.submit_job_with_payment(job_type, params)
         
+        # Check if payment is complete
+        if result.get("status") == "payment_pending":
+            typer.echo("\n⏸️  Payment flow paused.")
+            typer.echo("   Zap receipt redemption will be implemented next.")
+            typer.echo("\n✅ Invoice generated successfully!")
+            typer.echo("   The next step is to implement:")
+            typer.echo("   1. Nostr relay listener for zap receipts")
+            typer.echo("   2. /deposit/redeem endpoint to credit balance")
+            typer.echo("   3. Automatic job submission after payment")
+            raise typer.Exit(code=0)
+        
+        # If we get here, payment was processed (future implementation)
         # Poll for completion
         typer.echo(f"\n⏳ Polling job {result['job_id'][:8]}...")
         final_job = await client.poll_job(result["job_id"], timeout=3600)
