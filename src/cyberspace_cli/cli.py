@@ -2170,13 +2170,26 @@ def move(
         "--sidestep",
         help="Use Merkle sidestep proof instead of Cantor hop proof. Required for LCA heights above Cantor capacity.",
     ),
+    cloud_auto: bool = typer.Option(
+        False,
+        "--cloud-auto",
+        help="Automatically use HOSAKA cloud compute when LCA height exceeds local capacity. Will prompt for payment confirmation.",
+    ),
     exit_hyperjump: bool = typer.Option(
         False,
         "--exit-hyperjump",
         help="Allow a normal hop while on the hyperjump system (explicitly exits the hyperjump flow).",
     ),
 ) -> None:
-    """Move locally by appending a hop, sidestep, or hyperjump event to the active chain."""
+    """Move locally by appending a hop, sidestep, or hyperjump event to the active chain.
+    
+    When --cloud-auto is enabled and LCA height exceeds local capacity, the CLI will:
+    1. Calculate cost via HOSAKA API
+    2. Display QR code for Lightning payment
+    3. Wait for payment confirmation
+    4. Automatically submit job and poll for completion
+    5. Append proof to chain when complete
+    """
     if isinstance(hyperjump, OptionInfo):
         hyperjump = False
     if isinstance(hyperjump_relay, OptionInfo):
@@ -2294,15 +2307,89 @@ def move(
                     typer.echo(f"Failed to compute sidestep proof: {e}", err=True)
                     raise typer.Exit(code=2)
             else:
-                if max(hx, hy, hz) > max_compute_height:
-                    typer.echo(
-                        "Move is too large for a single hop. "
-                        f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
-                        f"limit={max_compute_height}. "
-                        "Use --sidestep for Merkle proof, or raise --max-lca-height for an expensive Cantor hop.",
-                        err=True,
-                    )
-                    raise typer.Exit(code=2)
+if max(hx, hy, hz) > max_compute_height:
+                    # Check if cloud_auto is enabled
+                    if cloud_auto:
+                        # Try HOSAKA cloud compute
+                        from hosaka_client import HosakaClient, display_qr_terminal
+                        import asyncio
+                        
+                        api_url = "https://arkin0x--hosaka-api-api-server.modal.run"
+                        
+                        # Get estimate
+                        typer.echo(f"\n☁️  LCA height {max(hx, hy, hz)} exceeds local limit ({max_compute_height})")
+                        typer.echo("   HOSAKA cloud compute available...\n")
+                        
+                        async def get_hosaka_estimate():
+                            async with HosakaClient(api_url=api_url, nostr_secret=state.privkey_hex) as client:
+                                return await client.get_estimate("hop", {"height": max(hx, hy, hz), "base": 0})
+                        
+                        estimate = asyncio.run(get_hosaka_estimate())
+                        
+                        typer.echo("=" * 60)
+                        typer.echo(f"☁️  Cloud compute ({estimate['tier']} tier)")
+                        typer.echo(f"   Cost: {estimate['cost_sats']} sats (${estimate['cost_usd']:.2f})")
+                        typer.echo(f"   Time: {estimate['est_time']}")
+                        typer.echo(f"   BTC rate: ${estimate['btc_usd_rate']:,.2f}")
+                        typer.echo("=" * 60)
+                        
+                        response = typer.prompt("Proceed with cloud compute", default="Y")
+                        if response.lower() not in ["", "y", "yes"]:
+                            typer.echo("Cancelled.")
+                            raise typer.Exit(code=0)
+                        
+                        # Submit job with payment
+                        async def submit_and_wait():
+                            async with HosakaClient(api_url=api_url, nostr_secret=state.privkey_hex) as client:
+                                result = await client.submit_job_with_payment("hop", {"height": max(hx, hy, hz), "base": 0})
+                                
+                                # Display QR
+                                typer.echo("\n" + "=" * 60)
+                                typer.echo("⚡  LIGHTNING PAYMENT")
+                                typer.echo("=" * 60)
+                                typer.echo(f"\nAmount: {result['amount_sats']} sats (${result['estimate']['cost_usd']:.2f})")
+                                typer.echo(f"Job ID: {result['job_id']}")
+                                typer.echo("\nScan QR code with Lightning wallet:\n")
+                                
+                                display_qr_terminal(
+                                    bolt11=result['bolt11'],
+                                    amount_sats=result['amount_sats'],
+                                    title="⚡ Pay HOSAKA Invoice"
+                                )
+                                
+                                # Wait for user to pay
+                                typer.echo("\n⏳ Waiting for payment...")
+                                typer.echo("   (Press Enter after payment)")
+                                typer.prompt(" ", default="")
+                                
+                                # Poll for completion
+                                typer.echo(f"\n⏳ Polling job {result['job_id'][:8]}...")
+                                final_job = await client.poll_job(result["job_id"], timeout=3600)
+                                return final_job
+                        
+                        final_job = asyncio.run(submit_and_wait())
+                        
+                        if final_job.get("status") == "completed":
+                            typer.echo("\n✅ Cloud compute complete!")
+                            # Use the result from HOSAKA
+                            proof = final_job.get("result")
+                            if not proof:
+                                typer.echo("❌ No proof in result", err=True)
+                                raise typer.Exit(code=2)
+                        else:
+                            typer.echo(f"\n❌ Job failed: {final_job.get('error', 'Unknown')}", err=True)
+                            raise typer.Exit(code=2)
+                    else:
+                        # Original behavior - fail with error
+                        typer.echo(
+                            "Move is too large for a single hop. "
+                            f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
+                            f"limit={max_compute_height}. "
+                            "Use --sidestep for Merkle proof, --cloud-auto for cloud compute, "
+                            "or raise --max-lca-height for an expensive Cantor hop.",
+                            err=True,
+                        )
+                        raise typer.Exit(code=2)
 
                 try:
                     proof = compute_hop_proof(
