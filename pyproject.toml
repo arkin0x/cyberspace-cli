@@ -14,6 +14,7 @@ dependencies = [
   "typer>=0.12",
   "coincurve>=20.0.0",
   "cryptography>=42.0.0",
+  "hosaka-client>=0.1.0",  # For --cloud-auto cloud compute fallback
 ]
 
 [project.optional-dependencies]
