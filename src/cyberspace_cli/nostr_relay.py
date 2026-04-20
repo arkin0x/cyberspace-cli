@@ -76,12 +76,11 @@ class NostrRelayListener:
         start_time = time.time()
         self.found_receipt = None
         
-        # Build subscription filter - look for 9735 to HOSAKA pubkey
-        # We'll check the #P (payer) tag in-code since some relays don't support uppercase tag filters
+        # Build subscription filter - look for NEW receipts only (from this moment forward)
         filter_dict = {
             "kinds": [9735],
             "#p": [self.HOSAKA_PUBKEY],  # Recipient (HOSAKA/Arkinox)
-            "since": int(start_time) - 600,  # Last 10 minutes
+            "since": int(start_time),  # Only receipts created AFTER we started listening
         }
         
         # Connect to relays and subscribe
@@ -142,9 +141,6 @@ class NostrRelayListener:
                     if len(data) >= 3 and data[0] == "EVENT":
                         event = data[2]
                         
-                        # Debug output
-                        print(f"DEBUG: Received event kind={event.get('kind')} from {event.get('pubkey', '')[:16]}...")
-                        
                         # Check the #P tag (payer pubkey) - uppercase P per NIP-57
                         payer_pubkey = None
                         for tag in event.get("tags", []):
@@ -153,29 +149,18 @@ class NostrRelayListener:
                                 break
                         
                         # Validate payer
-                        if not payer_pubkey:
-                            print(f"DEBUG: No #P tag found, skipping")
-                            continue
-                        
-                        print(f"DEBUG: Payer from #P tag: {payer_pubkey[:16]}...")
-                        
-                        if payer_pubkey != user_pubkey:
-                            print(f"DEBUG: Wrong payer (expected {user_pubkey[:16]}..., got {payer_pubkey[:16]}...)")
+                        if not payer_pubkey or payer_pubkey != user_pubkey:
                             continue
                         
                         # Extract and match job_id
                         extracted_job_id = self._extract_job_id_from_receipt(event)
-                        print(f"DEBUG: Extracted job_id: {extracted_job_id}")
                         
                         # If matches our job, trigger callback
                         if extracted_job_id and extracted_job_id == job_id:
-                            print(f"DEBUG: Job ID matches! Found receipt!")
                             self.found_receipt = event
                             self.found_event = event
                             await callback(event)
                             return  # Exit after finding receipt
-                        else:
-                            print(f"DEBUG: Job ID mismatch (expected {job_id}, got {extracted_job_id})")
                     
                     # Check for EOSE (end of stored events)
                     elif len(data) >= 2 and data[0] == "EOSE":
