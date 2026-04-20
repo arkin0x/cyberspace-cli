@@ -88,7 +88,7 @@ class NostrRelayListener:
         tasks = []
         for relay_url in self.relays:
             task = asyncio.create_task(
-                self._listen_to_relay(relay_url, filter_dict, job_id, callback, timeout)
+                self._listen_to_relay(relay_url, filter_dict, job_id, user_pubkey, callback, timeout)
             )
             tasks.append(task)
         
@@ -111,6 +111,7 @@ class NostrRelayListener:
         relay_url: str,
         filter_dict: dict,
         job_id: str,
+        user_pubkey: str,
         callback: Callable,
         timeout: int,
     ):
