@@ -145,12 +145,23 @@ class NostrRelayListener:
                         # Debug output
                         print(f"DEBUG: Received event kind={event.get('kind')} from {event.get('pubkey', '')[:16]}...")
                         
-                        # Verify this receipt is from the expected payer
-                        if event.get("pubkey") != user_pubkey:
-                            print(f"DEBUG: Wrong pubkey (expected {user_pubkey[:16]}..., got {event.get('pubkey', '')[:16]}...)")
-                            continue  # Wrong payer, skip
+                        # Check the #P tag (payer pubkey) - uppercase P per NIP-57
+                        payer_pubkey = None
+                        for tag in event.get("tags", []):
+                            if tag[0] == "P" and len(tag) >= 2:
+                                payer_pubkey = tag[1]
+                                break
                         
-                        print(f"DEBUG: Pubkey matches! Checking job_id...")
+                        # Validate payer
+                        if not payer_pubkey:
+                            print(f"DEBUG: No #P tag found, skipping")
+                            continue
+                        
+                        print(f"DEBUG: Payer from #P tag: {payer_pubkey[:16]}...")
+                        
+                        if payer_pubkey != user_pubkey:
+                            print(f"DEBUG: Wrong payer (expected {user_pubkey[:16]}..., got {payer_pubkey[:16]}...)")
+                            continue
                         
                         # Extract and match job_id
                         extracted_job_id = self._extract_job_id_from_receipt(event)
