@@ -245,37 +245,51 @@ class HosakaClient:
         )
     
         typer.echo(f"\n📋 Or copy: {bolt11}")
-        typer.echo("\n⏳ After payment, zap receipt will be verified...")
-    
-        # TODO: Implement Nostr relay listener to auto-detect zap receipt
-        # For now, just prompt user
-        typer.echo("\nℹ️  IMPORTANT: Zap receipt auto-detection not yet implemented.")
-        typer.echo("   After paying, you would normally:")
-        typer.echo("   1. CLI listens on Nostr relays for kind 9735 receipt")
-        typer.echo("   2. CLI POSTs receipt to /api/v1/deposit/redeem")
-        typer.echo("   3. API credits your balance and starts compute")
-        typer.echo("   4. CLI polls for completion")
-        typer.echo("\n   Press Enter to see next steps:")
-        typer.prompt(" ", default="")
-    
-        typer.echo("\n" + "=" * 60)
-        typer.echo("📋 MANUAL NEXT STEPS (until auto-detection is implemented):")
-        typer.echo("=" * 60)
-        typer.echo("1. Pay the invoice above with any Lightning wallet")
-        typer.echo("2. The zap receipt (kind 9735) will be broadcast to Nostr")
-        typer.echo("3. Coming soon: CLI will auto-detect and redeem receipt")
-        typer.echo("4. Coming soon: Balance credited, compute starts automatically")
-        typer.echo("5. Coming soon: Proof returned and appended to chain")
-    
-        return {
-            "job_id": job_id,
-            "bolt11": bolt11,
-            "amount_msats": amount_msats,
-            "amount_sats": amount_msats // 1000,
-            "status": "pending_payment",
-            "estimate": estimate,
-            "note": "Awaiting zap receipt redemption implementation",
-        }
+        typer.echo("\n⏳ Listening for payment on Nostr relays...")
+        typer.echo("   Receipt will be published to: wss://cyberspace.nostr1.com")
+        
+        # Listen for zap receipt
+        from cyberspace_cli.nostr_relay import NostrRelayListener
+        
+        listener = NostrRelayListener()
+        receipt_found = False
+        
+        async def on_receipt(event: dict):
+            nonlocal receipt_found
+            receipt_found = True
+            typer.echo("\n✅ Payment detected on Nostr relays!")
+            typer.echo("   Redeeming receipt...")
+            
+            # Redeem the receipt to credit balance
+            redeem_result = await self.redeem_zap_receipt(receipt=event)
+            typer.echo(f"   ✅ Balance credited: {redeem_result['amount_msats'] // 1000} sats")
+            typer.echo(f"   New balance: {redeem_result['new_balance_msats'] // 1000} sats")
+        
+        # Start listening for receipt
+        typer.echo("   Connecting to relay...")
+        found = await listener.subscribe_to_zap_receipts(
+            job_id=job_id,
+            user_pubkey=self.pubkey_hex,
+            callback=on_receipt,
+            timeout=600,  # 10 minutes
+        )
+        
+        if not found:
+            typer.echo("\n⏰ Timeout - payment not detected after 10 minutes")
+            typer.echo("   If you paid, the receipt may not have propagated yet.")
+            raise typer.Exit(code=1)
+        
+        # Payment detected and redeemed - now poll for job completion
+        typer.echo(f"\n⏳ Polling job {job_id[:8]}...")
+        final_job = await self.poll_job(job_id, timeout=3600)
+        
+        if final_job.get("status") == "completed":
+            typer.echo("\n✅ Cloud compute complete!")
+            proof = final_job.get("result")
+            if not proof:
+                typer.echo("❌ No proof in result", err=True)
+                raise typer.Exit(code=2)
+            return proof
 
 
 async def run_cloud_compute(
