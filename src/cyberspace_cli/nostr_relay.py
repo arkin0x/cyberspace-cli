@@ -168,14 +168,17 @@ class NostrRelayListener:
                         pass
                         
                 except TimeoutError:
-                    continue  # No new data, keep listening
+                    continue  # No new data, keep listening (silent - this is normal)
                 except Exception as e:
-                    print(f"Error processing relay message: {e}")
+                    # Only print non-timeout errors
+                    if "timed out" not in str(e).lower():
+                        print(f"Error processing relay message: {e}")
                     continue
             
             # Timeout - close connection
             if ws:
                 ws.close()
+                return  # Exit cleanly
             
         except Exception as e:
             print(f"Relay connection error ({relay_url}): {e}")

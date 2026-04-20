@@ -260,10 +260,19 @@ class HosakaClient:
             typer.echo("\n✅ Payment detected on Nostr relays!")
             typer.echo("   Redeeming receipt...")
             
+            # Debug: print what we're sending
+            print(f"   RECEIPT EVENT: {json.dumps(event)[:500]}...")
+            
             # Redeem the receipt to credit balance
-            redeem_result = await self.redeem_zap_receipt(receipt=event)
-            typer.echo(f"   ✅ Balance credited: {redeem_result['amount_msats'] // 1000} sats")
-            typer.echo(f"   New balance: {redeem_result['new_balance_msats'] // 1000} sats")
+            try:
+                redeem_result = await self.redeem_zap_receipt(receipt=event)
+                typer.echo(f"   ✅ Balance credited: {redeem_result['amount_msats'] // 1000} sats")
+                typer.echo(f"   New balance: {redeem_result['new_balance_msats'] // 1000} sats")
+            except Exception as e:
+                typer.echo(f"   ❌ Redeem failed: {e}")
+                if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                    typer.echo(f"   Response: {e.response.text}")
+                raise
         
         # Start listening for receipt
         typer.echo("   Connecting to relay...")
