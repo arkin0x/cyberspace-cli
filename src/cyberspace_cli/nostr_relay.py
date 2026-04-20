@@ -142,19 +142,29 @@ class NostrRelayListener:
                     if len(data) >= 3 and data[0] == "EVENT":
                         event = data[2]
                         
+                        # Debug output
+                        print(f"DEBUG: Received event kind={event.get('kind')} from {event.get('pubkey', '')[:16]}...")
+                        
                         # Verify this receipt is from the expected payer
                         if event.get("pubkey") != user_pubkey:
+                            print(f"DEBUG: Wrong pubkey (expected {user_pubkey[:16]}..., got {event.get('pubkey', '')[:16]}...)")
                             continue  # Wrong payer, skip
+                        
+                        print(f"DEBUG: Pubkey matches! Checking job_id...")
                         
                         # Extract and match job_id
                         extracted_job_id = self._extract_job_id_from_receipt(event)
+                        print(f"DEBUG: Extracted job_id: {extracted_job_id}")
                         
                         # If matches our job, trigger callback
                         if extracted_job_id and extracted_job_id == job_id:
+                            print(f"DEBUG: Job ID matches! Found receipt!")
                             self.found_receipt = event
                             self.found_event = event
                             await callback(event)
                             return  # Exit after finding receipt
+                        else:
+                            print(f"DEBUG: Job ID mismatch (expected {job_id}, got {extracted_job_id})")
                     
                     # Check for EOSE (end of stored events)
                     elif len(data) >= 2 and data[0] == "EOSE":
