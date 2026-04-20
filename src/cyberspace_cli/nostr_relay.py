@@ -76,12 +76,11 @@ class NostrRelayListener:
         start_time = time.time()
         self.found_receipt = None
         
-        # Build subscription filter per NIP-57 + Fanfares pattern
-        # Look back 10 minutes to catch receipts from payments made during invoice display
+        # Build subscription filter - look for 9735 to HOSAKA pubkey
+        # We'll check the #P (payer) tag in-code since some relays don't support uppercase tag filters
         filter_dict = {
             "kinds": [9735],
             "#p": [self.HOSAKA_PUBKEY],  # Recipient (HOSAKA/Arkinox)
-            "#P": [user_pubkey],  # Payer (uppercase P per NIP-57)
             "since": int(start_time) - 600,  # Last 10 minutes
         }
         
@@ -142,7 +141,11 @@ class NostrRelayListener:
                     if len(data) >= 3 and data[0] == "EVENT":
                         event = data[2]
                         
-                        # Validate and extract job_id from event
+                        # Verify this receipt is from the expected payer
+                        if event.get("pubkey") != user_pubkey:
+                            continue  # Wrong payer, skip
+                        
+                        # Extract and match job_id
                         extracted_job_id = self._extract_job_id_from_receipt(event)
                         
                         # If matches our job, trigger callback
