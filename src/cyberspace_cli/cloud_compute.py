@@ -115,13 +115,26 @@ class HosakaClient:
         return response.json()
     
     async def redeem_zap_receipt(self, receipt: Dict, job_id: Optional[str] = None) -> Dict:
-        """Redeem zap receipt to credit balance and activate job."""
+        """Redeem zap receipt to credit balance and activate job.
+        
+        Args:
+            receipt: Kind 9735 event dict
+            job_id: Optional job ID to activate after crediting
+        
+        Returns:
+            Redeem result from API
+        """
         url = f"{self.api_url}/api/v1/deposit/redeem"
         headers = self._get_auth_header(url, "POST")
         
+        # Build payload - receipt fields at top level, job_id optional
+        payload = dict(receipt)  # Copy all receipt fields
+        if job_id:
+            payload["job_id"] = job_id
+        
         response = await self.http.post(
             url,
-            json={"receipt": receipt, "job_id": job_id},
+            json=payload,
             headers=headers,
         )
         response.raise_for_status()
