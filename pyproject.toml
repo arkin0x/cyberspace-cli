@@ -19,8 +19,6 @@ dependencies = [
   "websocket-client>=1.6.0",
   "nest-asyncio>=1.6.0",
 ]
-  "secp256k1>=0.14.0",     # NIP-98 signing
-]
 
 [project.optional-dependencies]
 # Optional GUI visualizer for `cyberspace 3d`.
