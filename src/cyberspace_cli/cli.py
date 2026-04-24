@@ -6,6 +6,8 @@ import subprocess
 from decimal import Decimal, InvalidOperation
 
 import time
+import nest_asyncio
+nest_asyncio.apply()  # Allow asyncio.run() in sync CLI context
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import typer
@@ -18,11 +20,13 @@ from cyberspace_cli.paths import hyperjump_cache_path
 from cyberspace_cli.helptext import HELP_TEXT
 from cyberspace_cli.nostr_event import (
     make_encrypted_content_event,
+    make_enter_hyperspace_event,
     make_hop_event,
     make_hyperjump_event,
     make_sidestep_event,
     make_spawn_event,
 )
+from cyberspace_cli.nostr_signer import create_nip98_auth_header  # For HOSAKA auth
 from cyberspace_cli.parsing import normalize_hex_32, parse_destination_xyz_or_coord
 from cyberspace_cli.toward import choose_next_axis_value_toward
 from cyberspace_cli.nostr_keys import (
@@ -33,7 +37,8 @@ from cyberspace_cli.nostr_keys import (
     pubkey_hex_from_privkey,
 )
 from cyberspace_cli.state import CyberspaceState, STATE_VERSION, load_state, save_state
-from cyberspace_core.cantor import int_to_bytes_be_min, int_to_hex_be_min, sha256, sha256_int_hex
+from cyberspace_cli.commands import verify_zk
+from cyberspace_core.cantor import build_hyperspace_proof, compute_temporal_seed, int_to_bytes_be_min, int_to_hex_be_min, sha256, sha256_int_hex
 from cyberspace_core.coords import AXIS_MAX, coord_to_xyz, dataspace_coord_to_gps, gps_to_dataspace_coord, xyz_to_coord
 from cyberspace_core.geoid import (
     DEFAULT_GEOID_MODEL,
@@ -61,6 +66,7 @@ from cyberspace_core.movement import (
     find_lca_height,
 )
 from cyberspace_core.movement_debug import axis_cantor_debug
+from cyberspace_core.sector import coord_matches_hyperjump_plane, extract_hyperjump_sectors, sector_from_coord256
 
 app = typer.Typer(no_args_is_help=True)
 chain_app = typer.Typer(no_args_is_help=True)
@@ -76,6 +82,11 @@ app.add_typer(
     hyperjump_app,
     name="hyperjump",
     help="Inspect hyperjumps from anywhere (show/nearest); creating hyperjump actions (to/next/prev) requires being on the hyperjump system.",
+)
+app.add_typer(
+    verify_zk.app,
+    name="verify-zk",
+    help="Verify ZK-STARK proofs for Cantor tree movement events.",
 )
 
 
@@ -320,20 +331,47 @@ def _direction_hint(current: int, target: int, axis: str) -> str:
 
 
 def _hyperjump_block_height_from_event(event: dict) -> Optional[int]:
-    if _get_tag(event, "A") != "hyperjump":
-        return None
-    b_tag = _get_tag(event, "B")
-    c_tag = _get_tag(event, "C")
-    if not b_tag or not c_tag:
-        return None
-    try:
-        normalize_hex_32(c_tag)
-        h = int(str(b_tag), 10)
-    except (ValueError, TypeError):
-        return None
-    if h < 0:
-        return None
-    return h
+    """Extract block height from a hyperjump or enter-hyperspace action.
+    
+    Returns the block height if the event is:
+    - A=hyperjump (traversal within Hyperspace)
+    - A=enter-hyperspace (boarding Hyperspace)
+    
+    Returns None if not on the Hyperspace system.
+    """
+    action = _get_tag(event, "A")
+    
+    # Handle hyperjump actions (A=hyperjump)
+    if action == "hyperjump":
+        b_tag = _get_tag(event, "B")
+        c_tag = _get_tag(event, "C")
+        if not b_tag or not c_tag:
+            return None
+        try:
+            normalize_hex_32(c_tag)
+            h = int(str(b_tag), 10)
+        except (ValueError, TypeError):
+            return None
+        if h < 0:
+            return None
+        return h
+    
+    # Handle enter-hyperspace actions (A=enter-hyperspace)
+    if action == "enter-hyperspace":
+        b_tag = _get_tag(event, "B")
+        m_tag = _get_tag(event, "M")
+        if not b_tag or not m_tag:
+            return None
+        try:
+            normalize_hex_32(m_tag)
+            h = int(str(b_tag), 10)
+        except (ValueError, TypeError):
+            return None
+        if h < 0:
+            return None
+        return h
+    
+    return None
 
 
 def _require_hyperjump_system_state() -> Tuple[CyberspaceState, int]:
@@ -748,6 +786,61 @@ def bench(
     typer.echo(f"Recommendation: set --max-lca-height to {optimal_h} for interactive speed.")
     typer.echo(f"Persist: cyberspace config set --max-lca-height {optimal_h}")
     typer.echo(f"Per-command override: cyberspace move --max-lca-height {optimal_h} ...")
+
+
+@app.command()
+def verify_zk(
+    event_id: str = typer.Argument(..., help="Nostr event ID to verify ZK proof for"),
+) -> None:
+    """Verify ZK-STARK proof for a movement event (fast path).
+    
+    This command verifies the ZK proof attached to a movement event.
+    Verification is O(1) regardless of tree height (compared to O(N) for
+    standard Cantor verification).
+    
+    Note: This is a PoC/mock implementation. Production would use cairo-lang
+    or a Rust-based STARK backend for cryptographic verification.
+    
+    Example:
+        cyberspace verify-zk <event_id>
+        # Output: "ZK proof valid (verified in 0.042ms)"
+    """
+    import time as _time
+    from cyberspace_core.zk_cantor import verify_cantor_tree, prove_cantor_tree
+    
+    # For PoC purposes, we demonstrate the verification interface
+    # In production, this would:
+    # 1. Fetch the event from Nostr relay
+    # 2. Extract ZK proof from tags
+    # 3. Verify the proof cryptographically
+    
+    typer.echo("verify-zk: ZK-STARK proof verification (PoC/mock implementation)")
+    typer.echo(f"event_id: {event_id}")
+    typer.echo("")
+    
+    # Demo: Create a sample proof and verify it
+    import os
+    prev_event_id = os.urandom(32)
+    leaves = [100, 200, 300, 400, 500]
+    
+    start = _time.perf_counter()
+    root, proof = prove_cantor_tree(leaves)
+    proof_time = _time.perf_counter() - start
+    
+    start = _time.perf_counter()
+    is_valid = verify_cantor_tree(root, leaves, proof)
+    verify_time = _time.perf_counter() - start
+    
+    typer.echo(f"Demo verification (sample tree with {len(leaves)} leaves):")
+    typer.echo(f"  Root: 0x{root:x}")
+    typer.echo(f"  Proof size: {len(proof.stark_proof)} bytes")
+    typer.echo(f"  Constraint count: {proof.constraint_count}")
+    typer.echo(f"  Valid: {is_valid}")
+    typer.echo(f"  Verification time: {verify_time*1000:.3f}ms")
+    typer.echo(f"  Proof generation time: {proof_time*1000:.3f}ms")
+    typer.echo("")
+    typer.echo("Note: In production, this would fetch and verify the actual event's ZK proof.")
+    typer.echo("      Current implementation demonstrates the interface pattern.")
 
 
 @app.command()
@@ -2122,6 +2215,323 @@ def hyperjump_nearest(
     _print_ranked_hyperjumps(ranked, cur_coord_hex, cx, cy, cz, cplane, search_radius=effective_radius)
 
 
+@hyperjump_app.command("enterable")
+def hyperjump_enterable(
+    axis: str = typer.Argument(
+        ...,
+        help="Axis plane to match (X, Y, or Z). Use 'any' to match any axis.",
+    ),
+    relay: str = typer.Option(
+        DEFAULT_HYPERJUMP_RELAY,
+        "--relay",
+        help="Relay URL for querying hyperjump anchor events (kind=321).",
+    ),
+    limit: int = typer.Option(
+        2000,
+        "--limit",
+        min=1,
+        help="Maximum number of matching events to ask from the relay.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print the Nostr REQ filter and raw nak output for debugging.",
+    ),
+    coord: Optional[str] = typer.Option(
+        None,
+        "--coord",
+        help="Coordinate override used to calculate enterable hyperjumps (defaults to current coord).",
+    ),
+    count: int = typer.Option(
+        0,
+        "--count",
+        "-n",
+        min=0,
+        help="Limit display to the N nearest results (0 = show all).",
+    ),
+) -> None:
+    """Find hyperjumps where your current coordinate matches their sector plane.
+    
+    This command finds hyperjumps you can ENTER via sector-plane entry (DECK-0001 §I).
+    Specify an axis (X, Y, Z) to match that specific plane, or 'any' to match any axis.
+    
+    For each matching hyperjump, shows which axis plane matches and the enter-hyperspace
+    command to use.
+    """
+    state = load_state()
+    default_plane = 0
+    state_coord_int = None
+    if state is not None:
+        state_coord_int = int.from_bytes(bytes.fromhex(state.coord_hex), "big")
+        _, _, _, default_plane = coord_to_xyz(state_coord_int)
+
+    if coord is None:
+        if state is None or state_coord_int is None:
+            typer.echo("No local state found. Run `cyberspace spawn` first or provide --coord.", err=True)
+            raise typer.Exit(code=1)
+        cur_coord_hex = state.coord_hex
+        cur_coord_int = state_coord_int
+        cx, cy, cz, cplane = coord_to_xyz(cur_coord_int)
+    else:
+        try:
+            parsed = parse_destination_xyz_or_coord(coord, default_plane=default_plane)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
+        cx, cy, cz, cplane = parsed.x, parsed.y, parsed.z, parsed.plane
+        cur_coord_hex = _coord_hex_from_xyz(cx, cy, cz, cplane)
+        cur_coord_int = int.from_bytes(bytes.fromhex(cur_coord_hex), "big")
+
+    # Validate axis parameter
+    axis_upper = axis.upper()
+    if axis_upper not in ("X", "Y", "Z", "ANY"):
+        typer.echo("axis must be 'X', 'Y', 'Z', or 'any'.", err=True)
+        raise typer.Exit(code=2)
+
+    # Query hyperjumps from relay
+    events = _nak_req_events(
+        relay=relay,
+        kind=HYPERJUMP_KIND,
+        tags={},  # No filtering - we'll check sector matches locally
+        limit=limit,
+        verbose=verbose,
+    )
+
+    if not events:
+        typer.echo("No hyperjumps found on relay.")
+        return
+
+    # Filter to hyperjumps where current coord matches sector plane
+    enterable = []
+    for ev in events:
+        coord_hex = _get_tag(ev, "C")
+        if not coord_hex:
+            continue
+        
+        # Extract Merkte root sectors
+        try:
+            hj_sectors = extract_hyperjump_sectors(coord_hex)
+            sx, sy, sz = hj_sectors
+        except (ValueError, Exception):
+            continue
+        
+        # Check which axes match
+        matching_axes = []
+        if axis_upper in ("X", "ANY"):
+            cur_sector_x = sector_from_coord256(cur_coord_int, 'X')
+            if cur_sector_x == sx:
+                matching_axes.append('X')
+        if axis_upper in ("Y", "ANY"):
+            cur_sector_y = sector_from_coord256(cur_coord_int, 'Y')
+            if cur_sector_y == sy:
+                matching_axes.append('Y')
+        if axis_upper in ("Z", "ANY"):
+            cur_sector_z = sector_from_coord256(cur_coord_int, 'Z')
+            if cur_sector_z == sz:
+                matching_axes.append('Z')
+        
+        if matching_axes:
+            b_tag = _get_tag(ev, "B") or "?"
+            coord_int = int.from_bytes(bytes.fromhex(coord_hex), "big")
+            hx, hy, hz, hplane = coord_to_xyz(coord_int)
+            enterable.append((ev, coord_hex, b_tag, hx, hy, hz, hplane, matching_axes, sx, sy, sz))
+
+    if not enterable:
+        typer.echo(f"No enterable hyperjumps found for current position on axis={axis.upper()}.")
+        typer.echo("Hint: Try a different axis, move to a different location, or use --coord to check from elsewhere.")
+        return
+
+    # Sort by block height for display
+    enterable.sort(key=lambda x: int(x[2]) if x[2].isdigit() else 0)
+
+    # Print results
+    typer.echo(f"current: 0x{cur_coord_hex}")
+    typer.echo(f"x={cx}, y={cy}, z={cz}, plane={cplane} {_plane_label(cplane)}")
+    typer.echo(f"enterable_hyperjumps: {len(enterable)} (axis={axis.upper()})")
+    typer.echo("")
+
+    for i, (ev, coord_hex, b_tag, hx, hy, hz, hplane, matching_axes, sx, sy, sz) in enumerate(enterable, start=1):
+        event_id = ev.get("id", "")
+        axes_str = ", ".join(matching_axes)
+        typer.echo(f"{i}. id={event_id}")
+        typer.echo(f"coord=0x{coord_hex}")
+        typer.echo(f"B={b_tag}")
+        typer.echo(f"x={hx}, y={hy}, z={hz}, plane={hplane} {_plane_label(hplane)}")
+        typer.echo(f"sector_x={sx}, sector_y={sy}, sector_z={sz}")
+        typer.echo(f"matching_axes={axes_str}")
+        typer.echo(f"suggested_move=cyberspace move --to {hx},{hy},{hz},{hplane}")
+        typer.echo(f"suggested_enter=cyberspace enter-hyperspace --merkle-root {coord_hex} --block-height {b_tag} --axis {matching_axes[0]}")
+        typer.echo("")
+
+    if count > 0 and len(enterable) > count:
+        typer.echo(f"(showing first {count} of {len(enterable)} results)")
+
+
+@app.command("enter-hyperspace")
+def enter_hyperspace(
+    merkle_root: str = typer.Option(
+        ...,
+        "--merkle-root",
+        "-M",
+        help="Merkle root of the target Hyperjump (64-char hex).",
+    ),
+    block_height: int = typer.Option(
+        ...,
+        "--block-height",
+        "-B",
+        min=0,
+        help="Bitcoin block height of the target Hyperjump.",
+    ),
+    axis: str = typer.Option(
+        ...,
+        "--axis",
+        help="Entry axis plane (X, Y, or Z).",
+    ),
+    relay: str = typer.Option(
+        DEFAULT_HYPERJUMP_RELAY,
+        "--relay",
+        help="Relay URL for querying and validating the hyperjump.",
+    ),
+    limit: int = typer.Option(
+        25,
+        "--limit",
+        min=1,
+        help="Maximum number of matching events to query for validation.",
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Print validation details.",
+    ),
+) -> None:
+    """Enter the Hyperspace network via a sector-plane entry (DECK-0001 §I).
+    
+    This command creates an enter-hyperspace action (kind=3333, A=enter-hyperspace)
+    to board the Hyperspace transit network from Cyberspace.
+    
+    You must first move to a coordinate where your sector on the specified axis
+    matches the target Hyperjump's sector on that axis. Use `hyperjump enterable`
+    to find enterable hyperjumps from your current location.
+    
+    The command validates that:
+    1. The target hyperjump exists (via relay query)
+    2. Your current coordinate's sector matches the hyperjump's sector on the specified axis
+    3. Then creates the enter-hyperspace action with Cantor proof
+    """
+    # Validate axis
+    axis_upper = axis.upper()
+    if axis_upper not in ("X", "Y", "Z"):
+        typer.echo("axis must be 'X', 'Y', or 'Z'.", err=True)
+        raise typer.Exit(code=2)
+    
+    # Validate merkle root format
+    merkle_root = merkle_root.lower()
+    if len(merkle_root) != 64:
+        typer.echo("merkle-root must be exactly 64 hex characters.", err=True)
+        raise typer.Exit(code=2)
+    
+    state = _require_state()
+    label = _require_active_chain_label(state)
+    
+    # Get current coordinate
+    cur_coord_int = int.from_bytes(bytes.fromhex(state.coord_hex), "big")
+    cx, cy, cz, cplane = coord_to_xyz(cur_coord_int)
+    
+    # Validate hyperjump exists
+    resolved = _query_hyperjump_anchor_for_height(
+        block_height=block_height,
+        relay=relay,
+        limit=limit,
+        verbose=verbose,
+    )
+    if resolved is None:
+        typer.echo(f"No hyperjump found for block height {block_height}.", err=True)
+        raise typer.Exit(code=1)
+    
+    hj_coord_hex, hj_event, hj_xyzp = resolved
+    hj_coord_int = int.from_bytes(bytes.fromhex(hj_coord_hex), "big")
+    
+    # Validate sector match
+    if not coord_matches_hyperjump_plane(cur_coord_int, merkle_root, axis_upper):
+        typer.echo(
+            f"ERROR: Your current coordinate does not match the hyperjump's {axis_upper}-plane.\n"
+            f"  Your sector({axis_upper}) = {sector_from_coord256(cur_coord_int, axis_upper)}\n"
+            f"  HJ sector({axis_upper}) = {sector_from_coord256(hj_coord_int, axis_upper)}\n"
+            f"\n"
+            f"You must move to a coordinate where your sector matches before entering.\n"
+            f"Use `hyperjump enterable {axis_upper}` to find enterable hyperjumps.",
+            err=True
+        )
+        raise typer.Exit(code=2)
+    
+    # Create enter-hyperspace event
+    events = chains.read_events(label)
+    if not events:
+        typer.echo(f"Chain is empty: {label}", err=True)
+        raise typer.Exit(code=1)
+    
+    genesis_id = events[0]["id"]
+    prev_event_id = events[-1]["id"]
+    
+    # Get the proof from the previous movement event
+    # The enter-hyperspace proof should be the standard movement proof that brought
+    # the identity to the entry coordinate (DECK-0001 §I.3: "proof: Standard Cantor proof to reach the coordinate")
+    # This is the proof from the last movement event (hop or sidestep)
+    prev_event = events[-1]
+    prev_action = _get_tag(prev_event, "A")
+    
+    # Extract proof from previous movement
+    if prev_action == "sidestep":
+        # For sidestep, use the proof_hash tag
+        proof_hex = _get_tag(prev_event, "proof") or ""
+        if not proof_hex:
+            typer.echo("ERROR: Previous sidestep event missing proof tag.", err=True)
+            raise typer.Exit(code=2)
+    elif prev_action in ("hop", "spawn"):
+        # For hop, use the proof tag
+        proof_hex = _get_tag(prev_event, "proof") or ""
+        if not proof_hex:
+            typer.echo("ERROR: Previous hop event missing proof tag.", err=True)
+            raise typer.Exit(code=2)
+    else:
+        # If previous action was enter-hyperspace or hyperjump, we're already on Hyperspace
+        typer.echo(
+            f"ERROR: Previous action is '{prev_action}'. Enter-hyperspace must follow a hop or sidestep.",
+            err=True
+        )
+        raise typer.Exit(code=2)
+    
+    created_at = int(time.time())
+    pubkey_hex = pubkey_hex_from_privkey(privkey_bytes_from_nsec_or_hex(state.privkey))
+    
+    event = make_enter_hyperspace_event(
+        pubkey_hex=pubkey_hex,
+        created_at=created_at,
+        genesis_event_id=genesis_id,
+        previous_event_id=prev_event_id,
+        prev_coord_hex=state.coord_hex,  # TODO: Should be the coordinate before the final hop
+        coord_hex=state.coord_hex,
+        merkle_root_hex=merkle_root,
+        block_height=block_height,
+        axis=axis_upper,
+        proof_hex=proof_hex,
+    )
+    
+    # Append to chain
+    chains.append_event(label, event)
+    
+    typer.echo(f"Created enter-hyperspace action (id={event['id']})")
+    typer.echo(f"  target_hyperjump: B={block_height}, M={merkle_root[:16]}...")
+    typer.echo(f"  entry_axis: {axis_upper}")
+    typer.echo(f"  entry_coordinate: 0x{state.coord_hex}")
+    typer.echo(f"  sectors: X={sector_from_coord256(cur_coord_int, 'X')}, Y={sector_from_coord256(cur_coord_int, 'Y')}, Z={sector_from_coord256(cur_coord_int, 'Z')}")
+    typer.echo("")
+    typer.echo("You are now ON the Hyperspace network.")
+    typer.echo("Use `cyberspace hyperjump to <block_height>` to traverse to another hyperjump.")
+    typer.echo("Use `cyberspace move --exit-hyperjump --to <coord>` to exit Hyperspace and return to Cyberspace.")
+
+
 @app.command()
 def move(
     to: str = typer.Option(
@@ -2170,13 +2580,24 @@ def move(
         "--sidestep",
         help="Use Merkle sidestep proof instead of Cantor hop proof. Required for LCA heights above Cantor capacity.",
     ),
+    # cloud_auto is now always enabled (no flag needed)
     exit_hyperjump: bool = typer.Option(
         False,
         "--exit-hyperjump",
         help="Allow a normal hop while on the hyperjump system (explicitly exits the hyperjump flow).",
     ),
 ) -> None:
-    """Move locally by appending a hop, sidestep, or hyperjump event to the active chain."""
+    """Move locally by appending a hop, sidestep, or hyperjump event to the active chain.
+    
+    Cloud compute (HOSAKA) is automatic when LCA height exceeds local capacity:
+    1. Calculate cost via HOSAKA API (dynamic BTC rate)
+    2. Display QR code for Lightning payment
+    3. Wait for payment confirmation
+    4. Submit job and poll for completion
+    5. Append proof to chain when complete
+    
+    To force local-only computation: use --max-lca-height to set a lower limit.
+    """
     if isinstance(hyperjump, OptionInfo):
         hyperjump = False
     if isinstance(hyperjump_relay, OptionInfo):
@@ -2294,16 +2715,22 @@ def move(
                     typer.echo(f"Failed to compute sidestep proof: {e}", err=True)
                     raise typer.Exit(code=2)
             else:
-                if max(hx, hy, hz) > max_compute_height:
-                    typer.echo(
-                        "Move is too large for a single hop. "
-                        f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
-                        f"limit={max_compute_height}. "
-                        "Use --sidestep for Merkle proof, or raise --max-lca-height for an expensive Cantor hop.",
-                        err=True,
+                # Cloud compute is automatic when LCA > local capacity
+                from cyberspace_cli.cloud_compute import run_cloud_compute
+                import asyncio
+                
+                # Run async cloud compute in sync context
+                proof = asyncio.run(
+                    run_cloud_compute(
+                        privkey_hex=state.privkey_hex,
+                        pubkey_hex=state.pubkey_hex,
+                        job_type="hop",
+                        params={"height": max(hx, hy, hz), "base": 0},
+                        lca_height=max(hx, hy, hz),
+                        max_compute_height=max_compute_height,
                     )
-                    raise typer.Exit(code=2)
-
+                )
+                
                 try:
                     proof = compute_hop_proof(
                         x1,
@@ -2353,6 +2780,32 @@ def move(
                 proof_hash_hex=proof.proof_hash,
             )
         else:
+            # Hyperjump action with DECK-0001 tags
+            # Get current block height (from_height) from hyperjump system state
+            in_hj_system = _hyperjump_block_height_from_event(events[-1])
+            if in_hj_system is None:
+                typer.echo("Must be on hyperjump system to create hyperjump action.", err=True)
+                raise typer.Exit(code=2)
+            from_height = in_hj_system
+            
+            # Query anchor for from_height to get from_hj Merkle root
+            from_anchor_result = _query_hyperjump_anchor_for_height(
+                block_height=from_height,
+                relay=hyperjump_relay,
+                limit=hyperjump_query_limit,
+            )
+            if from_anchor_result is None:
+                typer.echo(f"Could not find anchor for from_height={from_height}", err=True)
+                raise typer.Exit(code=2)
+            from_hj_hex = from_anchor_result[0]  # c_tag is the Merkle root
+            
+            # Build Cantor tree proof with temporal seed per DECK-0001 §8
+            prev_event_id_bytes = bytes.fromhex(prev_event_id)
+            temporal_seed = compute_temporal_seed(prev_event_id_bytes)
+            leaves = [temporal_seed, from_height, int(hyperjump_to_height)]
+            proof_root = build_hyperspace_proof(leaves)
+            cantorian_proof_hex = format(proof_root, 'x')
+            
             movement_event = make_hyperjump_event(
                 pubkey_hex=state.pubkey_hex,
                 created_at=created_at,
@@ -2361,6 +2814,9 @@ def move(
                 prev_coord_hex=state.coord_hex,
                 coord_hex=coord_hex,
                 to_height=hyperjump_to_height,
+                from_height=from_height,
+                from_hj_hex=from_hj_hex,
+                proof_hex=cantorian_proof_hex,
             )
         chains.append_event(label, movement_event)
 
@@ -2714,6 +3170,65 @@ def chain_status() -> None:
     if cur != last:
         typer.echo("warning: state coord != last chain coord", err=True)
     typer.echo(f"delta_xyz: dx={dx} dy={dy} dz={dz} (plane={cplane} {_plane_label(cplane)})")
+
+
+@app.command("benchmark-sidestep")
+def benchmark_sidestep(
+    max_lca_height: int = typer.Option(
+        25,
+        "--max-height",
+        help="Maximum LCA height to benchmark (default: 25).",
+    ),
+) -> None:
+    """Benchmark sidestep (Merkle proof) computation for various LCA heights.
+    
+    This command runs performance benchmarks for computing Merkle sidestep proofs
+    at different LCA heights, showing timing and estimated cloud costs.
+    
+    Based on benchmark_merkle.py script.
+    """
+    from cyberspace_core.movement import compute_axis_merkle_root_streaming
+    
+    typer.echo("=" * 70)
+    typer.echo("Sidestep (Merkle Proof) Benchmark")
+    typer.echo("=" * 70)
+    typer.echo("")
+    typer.echo("LCA Height |  Leaves     |   Time (s)   | Leaves/sec  | Est. Cloud Cost")
+    typer.echo("-" * 70)
+    
+    # Cloud cost estimate: ~$0.09 for h=33 (from DECK-0001 §5)
+    # h=33: 2^33 = 8,589,934,592 leaves, ~1.5 minutes, ~$0.09
+    # Cost per leaf = $0.09 / 2^33
+    CLOUD_COST_PER_LEAF = 0.09 / (2**33)
+    
+    for h in range(16, min(max_lca_height + 1, 41)):
+        try:
+            start = time.time()
+            root, siblings = compute_axis_merkle_root_streaming(0, h)
+            elapsed = time.time() - start
+            
+            leaves = 2**h
+            leaves_per_sec = leaves / elapsed if elapsed > 0 else float('inf')
+            est_cost = leaves * CLOUD_COST_PER_LEAF
+            
+            # Format based on height
+            if h <= 25:
+                time_str = f"{elapsed:.4f}"
+            elif h <= 30:
+                time_str = f"{elapsed:.2f}"
+            else:
+                time_str = f"{elapsed:.1f}"
+            
+            typer.echo(f"   h={h:2d}    | {leaves:11,} | {time_str:>10}    | {leaves_per_sec:>11,.0f} | ${est_cost:>8.6f}")
+        except Exception as e:
+            typer.echo(f"   h={h:2d}    | ERROR: {e}")
+    
+    typer.echo("")
+    typer.echo("=" * 70)
+    typer.echo("Cost estimates based on DECK-0001 §5: ~$0.09 for h=33 (~1.5 min)")
+    typer.echo("Consumer feasible: h≤35 (~$0.35, ~6 min)")
+    typer.echo("Cloud recommended: h>35")
+    typer.echo("=" * 70)
 
 
 if __name__ == "__main__":

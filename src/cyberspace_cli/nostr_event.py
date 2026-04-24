@@ -101,8 +101,31 @@ def make_hyperjump_event(
     prev_coord_hex: str,
     coord_hex: str,
     to_height: str,
+    from_height: int | None = None,
+    from_hj_hex: str | None = None,
+    proof_hex: str | None = None,
     kind: int = 3333,
 ) -> Dict[str, Any]:
+    """Create a hyperjump action event per DECK-0001 §7.
+    
+    This action traverses between Hyperjumps within Hyperspace.
+    
+    Args:
+        pubkey_hex: 64-char hex pubkey
+        created_at: Unix timestamp
+        genesis_event_id: The spawn event ID (64-char hex)
+        previous_event_id: The previous movement event ID (64-char hex)
+        prev_coord_hex: The previous coordinate (64-char hex)
+        coord_hex: The destination Hyperjump coordinate (64-char hex)
+        to_height: The destination Bitcoin block height
+        from_height: The origin Bitcoin block height (DECK-0001, optional for backward compat)
+        from_hj_hex: The origin Hyperjump Merkle root (DECK-0001, optional for backward compat)
+        proof_hex: Hyperspace proof as hex string (DECK-0001, optional for backward compat)
+        kind: Event kind (default: 3333)
+        
+    Returns:
+        Complete Nostr event dict with blank signature
+    """
     tags: List[List[str]] = [
         ["A", "hyperjump"],
         ["e", genesis_event_id, "", "genesis"],
@@ -110,6 +133,72 @@ def make_hyperjump_event(
         ["c", prev_coord_hex],
         ["C", coord_hex],
         ["B", str(to_height)],
+    ]
+    
+    # DECK-0001 §7 tags (optional for backward compatibility)
+    if from_height is not None:
+        tags.append(["from_height", str(from_height)])
+    if from_hj_hex is not None:
+        tags.append(["from_hj", from_hj_hex])
+    if proof_hex is not None:
+        tags.append(["proof", proof_hex])
+    
+    tags.extend(_sector_tags_from_coord_hex(coord_hex))
+    return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
+
+
+def make_enter_hyperspace_event(
+    *,
+    pubkey_hex: str,
+    created_at: int,
+    genesis_event_id: str,
+    previous_event_id: str,
+    prev_coord_hex: str,
+    coord_hex: str,
+    merkle_root_hex: str,
+    block_height: int,
+    axis: str,
+    proof_hex: str,
+    kind: int = 3333,
+) -> Dict[str, Any]:
+    """Create an enter-hyperspace action event per DECK-0001 §I.3.
+    
+    This action boards the Hyperspace network from Cyberspace via a sector-plane entry.
+    The coordinate must be on a sector plane that matches the target Hyperjump's sector
+    on the specified axis (X, Y, or Z).
+    
+    Args:
+        pubkey_hex: 64-char hex pubkey
+        created_at: Unix timestamp
+        genesis_event_id: The spawn event ID (64-char hex)
+        previous_event_id: The previous movement event ID (64-char hex)
+        prev_coord_hex: The previous coordinate (64-char hex)
+        coord_hex: The entered coordinate on the sector plane (64-char hex)
+        merkle_root_hex: The Merkle root of the Hyperjump being entered (64-char hex)
+        block_height: The Bitcoin block height of the Hyperjump
+        axis: Which plane was used ('X', 'Y', or 'Z')
+        proof_hex: Standard Cantor proof for reaching the coordinate (64-char hex)
+        kind: Event kind (default: 3333)
+        
+    Returns:
+        Complete Nostr event dict with blank signature
+        
+    Raises:
+        ValueError: If axis is not 'X', 'Y', or 'Z'
+    """
+    if axis not in ('X', 'Y', 'Z'):
+        raise ValueError(f"axis must be 'X', 'Y', or 'Z', got '{axis}'")
+    
+    tags: List[List[str]] = [
+        ["A", "enter-hyperspace"],
+        ["e", genesis_event_id, "", "genesis"],
+        ["e", previous_event_id, "", "previous"],
+        ["c", prev_coord_hex],
+        ["C", coord_hex],
+        ["M", merkle_root_hex],
+        ["B", str(block_height)],
+        ["axis", axis],
+        ["proof", proof_hex],
     ]
     tags.extend(_sector_tags_from_coord_hex(coord_hex))
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
@@ -200,3 +289,50 @@ def make_sidestep_event(
     ]
     tags.extend(_sector_tags_from_coord_hex(coord_hex))
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content=proof_hash_hex)
+
+def create_zap_request(
+    *,
+    payer_pubkey_hex: str,
+    recipient_pubkey_hex: str,
+    amount_msats: int,
+    relays: List[str],
+    callback_url: str,
+    job_id: str = None,
+) -> Dict[str, Any]:
+    """Create a NIP-57 kind 9734 zap request event.
+    
+    Args:
+        payer_pubkey_hex: Payer's nostr pubkey
+        recipient_pubkey_hex: Recipient's nostr pubkey (HOSAKA/Arkinox)
+        amount_msats: Amount in millisats
+        relays: List of relay URLs where receipt should be published
+        callback_url: LNURL callback URL
+        job_id: Optional job ID to include in custom tags
+    
+    Returns:
+        Unsigned event dict (kind 9734) ready for signing
+    
+    Per NIP-57, the zap request includes:
+    - tags: [["p", recipient], ["amount", msats], ["relays", ...], ["callback", url]]
+    - content: ""
+    - The description tag of the receipt (9735) will contain this event as JSON
+    """
+    import time
+    
+    tags = [
+        ["p", recipient_pubkey_hex],  # Recipient
+        ["amount", str(amount_msats)],  # Amount in millisats
+        ["relays"] + relays,  # Relays for receipt (NIP-57 section 4)
+        ["callback", callback_url],  # LNURL callback
+    ]
+    
+    if job_id:
+        tags.append(["job_id", job_id])  # Custom tag to link to job
+    
+    return new_event(
+        pubkey_hex=payer_pubkey_hex,
+        created_at=int(time.time()),
+        kind=9734,
+        tags=tags,
+        content="",
+    )
