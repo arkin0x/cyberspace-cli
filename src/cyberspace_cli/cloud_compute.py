@@ -392,7 +392,6 @@ async def run_cloud_compute(
         
         # If we get here, balance was debited and compute started
         # Poll for completion
-        job_id = result.get('id') or result.get('job_id')
         typer.echo(f"\n⏳ Polling job {job_id[:8]}...")
         final_job = await client.poll_job(job_id, timeout=3600)
         
