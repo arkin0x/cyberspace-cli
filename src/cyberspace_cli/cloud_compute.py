@@ -26,7 +26,12 @@ except ImportError:
     HAS_HOSAKA = False
 
 
-HOSAKA_API_URL = "https://arkin0x--hosaka-api-api-server.modal.run"
+HOSAKA_API_URL = "https://arkin0x--hosaka-api-api-server.modal.run"  # Production
+
+# Allow override via environment variable for local testing
+import os as _os
+if _os.environ.get("HOSAKA_API_URL"):
+    HOSAKA_API_URL = _os.environ.get("HOSAKA_API_URL")
 
 
 def create_auth_header(privkey_hex: str, pubkey_hex: str, url: str, method: str = "GET") -> Dict[str, str]:
@@ -226,9 +231,19 @@ async def run_cloud_compute(
             from cyberspace_cli.nostr_event import create_zap_request
             from cyberspace_cli.nostr_signer import sign_event
             
-            # Hardcoded LNURL callback for arkin0x@strike.me
-            # Note: If this fails, the Strike service may be down or the account inactive
-            callback_url = "https://strike.me/api/lnurlp/arkin0x/"
+            # LNURL callback for payment
+            # Default was arkin0x@strike.me but Strike service is no longer available
+            # Override with HOSAKA_LNURL_CALLBACK environment variable for alternative providers
+            callback_url = os.environ.get(
+                "HOSAKA_LNURL_CALLBACK",
+                ""  # Empty means payment flow will fail gracefully with instructions
+            )
+            if not callback_url:
+                typer.echo("   ❌ No LNURL payment provider configured")
+                typer.echo("   ⚠️  Strike.me service is unavailable")
+                typer.echo("   ℹ️  Set HOSAKA_LNURL_CALLBACK env var with alternative LNURL endpoint")
+                typer.echo("   ℹ️  Or credit balance directly via /api/v1/admin/credit (test mode)")
+                raise typer.Exit(code=1)
             
             RELAYS = ["wss://cyberspace.nostr1.com"]
             amount_msats = estimate["cost_msats"]
