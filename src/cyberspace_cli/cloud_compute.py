@@ -122,20 +122,20 @@ class HosakaClient:
         response.raise_for_status()
         return response.json()
     
-    async def get_job(self, job_id: str) -> Dict:
-        """Get job status (no auth required for public job lookup)."""
+    async def get_job(self, job_id: str, auth_headers: Dict[str, str]) -> Dict:
+        """Get job status (requires NIP-98 auth)."""
         url = f"{self.api_url}/api/v1/jobs/{job_id}"
-        response = await self.http.get(url)
+        response = await self.http.get(url, headers=auth_headers)
         response.raise_for_status()
         return response.json()
     
-    async def poll_job(self, job_id: str, timeout: int = 3600, interval: int = 5) -> Dict:
+    async def poll_job(self, job_id: str, auth_headers: Dict[str, str], timeout: int = 3600, interval: int = 5) -> Dict:
         """Poll job until completion."""
         import time
         
         start = time.time()
         while True:
-            job = await self.get_job(job_id)
+            job = await self.get_job(job_id, auth_headers)
             status = job.get("status", "unknown")
             
             if status in ["completed", "failed"]:
@@ -215,6 +215,9 @@ async def run_cloud_compute(
         job_id = job["id"]
         typer.echo(f"   Job ID: {job_id}")
         typer.echo(f"   Status: {job.get('status', 'pending')}")
+        typer.echo(f"   DEBUG payment_required: {job.get('payment_required', 'MISSING')}")
+        typer.echo(f"   DEBUG balance_debited: {job.get('balance_debited', 'MISSING')}")
+        typer.echo(f"   DEBUG full job keys: {list(job.keys())}")
         
         # Check if balance was sufficient (compute started immediately)
         if not job.get("payment_required", True):
@@ -223,7 +226,9 @@ async def run_cloud_compute(
             new = job.get('new_balance_msats', 0) // 1000
             typer.echo(f"   💰 Balance debited: {prev} → {new} sats")
             typer.echo("\n⏳ Waiting for compute to complete...")
-            final_job = await client.poll_job(job_id, timeout=3600)
+            # Auth headers for polling (same as job submission)
+            poll_auth_headers = create_auth_header(privkey_hex, pubkey_hex, job_url, "GET")
+            final_job = await client.poll_job(job_id, poll_auth_headers, timeout=3600)
         else:
             # Need to pay via Lightning
             typer.echo("\n💳 Generating Lightning invoice...")
@@ -348,7 +353,8 @@ async def run_cloud_compute(
             
             # Poll for compute completion
             typer.echo(f"\n⏳ Polling job {job_id[:8]}...")
-            final_job = await client.poll_job(job_id, timeout=3600)
+            poll_auth_headers = create_auth_header(privkey_hex, pubkey_hex, f"{api_url}/api/v1/jobs/{job_id}", "GET")
+            final_job = await client.poll_job(job_id, poll_auth_headers, timeout=3600)
         
         # Handle completion
         if final_job.get("status") == "completed":
