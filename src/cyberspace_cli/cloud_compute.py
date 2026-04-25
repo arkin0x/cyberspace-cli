@@ -1,6 +1,7 @@
-"""HOSAKA cloud compute integration for cyberspace-cli.
+"""HOSAKA cloud compute integration with file-based Cantor roots.
 
 Handles cloud fallback when LCA height exceeds local capacity.
+Cantor roots are stored as files - API returns file_id + hash only.
 Uses cyberspace-cli's Nostr keys for authentication (NIP-98).
 
 SECURITY: Private keys NEVER leave this module. All signing happens
@@ -8,6 +9,7 @@ locally using nostr_signer. HosakaClient receives only pre-signed headers.
 """
 import asyncio
 import json
+import hashlib
 from typing import Optional, Dict, Any
 from pathlib import Path
 
@@ -128,6 +130,70 @@ class HosakaClient:
         response = await self.http.get(url, headers=auth_headers)
         response.raise_for_status()
         return response.json()
+    
+    async def compose_cantor_roots(
+        self, file_id_a: str, file_id_b: str, height: int, auth_headers: Dict[str, str]
+    ) -> Dict:
+        """Compose two Cantor roots: π(a, b).
+        
+        Args:
+            file_id_a: UUID of first root (from hop job result)
+            file_id_b: UUID of second root
+            height: LCA height (for pricing)
+            auth_headers: NIP-98 auth header
+            
+        Returns:
+            { "file_id": "...", "hash": "sha256...", "download_url": "..." }
+        """
+        url = f"{self.api_url}/api/v1/cantor/compose"
+        params = {
+            "file_id_a": file_id_a,
+            "file_id_b": file_id_b,
+            "height": height,
+        }
+        response = await self.http.post(url, params=params, headers=auth_headers)
+        response.raise_for_status()
+        return response.json()
+    
+    async def compose_region_n(
+        self, file_id_x: str, file_id_y: str, file_id_z: str, height: int, auth_headers: Dict[str, str]
+    ) -> Dict:
+        """Compute region_n = π(π(cantor_x, cantor_y), cantor_z).
+        
+        Args:
+            file_id_x: X axis Cantor root UUID
+            file_id_y: Y axis Cantor root UUID
+            file_id_z: Z axis Cantor root UUID
+            height: Max LCA height (for pricing)
+            auth_headers: NIP-98 auth header
+            
+        Returns:
+            { "file_id": "...", "hash": "sha256...", "download_url": "..." }
+        """
+        url = f"{self.api_url}/api/v1/cantor/compose-region"
+        params = {
+            "file_id_cantor_x": file_id_x,
+            "file_id_cantor_y": file_id_y,
+            "file_id_cantor_z": file_id_z,
+            "height": height,
+        }
+        response = await self.http.post(url, params=params, headers=auth_headers)
+        response.raise_for_status()
+        return response.json()
+    
+    async def download_cantor_root(self, file_id: str) -> bytes:
+        """Download Cantor root binary file.
+        
+        Args:
+            file_id: UUID from compose result
+            
+        Returns:
+            Binary Cantor root data
+        """
+        url = f"{self.api_url}/api/v1/cantor/download/{file_id}"
+        response = await self.http.get(url)
+        response.raise_for_status()
+        return response.content
     
     async def poll_job(self, job_id: str, auth_headers: Dict[str, str], timeout: int = 3600, interval: int = 20) -> Dict:
         """Poll job until completion.
@@ -387,7 +453,7 @@ async def run_cloud_compute(
             poll_auth_headers = create_auth_header(privkey_hex, pubkey_hex, f"{api_url}/api/v1/jobs/{job_id}", "GET")
             final_job = await client.poll_job(job_id, poll_auth_headers, timeout=3600)
         
-        # Handle completion
+        # Handle completion - NEW FILE-BASED FLOW
         if final_job.get("status") == "completed":
             typer.echo("\n✅ Cloud compute complete!")
             result = final_job.get("result")
@@ -395,25 +461,30 @@ async def run_cloud_compute(
                 typer.echo("❌ No result in job", err=True)
                 raise typer.Exit(code=2)
             
-            # Extract Cantor root from result
-            axis_root_hex = result.get("axis_root_hex")
-            if isinstance(axis_root_hex, int):
-                axis_root_hex = hex(axis_root_hex)
-            if axis_root_hex and axis_root_hex.startswith("0x"):
-                axis_root_hex = axis_root_hex[2:]
+            # Get file_id from result (file-based flow)
+            file_id = result.get("file_id")
+            download_url = result.get("download_url", f"{api_url}/api/v1/cantor/download/{file_id}")
             
-            # Compute proof_hash as double SHA256
+            if not file_id:
+                typer.echo("❌ No file_id in result", err=True)
+                raise typer.Exit(code=2)
+            
+            typer.echo(f"   📁 Cantor root stored at: {download_url}")
+            
+            # Download the root (or just the hash if we trust the API)
+            typer.echo("   ⏳ Downloading Cantor root...")
+            root_bytes = await client.download_cantor_root(file_id)
+            typer.echo(f"   ✓ Downloaded {len(root_bytes)} bytes")
+            
+            # Compute proof_hash = SHA256(SHA256(root_bytes))
             import hashlib
-            if axis_root_hex:
-                axis_root_bytes = bytes.fromhex(axis_root_hex)
-                proof_hash = hashlib.sha256(hashlib.sha256(axis_root_bytes).digest()).digest().hex()
-            else:
-                proof_hash = "0" * 64
+            proof_hash = hashlib.sha256(hashlib.sha256(root_bytes).digest()).hexdigest()
             
-            # Return minimal proof structure for make_hop_event
+            # Return proof structure for make_hop_event
             proof = {
                 "proof_hash": proof_hash,
                 "terrain_k": result.get("terrain_k", 0),
+                "file_id": file_id,  # Include for debugging
             }
             
             return proof

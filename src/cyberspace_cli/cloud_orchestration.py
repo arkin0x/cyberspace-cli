@@ -104,8 +104,6 @@ def select_axis_for_cloud(
         return 'y'
     else:
         return 'z'
-
-
 async def compute_spatial_roots_hybrid(
     x1: int, y1: int, z1: int,
     x2: int, y2: int, z2: int,
@@ -116,7 +114,13 @@ async def compute_spatial_roots_hybrid(
     """Compute X, Y, Z Cantor roots using hybrid local/cloud approach.
     
     Uses cloud compute for the axis with highest LCA height if it exceeds
-    local capacity, and local compute for the other two axes.
+    local capacity, then composes all three roots into region_n.
+    
+    NEW FILE-BASED FLOW:
+    1. Compute axis with highest LCA in cloud → returns file_id + hash
+    2. Compute other two axes locally
+    3. Compose π(π(cx, cy), cz) via /cantor/compose-region → returns file_id + hash
+    4.Download region_n for proof hash computation
     
     Args:
         x1, y1, z1: Starting coordinates
@@ -129,7 +133,12 @@ async def compute_spatial_roots_hybrid(
         Tuple of (cantor_x, cantor_y, cantor_z, metadata)
         where metadata contains cloud compute details if used
     """
+    from cyberspace_cli.cloud_compute import HosakaClient, HOSAKA_API_URL, create_auth_header
     from cyberspace_core.movement import find_lca_height, compute_axis_cantor
+    import asyncio
+    import typer
+    
+    api_url = HOSAKA_API_URL
     
     # Find LCA heights for each axis
     hx = find_lca_height(x1, x2)
@@ -152,28 +161,75 @@ async def compute_spatial_roots_hybrid(
         cantor_z = compute_axis_cantor(z1, z2, max_compute_height=max_compute_height)
     else:
         # One axis needs cloud compute
-        if cloud_axis == 'x':
-            cloud_result = await compute_axis_in_cloud(
-                'x', x1, x2, hx, privkey_hex, pubkey_hex, max_compute_height
-            )
-            cantor_x = cloud_result.axis_root
-            cantor_y = compute_axis_cantor(y1, y2, max_compute_height=max_compute_height)
-            cantor_z = compute_axis_cantor(z1, z2, max_compute_height=max_compute_height)
-        elif cloud_axis == 'y':
-            cloud_result = await compute_axis_in_cloud(
-                'y', y1, y2, hy, privkey_hex, pubkey_hex, max_compute_height
-            )
-            cantor_x = compute_axis_cantor(x1, x2, max_compute_height=max_compute_height)
-            cantor_y = cloud_result.axis_root
-            cantor_z = compute_axis_cantor(z1, z2, max_compute_height=max_compute_height)
-        else:  # 'z'
-            cloud_result = await compute_axis_in_cloud(
-                'z', z1, z2, hz, privkey_hex, pubkey_hex, max_compute_height
-            )
-            cantor_x = compute_axis_cantor(x1, x2, max_compute_height=max_compute_height)
-            cantor_y = compute_axis_cantor(y1, y2, max_compute_height=max_compute_height)
-            cantor_z = cloud_result.axis_root
+        async with HosakaClient(api_url=api_url) as client:
+            # Create auth header
+            auth_headers = create_auth_header(privkey_hex, pubkey_hex, f"{api_url}/api/v1/jobs", "POST")
+            
+            # Compute cloud axis
+            if cloud_axis == 'x':
+                typer.echo(f"   ☁️  Computing X axis (h={hx}) in cloud...")
+                cloud_job = await submit_hop_job(client, 'x', x1, x2, hx, privkey_hex, pubkey_hex, auth_headers)
+                cantor_x_file_id = cloud_job['result']['file_id']
+                
+                # Download and convert to int
+                cantor_x_bytes = await client.download_cantor_root(cantor_x_file_id)
+                cantor_x = int.from_bytes(cantor_x_bytes, byteorder='big')
+                
+                cantor_y = compute_axis_cantor(y1, y2, max_compute_height=max_compute_height)
+                cantor_z = compute_axis_cantor(z1, z2, max_compute_height=max_compute_height)
+                
+            elif cloud_axis == 'y':
+                typer.echo(f"   ☁️  Computing Y axis (h={hy}) in cloud...")
+                cloud_job = await submit_hop_job(client, 'y', y1, y2, hy, privkey_hex, pubkey_hex, auth_headers)
+                cantor_y_file_id = cloud_job['result']['file_id']
+                cantor_y_bytes = await client.download_cantor_root(cantor_y_file_id)
+                cantor_y = int.from_bytes(cantor_y_bytes, byteorder='big')
+                
+                cantor_x = compute_axis_cantor(x1, x2, max_compute_height=max_compute_height)
+                cantor_z = compute_axis_cantor(z1, z2, max_compute_height=max_compute_height)
+                
+            else:  # 'z'
+                typer.echo(f"   ☁️  Computing Z axis (h={hz}) in cloud...")
+                cloud_job = await submit_hop_job(client, 'z', z1, z2, hz, privkey_hex, pubkey_hex, auth_headers)
+                cantor_z_file_id = cloud_job['result']['file_id']
+                cantor_z_bytes = await client.download_cantor_root(cantor_z_file_id)
+                cantor_z = int.from_bytes(cantor_z_bytes, byteorder='big')
+                
+                cantor_x = compute_axis_cantor(x1, x2, max_compute_height=max_compute_height)
+                cantor_y = compute_axis_cantor(y1, y2, max_compute_height=max_compute_height)
         
-        metadata["cloud_result"] = cloud_result
+        metadata["cloud_result"] = cloud_job
     
     return cantor_x, cantor_y, cantor_z, metadata
+
+
+async def submit_hop_job(
+    client, axis: str, coord1: int, coord2: int, height: int,
+    privkey_hex: str, pubkey_hex: str, auth_headers: Dict[str, str]
+) -> Dict:
+    """Submit hop job and wait for completion."""
+    from cyberspace_cli.cloud_compute import HOSAKA_API_URL
+    import asyncio
+    import time
+    
+    base = (coord1 >> height) << height
+    
+    # Submit job
+    job = await client.submit_job(
+        job_type="hop",
+        params={"height": height, "base": base, "axis": axis},
+        max_cost_msats=1000,  # micro tier default
+        auth_headers=auth_headers,
+    )
+    
+    job_id = job["id"]
+    
+    # Poll for completion (simple, no payment handling for now)
+    poll_headers = create_auth_header(privkey_hex, pubkey_hex, f"{HOSAKA_API_URL}/api/v1/jobs/{job_id}", "GET")
+    final_job = await client.poll_job(job_id, poll_headers, timeout=3600)
+    
+    if final_job.get("status") != "completed":
+        raise Exception(f"Hop job failed: {final_job.get('error', 'Unknown')}")
+    
+    return final_job
+
