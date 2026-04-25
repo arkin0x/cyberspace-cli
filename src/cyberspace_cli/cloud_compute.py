@@ -191,11 +191,15 @@ async def run_cloud_compute(
         typer.echo(f"   BTC rate: ${estimate['btc_usd_rate']:,.2f}")
         typer.echo("=" * 60)
         
-        # Confirm
-        response = typer.prompt("Proceed with cloud compute", default="Y")
-        if response.lower() not in ["", "y", "yes"]:
-            typer.echo("Cancelled.")
-            raise typer.Exit(code=0)
+        # Confirm (auto-confirm if HOSAKA_AUTO_CONFIRM is set)
+        import os
+        if os.environ.get("HOSAKA_AUTO_CONFIRM"):
+            typer.echo("   [Auto-confirmed via HOSAKA_AUTO_CONFIRM]")
+        else:
+            response = typer.prompt("Proceed with cloud compute", default="Y")
+            if response.lower() not in ["", "y", "yes"]:
+                typer.echo("Cancelled.")
+                raise typer.Exit(code=0)
         
         # Create job
         typer.echo("\n📝 Submitting job request...")
@@ -222,9 +226,9 @@ async def run_cloud_compute(
             from cyberspace_cli.nostr_event import create_zap_request
             from cyberspace_cli.nostr_signer import sign_event
             
-            # Get LNURL callback (now hardcoded, no network call)
-            from cyberspace_api.lnurl import STRIKE_CALLBACK
-            callback_url = STRIKE_CALLBACK
+            # Hardcoded LNURL callback for arkin0x@strike.me
+            # Note: If this fails, the Strike service may be down or the account inactive
+            callback_url = "https://strike.me/api/lnurlp/arkin0x/"
             
             RELAYS = ["wss://cyberspace.nostr1.com"]
             amount_msats = estimate["cost_msats"]
@@ -252,7 +256,10 @@ async def run_cloud_compute(
                 invoice_data = resp.json()
             
             if "pr" not in invoice_data:
-                typer.echo("   ❌ Callback didn't return bolt11 invoice")
+                reason = invoice_data.get("reason", "Unknown error")
+                typer.echo(f"   ❌ LNURL callback failed: {reason}")
+                typer.echo(f"   ⚠️  Strike service may be unavailable or account inactive")
+                typer.echo(f"   ℹ️  Callback URL: {callback_url}")
                 raise typer.Exit(code=1)
             
             bolt11 = invoice_data["pr"]
@@ -285,12 +292,17 @@ async def run_cloud_compute(
                 nonlocal receipt_found, receipt_event
                 receipt_found = True
                 receipt_event = event
-                typer.echo("\n✅ Payment detected on Nostr relays!")
-                typer.echo("   Redeeming receipt...")
+                typer.echo(f"\n✅ Payment detected on Nostr relays!")
+                typer.echo(f"   Receipt kind: {event.get('kind')}")
+                typer.echo(f"   Receipt tags: {len(event.get('tags', []))}")
             
-            await listener.subscribe_to_receipts(
-                expected_recipient=HOSAKA_RECIPIENT_PUBKEY,
-                expected_job_id=job_id,
+            typer.echo("\n⏳ Listening for payment on Nostr relays...")
+            typer.echo(f"   Receipt will be published to: wss://cyberspace.nostr1.com")
+            
+            # Subscribe to zap receipts
+            await listener.subscribe_to_zap_receipts(
+                job_id=job_id,
+                user_pubkey=pubkey_hex,
                 callback=on_receipt,
                 timeout=600,
             )
@@ -299,8 +311,25 @@ async def run_cloud_compute(
                 typer.echo("   ❌ Payment timeout - no receipt received")
                 raise typer.Exit(code=1)
             
-            # Redeem receipt
-            typer.echo("   ✅ Balance credited!")
+            typer.echo("\n✅ Payment detected on Nostr relays!")
+            typer.echo("   Redeeming receipt...")
+            
+            # Redeem receipt with HOSAKA API
+            import httpx as sync_httpx
+            redeem_url = f"{api_url}/api/v1/deposit/redeem"
+            redeem_auth_headers = create_auth_header(privkey_hex, pubkey_hex, redeem_url, "POST")
+            
+            with sync_httpx.Client() as sync_client:
+                resp = sync_client.post(
+                    redeem_url,
+                    json=receipt_event,  # Send receipt as top-level body, not nested
+                    headers=redeem_auth_headers,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                redeem_result = resp.json()
+            
+            typer.echo(f"   ✅ {redeem_result.get('message', 'Balance credited!')}")
             
             # Poll for compute completion
             typer.echo(f"\n⏳ Polling job {job_id[:8]}...")
