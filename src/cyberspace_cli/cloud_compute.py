@@ -59,16 +59,16 @@ def create_auth_header(privkey_hex: str, pubkey_hex: str, url: str, method: str 
 
 
 class HosakaClient:
-    """Minimal HOSAKA API client.
+    """Stateless HTTP client for HOSAKA API.
     
-    Does NOT handle private keys. All authentication headers must be
-    provided by the caller (cyberspace-cli handles signing).
+    Receives pre-signed Authorization headers from cyberspace-cli.
+    Never handles private keys directly.
     """
     
     def __init__(
         self,
         api_url: str = HOSAKA_API_URL,
-        timeout: float = 60.0,
+        timeout: float = 300.0,  # 5 minutes per request
     ):
         self.api_url = api_url.rstrip("/")
         self.timeout = timeout
@@ -129,22 +129,46 @@ class HosakaClient:
         response.raise_for_status()
         return response.json()
     
-    async def poll_job(self, job_id: str, auth_headers: Dict[str, str], timeout: int = 3600, interval: int = 5) -> Dict:
-        """Poll job until completion."""
-        import time
+    async def poll_job(self, job_id: str, auth_headers: Dict[str, str], timeout: int = 3600, interval: int = 20) -> Dict:
+        """Poll job until completion.
         
+        Args:
+            job_id: Job ID to poll
+            auth_headers: NIP-98 auth headers
+            timeout: Max seconds to wait (default 1 hour)
+            interval: Target seconds between poll START times (default 20s)
+        """
+        import time
+        import typer
+        
+        typer.echo(f"   Polling job {job_id} (target interval: {interval}s)...")
         start = time.time()
+        poll_count = 0
         while True:
+            poll_count += 1
+            poll_start = time.time()
+            elapsed = int(poll_start - start)
+            typer.echo(f"   [Poll {poll_count}, {elapsed}s] Fetching job status...")
+            
             job = await self.get_job(job_id, auth_headers)
+            
+            poll_duration = time.time() - poll_start
+            typer.echo(f"   Response took {poll_duration:.1f}s")
+            
             status = job.get("status", "unknown")
+            typer.echo(f"   Status: {status}")
             
             if status in ["completed", "failed"]:
+                typer.echo(f"   Job finished after {elapsed}s")
                 return job
             
             if time.time() - start > timeout:
                 raise TimeoutError(f"Job {job_id} did not complete within {timeout}s")
             
-            await asyncio.sleep(interval)
+            # Sleep for remaining interval time (if any)
+            sleep_time = max(0, interval - poll_duration)
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
 
 
 async def run_cloud_compute(
@@ -209,9 +233,16 @@ async def run_cloud_compute(
         # Create job
         typer.echo("\n📝 Submitting job request...")
         job_url = f"{api_url}/api/v1/jobs"
+        typer.echo("   Creating auth header...")
         job_auth_headers = create_auth_header(privkey_hex, pubkey_hex, job_url, "POST")
+        typer.echo("   Sending POST request...")
         
+        import time
+        submit_start = time.time()
         job = await client.submit_job(job_type, params, estimate["cost_msats"], job_auth_headers)
+        submit_time = time.time() - submit_start
+        typer.echo(f"   Job submitted in {submit_time:.2f}s")
+        
         job_id = job["id"]
         typer.echo(f"   Job ID: {job_id}")
         typer.echo(f"   Status: {job.get('status', 'pending')}")
@@ -375,7 +406,7 @@ async def run_cloud_compute(
             import hashlib
             if axis_root_hex:
                 axis_root_bytes = bytes.fromhex(axis_root_hex)
-                proof_hash = hashlib.sha256(hashlib.sha256(axis_root_bytes).digest()).hex()
+                proof_hash = hashlib.sha256(hashlib.sha256(axis_root_bytes).digest()).digest().hex()
             else:
                 proof_hash = "0" * 64
             
