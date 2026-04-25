@@ -183,14 +183,21 @@ class HosakaClient:
         estimate = await self.get_estimate(job_type, params)
         amount_msats = estimate["cost_msats"]
     
-        # Step 2: Submit job (creates PENDING job, doesn't start compute yet)
+        # Step 2: Submit job
         typer.echo("\n📝 Submitting job request...")
         job = await self.submit_job(job_type, params, amount_msats)
         job_id = job["id"]
         typer.echo(f"   Job ID: {job_id}")
         typer.echo(f"   Status: {job.get('status', 'pending')}")
     
-        # Step 3: Request invoice for the job  
+        # Check if balance was sufficient and compute started immediately
+        if not job.get("payment_required", True):
+            # Balance was debited, compute already started
+            typer.echo(f"   💰 Balance debited: {job.get('previous_balance_msats', 0) // 1000} → {job.get('new_balance_msats', 0) // 1000} sats")
+            typer.echo("\n⏳ Waiting for compute to complete...")
+            return await self.poll_job(job_id, timeout=3600)
+    
+        # Insufficient balance - go through payment flow
         typer.echo("\n💳 Generating Lightning invoice...")
         
         # IMPORTANT: Per NIP-57, we need to create a kind 9734 zap request
@@ -383,17 +390,41 @@ async def run_cloud_compute(
             typer.echo("   3. Automatic job submission after payment")
             raise typer.Exit(code=0)
         
-        # If we get here, payment was processed (future implementation)
+        # If we get here, balance was debited and compute started
         # Poll for completion
-        typer.echo(f"\n⏳ Polling job {result['job_id'][:8]}...")
-        final_job = await client.poll_job(result["job_id"], timeout=3600)
+        job_id = result.get('id') or result.get('job_id')
+        typer.echo(f"\n⏳ Polling job {job_id[:8]}...")
+        final_job = await client.poll_job(job_id, timeout=3600)
         
         if final_job.get("status") == "completed":
             typer.echo("\n✅ Cloud compute complete!")
-            proof = final_job.get("result")
-            if not proof:
-                typer.echo("❌ No proof in result", err=True)
+            result = final_job.get("result")
+            if not result:
+                typer.echo("❌ No result in job", err=True)
                 raise typer.Exit(code=2)
+            
+            # HOSAKA returns {axis_root_hex, height, base, proof_type, ...}
+            # Construct a minimal proof dict for the CLI
+            axis_root_hex = result.get("axis_root_hex")
+            if isinstance(axis_root_hex, int):
+                axis_root_hex = hex(axis_root_hex)
+            if axis_root_hex and axis_root_hex.startswith("0x"):
+                axis_root_hex = axis_root_hex[2:]
+            
+            # Compute proof_hash as double SHA256 of the axis root bytes
+            import hashlib
+            if axis_root_hex:
+                axis_root_bytes = bytes.fromhex(axis_root_hex)
+                proof_hash = hashlib.sha256(hashlib.sha256(axis_root_bytes).digest()).hex()
+            else:
+                proof_hash = "0" * 64
+            
+            # Return minimal proof structure
+            proof = {
+                "proof_hash": proof_hash,
+                "terrain_k": result.get("terrain_k", 0),
+            }
+            
             return proof
         else:
             typer.echo(f"\n❌ Job failed: {final_job.get('error', 'Unknown')}", err=True)
