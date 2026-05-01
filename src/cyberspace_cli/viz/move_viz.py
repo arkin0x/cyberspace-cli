@@ -177,23 +177,23 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             # Using markup to position label column at start of each line
             data_rows = self._build_data_rows(previews, voff)
             
-            # Format as label | data using Rich markup alignment
+            # Labels - all exactly 10 chars
             label_list = [
-                " Difficulty",
-                "  LCA (10s)",
-                "  LCA  (1s)",
-                "  △  (sign)",
-                "  △ (1000s)",
-                "  △  (100s)",
-                "  △   (10s)",
-                "  △    (1s)",
-                "   Target",
+                "Difficulty",
+                " LCA (10s)",
+                " LCA  (1s)",
+                " △  (sign)",
+                " △ (1000s)",
+                " △  (100s)",
+                " △   (10s)",
+                " △    (1s)",
+                "  Target  ",  # Same width, centered
             ]
             
-            # Build combined output with label column (dim) and data column
+            # Build combined output: label (dim) + │ separator (cyan) + data
             combined = []
             for label, data in zip(label_list, data_rows):
-                combined.append(f"[dim]{label:>10}[/dim] [cyan]│[/cyan] {data}")
+                combined.append(f"[dim]{label:>10} │[/] {data}")
             
             self.data_col.update("\n".join(combined))
             
@@ -211,35 +211,67 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 )
         
         def _build_data_rows(self, previews, virtual_offset):
+            """Build data rows. Virtual target stays at screen center.
+            
+            previews are centered on VIRTUAL position (where we'd land).
+            - previews[span] = virtual position (always at screen center)
+            - preview.offset = offset from VIRTUAL (negative=left, positive=right)
+            - Actual current position is at offset = -virtual_offset
+            """
             diff, lca10, lca01 = [], [], []
             sign, k, h, t, o, tgt = [], [], [], [], [], []
             
-            for p in previews:
-                ao = p.offset
+            # Actual current position offset from virtual: -virtual_offset
+            actual_offset_from_virtual = -virtual_offset
+            
+            for i, p in enumerate(previews):
+                # p.offset is offset from VIRTUAL position
+                ao_actual = p.offset - actual_offset_from_virtual  # Convert to offset from actual
+                
                 diff.append(f"[{terrain_color(p.terrain_k)}]▨[/]")
                 lca10.append(str(p.lca_height // 10))
                 lca01.append(str(p.lca_height % 10))
-                sign.append("±" if ao == 0 else ("-" if ao < 0 else "+"))
-                a = abs(ao)
-                k.append(str((a//1000)%10) if a>=1000 else " ")
-                h.append(str((a//100)%10) if a>=100 else " ")
-                t.append(str((a//10)%10) if a>=10 else " ")
-                o.append(str(a % 10))
                 
-                ia, iv = (ao == 0), (p.offset == -virtual_offset)
-                if ia and iv:
+                # Sign row: is this coord to the left/right of ACTUAL position?
+                if p.offset < actual_offset_from_virtual:
+                    sign.append("-")
+                elif p.offset > actual_offset_from_virtual:
+                    sign.append("+")
+                else:
+                    sign.append("±")
+                
+                # Delta rows: magnitude from ACTUAL position
+                abs_a = abs(ao_actual)
+                k.append(str((abs_a//1000)%10) if abs_a>=1000 else " ")
+                h.append(str((abs_a//100)%10) if abs_a>=100 else " ")
+                t.append(str((abs_a//10)%10) if abs_a>=10 else " ")
+                o.append(str(abs_a % 10))
+                
+                # Target markers
+                # ○ = virtual target (center of screen, where we'd land)
+                # ● = actual current position (where we actually are)
+                is_virtual_target = (p.offset == 0)  # At virtual position
+                is_actual_current = (p.offset == actual_offset_from_virtual)  # At actual position
+                
+                if is_virtual_target and is_actual_current:
                     tgt.append("[bold]◎[/]")
-                elif ia:
+                elif is_virtual_target:
                     tgt.append("○")
-                elif iv:
+                elif is_actual_current:
                     tgt.append("[bold]●[/]")
                 else:
-                    tgt.append(" ")
+                    tgt.append(" ")  # Single space, no trailing chars
             
             return [
-                "".join(diff), "".join(lca10), "".join(lca01),
-                "".join(sign), "".join(k), "".join(h),
-                "".join(t), "".join(o), "".join(tgt),
+                "".join(diff),
+                "".join(lca10),
+                "".join(lca01),
+                "".join(sign),
+                "".join(k),
+                "".join(h),
+                "".join(t),
+                "".join(o),
+                "".join(tgt),
             ]
     
     app = MoveVizApp()
