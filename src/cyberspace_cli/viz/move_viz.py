@@ -190,10 +190,12 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 "  Target  ",  # Same width, centered
             ]
             
-            # Build combined output: label (dim) + │ separator (cyan) + data
+            # Build combined output: label (dim) + │ separator + data
             combined = []
             for label, data in zip(label_list, data_rows):
-                combined.append(f"[dim]{label:>10} │[/] {data}")
+                # Pad or truncate data to exactly 2*span+1 characters
+                padded_data = data[:2*self.span+1].ljust(2*self.span+1)
+                combined.append(f"[dim]{label:>10} │[/] {padded_data}")
             
             self.data_col.update("\n".join(combined))
             
