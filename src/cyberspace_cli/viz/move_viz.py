@@ -211,56 +211,54 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 )
         
         def _build_data_rows(self, previews, virtual_offset):
-            """Build data rows. Virtual target stays at screen center.
+            """Build data rows. ○ = virtual target (center), ● = actual position.
             
-            previews are centered on VIRTUAL position (where we'd land).
-            - previews[span] = virtual position (always at screen center)
-            - preview.offset = offset from VIRTUAL (negative=left, positive=right)
-            - Actual current position is at offset = -virtual_offset
+            previews[span] = virtual position (screen center)
+            previews[i].offset is from preview_movement = axis_value - current_actual
+            
+            Virtual target is at screen center (always previews[span]).
+            Actual position offset from virtual = -virtual_offset.
+            So actual is at preview index: span - virtual_offset
             """
             diff, lca10, lca01 = [], [], []
             sign, k, h, t, o, tgt = [], [], [], [], [], []
             
-            # Actual current position offset from virtual: -virtual_offset
-            actual_offset_from_virtual = -virtual_offset
+            # Actual position index in previews array
+            actual_idx = (len(previews) // 2) - virtual_offset
+            # Virtual target is always at center
+            virtual_idx = len(previews) // 2
             
             for i, p in enumerate(previews):
-                # p.offset is offset from VIRTUAL position
-                ao_actual = p.offset - actual_offset_from_virtual  # Convert to offset from actual
+                # offset_from_actual is what we stored in preview_movement
+                offset_from_actual = p.offset
                 
                 diff.append(f"[{terrain_color(p.terrain_k)}]▨[/]")
                 lca10.append(str(p.lca_height // 10))
                 lca01.append(str(p.lca_height % 10))
                 
-                # Sign row: is this coord to the left/right of ACTUAL position?
-                if p.offset < actual_offset_from_virtual:
-                    sign.append("-")
-                elif p.offset > actual_offset_from_virtual:
-                    sign.append("+")
-                else:
-                    sign.append("±")
+                # Sign relative to actual position
+                sign.append("±" if i == actual_idx else ("-" if i < actual_idx else "+"))
                 
-                # Delta rows: magnitude from ACTUAL position
-                abs_a = abs(ao_actual)
-                k.append(str((abs_a//1000)%10) if abs_a>=1000 else " ")
-                h.append(str((abs_a//100)%10) if abs_a>=100 else " ")
-                t.append(str((abs_a//10)%10) if abs_a>=10 else " ")
-                o.append(str(abs_a % 10))
+                # Delta magnitude from actual
+                delta_from_actual = i - actual_idx
+                abs_d = abs(delta_from_actual)
+                k.append(str((abs_d//1000)%10) if abs_d>=1000 else " ")
+                h.append(str((abs_d//100)%10) if abs_d>=100 else " ")
+                t.append(str((abs_d//10)%10) if abs_d>=10 else " ")
+                o.append(str(abs_d % 10))
                 
                 # Target markers
-                # ○ = virtual target (center of screen, where we'd land)
-                # ● = actual current position (where we actually are)
-                is_virtual_target = (p.offset == 0)  # At virtual position
-                is_actual_current = (p.offset == actual_offset_from_virtual)  # At actual position
+                is_virtual = (i == virtual_idx)
+                is_actual = (i == actual_idx)
                 
-                if is_virtual_target and is_actual_current:
+                if is_virtual and is_actual:
                     tgt.append("[bold]◎[/]")
-                elif is_virtual_target:
+                elif is_virtual:
                     tgt.append("○")
-                elif is_actual_current:
+                elif is_actual:
                     tgt.append("[bold]●[/]")
                 else:
-                    tgt.append(" ")  # Single space, no trailing chars
+                    tgt.append(" ")
             
             return [
                 "".join(diff),
