@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
 from cyberspace_core.cantor import cantor_pair, int_to_bytes_be_min, sha256, sha256_int_hex
-from cyberspace_core.coords import AXIS_BITS
+from cyberspace_core.coords import AXIS_BITS, AXIS_MAX
 from cyberspace_core.terrain import terrain_k
 
 DEFAULT_MAX_COMPUTE_HEIGHT = 20
@@ -436,3 +436,104 @@ def compute_sidestep_proof(
         lca_heights=(hx, hy, hz),
         inclusion_proofs={"x": siblings_x, "y": siblings_y, "z": siblings_z},
     )
+
+
+@dataclass(frozen=True)
+class CoordPreview:
+    """Preview data for a single coordinate in the movement visualizer."""
+    offset: int                # Signed offset from current position (Gibsons)
+    axis_value: int            # Actual u85 axis value
+    lca_height: int            # LCA height between current and this coord
+    terrain_k: int             # Terrain difficulty (0-16)
+    subtree_size: int          # 2^lca_height (number of leaves in subtree)
+    is_current: bool           # True if this is the current position
+
+
+def preview_movement(
+    current_x: int,
+    current_y: int,
+    current_z: int,
+    virtual_x: int,
+    virtual_y: int,
+    virtual_z: int,
+    axis: str,
+    span: int,
+    plane: int = 0,
+) -> Tuple[str, int, List[CoordPreview]]:
+    """Generate preview data for movement visualization.
+    
+    Parameters
+    ----------
+    current_x, current_y, current_z : current actual position (u85 values)
+    virtual_x, virtual_y, virtual_z : virtual offset from current position
+    axis : which axis to visualize ('x', 'y', or 'z')
+    span : number of coordinates to show on each side of center
+    plane : current plane (0 or 1)
+    
+    Returns
+    -------
+    (axis_name, current_value, previews)
+    - axis_name: 'X', 'Y', or 'Z'
+    - current_value: the u85 value at the center
+    - previews: list of CoordPreview for each visible coordinate
+    """
+    # Get current axis value
+    if axis == 'x':
+        current_val = current_x
+        virtual_offset = virtual_x
+        axis_name = 'X'
+    elif axis == 'y':
+        current_val = current_y
+        virtual_offset = virtual_y
+        axis_name = 'Y'
+    elif axis == 'z':
+        current_val = current_z
+        virtual_offset = virtual_z
+        axis_name = 'Z'
+    else:
+        raise ValueError(f"Invalid axis: {axis}")
+    
+    # Virtual position
+    virtual_pos = current_val + virtual_offset
+    
+    # Generate previews for the span
+    previews = []
+    for offset in range(-span, span + 1):
+        axis_value = virtual_pos + offset
+        if axis_value < 0 or axis_value > AXIS_MAX:
+            continue
+        
+        signed_offset = offset + virtual_offset  # Total offset from actual position
+        lca_h = find_lca_height(current_val, axis_value)
+        t_k = terrain_k_value_for_axis(axis, axis_value, plane)
+        subtree = 1 << lca_h if lca_h > 0 else 1
+        
+        previews.append(CoordPreview(
+            offset=signed_offset,
+            axis_value=axis_value,
+            lca_height=lca_h,
+            terrain_k=t_k,
+            subtree_size=subtree,
+            is_current=(offset == -virtual_offset),
+        ))
+    
+    return axis_name, virtual_pos, previews
+
+
+def terrain_k_value_for_axis(axis: str, axis_value: int, plane: int) -> int:
+    """Get terrain_k for a coordinate on a single axis.
+    
+    Since terrain_k expects x, y, z coordinates, we hold the other axes
+    at their current values (approximation for visualization).
+    
+    For visualization purposes, we use the axis value as all three coordinates
+    to get a representative terrain difficulty.
+    """
+    # Use the axis value as a proxy for full 3D position
+    # This is an approximation but sufficient for visualization
+    if axis == 'x':
+        return terrain_k(x=axis_value, y=axis_value, z=axis_value, plane=plane)
+    elif axis == 'y':
+        return terrain_k(x=axis_value, y=axis_value, z=axis_value, plane=plane)
+    else:
+        return terrain_k(x=axis_value, y=axis_value, z=axis_value, plane=plane)
