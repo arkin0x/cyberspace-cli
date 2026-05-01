@@ -6,4 +6,4 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   exit 1
 fi
 
-python3 -m venv .venv && source .venv/bin/activate && python -m pip install -U pip && python -m pip install -e .
+python3 -m venv .venv && source .venv/bin/activate && python -m pip install -U pip && python -m pip install -e '.[viz]'
