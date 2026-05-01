@@ -195,7 +195,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             for label, data in zip(label_list, data_rows):
                 # Ensure data is exactly 2*span+1 characters
                 formatted_data = data[:2*self.span+1].ljust(2*self.span+1)
-                combined.append(f"[dim]{label:>10}[/dim][dim] │[/dim] {formatted_data}")
+                combined.append(f"{label:>10} │ {formatted_data}")
             
             self.data_col.update("\n".join(combined))
             
@@ -207,9 +207,9 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 t = 0.1 * (2 ** (mx - 15)) if mx > 15 else 0.1
                 ts = f"{t:.1f}ms" if t < 1000 else f"{t/1000:.1f}s"
                 self.data_panel.update(
-                    f"[cyan]{previews[0].offset:+,}[/] to [cyan]{previews[-1].offset:+,}[/] │ "
-                    f"LCA: [yellow]{avg:.1f}[/] max [red]{mx}[/] │ "
-                    f"Terrain: [blue]{mink}[/]→[red]{maxk}[/] │ Est: [green]{ts}[/]"
+                    f"{previews[0].offset:+,} to {previews[-1].offset:+,} | "
+                    f"LCA: avg={avg:.1f} max={mx} | "
+                    f"Terrain: {mink}->{maxk} | Est: {ts}"
                 )
         
         def _build_data_rows(self, previews, virtual_offset):
@@ -229,7 +229,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             for i, p in enumerate(previews):
                 # Difficulty: colored block character (markup embedded)
                 color = terrain_color(p.terrain_k)
-                diff.append(f"[{color}]▨[/]")
+                diff.append("▨")  # Plain char, no color markup
                 
                 # All other rows: plain text characters (no markup)
                 lca10.append(str(p.lca_height // 10))
