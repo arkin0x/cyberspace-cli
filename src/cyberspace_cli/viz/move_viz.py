@@ -72,7 +72,6 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         
         #data-col {
             height: 100%;
-            overflow-x: scroll;
         }
         
         #data-panel {
@@ -121,9 +120,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.recalculate_span()
             self.refresh_display()
         
-        def on_resize(self, event: events.Resize) -> None:
-            self.recalculate_span()
-            self.refresh_display()
+        # Don't recalculate on resize - use fixed span
+        # def on_resize(self, event: events.Resize) -> None:
+        #     self.recalculate_span()
+        #     self.refresh_display()
         
         def recalculate_span(self) -> None:
             width = get_terminal_width()
