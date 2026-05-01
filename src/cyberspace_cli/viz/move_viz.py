@@ -7,20 +7,29 @@ Controls:
 - Left/Right (or a/d, h/l): Move virtually one Gibson
 - Enter: Commit and execute the planned movement
 - Escape: Cancel and exit
-- :N: Type relative offset (e.g., :1000 or :-500)
+- :N: Jump by +100/-100 Gibsons
 
-Layout:
-┌─────────────────────────────────────────────────────────────┐
-│ X Axis │ Position: 12,847,392 │ Virtual offset: +15        │
-├─────────────────────────────────────────────────────────────┤
-│                  △difficulty │ ▨ ▨ ▨ ▨ ▨ ▨ ▨ ▨ ● ▨ ▨ ...  │
-│    LCA Height              17│ 5  3  2  4  8 12 15  8  0 ...│
-│       Delta             +15 │-7 -6 -5 -4 -3 -2 -1  0 +1 ...│
-└─────────────────────────────────────────────────────────────┘
+Layout (1 char per coordinate, data stacked vertically):
+┌──────────────────────────────────────────────────┐
+│ X Axis │ Position: ... │ Virtual offset: +15   │
+├──────────────────────────────────────────────────┤
+│Difficulty:│▨▨▨▨▨▨▨▨●▨▨▨▨▨▨▨▨│ (colored blocks)
+│ LCA(10s): │0000000011111111│ (tens digit)
+│  LCA(1s): │6665432101234567│ (ones digit)
+│Δ (sign):  │-------+++------│ (+/- sign)
+│Δ (1000s): │                │ (thousands)
+│Δ (100s):  │                │ (hundreds)
+│Δ (10s):   │                │ (tens)
+│Δ (1s):    │0123456789012345│ (ones)
+│ Target:   │        ○ ●     │ (○=current, ●=virtual)
+├──────────────────────────────────────────────────┤
+│ Range: -30 to +30 │ LCA: avg=5.2 max=7 │ ...   │
+└──────────────────────────────────────────────────┘
 """
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
+from typing import Optional, List
 import typer
+import os
 
 # Heatmap colors for terrain_k (0=blue, 16=red)
 TERRAIN_COLORS = [
@@ -53,16 +62,22 @@ def terrain_color(terrain_k: int) -> str:
     return TERRAIN_COLORS[terrain_k]
 
 
-def format_lca_color(lca_height: int) -> str:
-    """Format LCA height with appropriate color markup."""
-    if lca_height > 20:
-        return f"[red]{lca_height}[/red]"
-    elif lca_height > 15:
-        return f"[orange1]{lca_height}[/orange1]"
-    elif lca_height > 10:
-        return f"[yellow]{lca_height}[/yellow]"
-    else:
-        return str(lca_height)
+def format_lca_tens(lca_height: int) -> str:
+    """Get tens digit of LCA height."""
+    return str(lca_height // 10)
+
+
+def format_lca_ones(lca_height: int) -> str:
+    """Get ones digit of LCA height."""
+    return str(lca_height % 10)
+
+
+def get_terminal_width() -> int:
+    """Get current terminal width in columns."""
+    try:
+        return os.get_terminal_size().columns
+    except OSError:
+        return 80  # Default fallback
 
 
 def run_move_viz(
@@ -85,6 +100,7 @@ def run_move_viz(
         from textual.widgets import Header, Footer, Static
         from textual.containers import Container
         from textual.binding import Binding
+        from textual import events
     except ImportError as e:
         typer.echo("TUI visualizer dependencies not installed.", err=True)
         typer.echo("Install: pip install 'cyberspace-cli[viz]'", err=True)
@@ -105,9 +121,6 @@ def run_move_viz(
     
     state = VizState()
     
-    # Span: how many coordinates to show on each side of center
-    SPAN = 30  # ~60 coords total + labels, fits 80-char terminal
-    
     class MoveVizApp(App):
         """Main movement visualization application."""
         
@@ -124,32 +137,20 @@ def run_move_viz(
             height: 3;
             background: $primary-background;
             padding: 0 1;
-            margin-bottom: 1;
+            margin-bottom: 0;
         }
         
         #coords-display {
-            height: 10;
+            height: 1fr;
             background: $surface;
-            padding: 0 1;
+            padding: 0 0;
         }
         
         #data-panel {
-            height: 6;
+            height: 5;
             background: $primary-background;
             padding: 0 1;
-            margin-top: 1;
-        }
-        
-        .label-column {
-            width: 20;
-            color: $text-muted;
-            text-align: right;
-            padding-right: 1;
-        }
-        
-        .center-label {
-            text-style: bold;
-            color: $secondary;
+            margin-top: 0;
         }
         """
         
@@ -163,7 +164,7 @@ def run_move_viz(
             Binding("d", "move_virtual(1)", "Right"),
             Binding("h", "move_virtual(-1)", "Left"),
             Binding("l", "move_virtual(1)", "Right"),
-            Binding("colon", "enter_offset", "Jump"),
+            Binding("colon", "jump_offset", "Jump"),
             Binding("enter", "commit_movement", "Commit"),
             Binding("escape", "quit", "Cancel"),
         ]
@@ -173,6 +174,7 @@ def run_move_viz(
             self.info_bar = None
             self.coords_display = None
             self.data_panel = None
+            self.span = 30  # Default, recalculated on resize
         
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
@@ -188,7 +190,22 @@ def run_move_viz(
             self.info_bar = self.query_one("#info-bar", Static)
             self.coords_display = self.query_one("#coords-display", Static)
             self.data_panel = self.query_one("#data-panel", Static)
+            self.recalculate_span()
             self.refresh_display()
+        
+        def on_resize(self, event: events.Resize) -> None:
+            """Recalculate span when terminal is resized."""
+            self.recalculate_span()
+            self.refresh_display()
+        
+        def recalculate_span(self) -> None:
+            """Calculate span based on terminal width and label columns."""
+            width = get_terminal_width()
+            # Labels take ~14 chars (e.g., "Delta (1s):  │")
+            # Leave 1 char margin on right
+            label_width = 14
+            available = width - label_width - 1
+            self.span = max(5, min(100, available // 2))
         
         def action_switch_axis(self, axis: str) -> None:
             state.current_axis = axis
@@ -203,15 +220,14 @@ def run_move_viz(
                 state.virtual_z += delta
             self.refresh_display()
         
-        def action_enter_offset(self) -> None:
-            # For now, just bump by 100 in the current direction
-            # Full input modal would go here
+        def action_jump_offset(self) -> None:
+            """Jump by +100 or -100 based on current direction."""
             if state.current_axis == 'x':
-                state.virtual_x += 100
+                state.virtual_x += 100 if state.virtual_x >= 0 else -100
             elif state.current_axis == 'y':
-                state.virtual_y += 100
+                state.virtual_y += 100 if state.virtual_y >= 0 else -100
             else:
-                state.virtual_z += 100
+                state.virtual_z += 100 if state.virtual_z >= 0 else -100
             self.refresh_display()
         
         def action_commit_movement(self) -> None:
@@ -222,6 +238,14 @@ def run_move_viz(
             if not self.info_bar or not self.coords_display or not self.data_panel:
                 return
             
+            # Get virtual offset for current axis
+            if state.current_axis == 'x':
+                virtual_offset = state.virtual_x
+            elif state.current_axis == 'y':
+                virtual_offset = state.virtual_y
+            else:
+                virtual_offset = state.virtual_z
+            
             # Get preview data
             axis_name, center_val, previews = preview_movement(
                 current_x=current_x,
@@ -231,17 +255,9 @@ def run_move_viz(
                 virtual_y=state.virtual_y,
                 virtual_z=state.virtual_z,
                 axis=state.current_axis,
-                span=SPAN,
+                span=self.span,
                 plane=plane,
             )
-            
-            # Get current virtual offset for this axis
-            if state.current_axis == 'x':
-                virtual_offset = state.virtual_x
-            elif state.current_axis == 'y':
-                virtual_offset = state.virtual_y
-            else:
-                virtual_offset = state.virtual_z
             
             # Update info bar
             self.info_bar.update(
@@ -250,95 +266,124 @@ def run_move_viz(
                 f"Virtual offset: [yellow]{virtual_offset:+,}[/yellow]"
             )
             
-            # Build the display with label column
-            # Row labels (right-aligned, 20 chars wide)
-            label_difficulty = "Temporal Difficulty:"
-            label_lca = "LCA Height:"
-            label_delta = "Delta (Gibsons):"
+            # Build rows - each coordinate is exactly 1 character column
+            # Row labels (all exactly 15 chars including │)
+            label_diff = " Difficulty:  │"
+            label_lca10 = "   LCA (10s): │"
+            label_lca01 = "   LCA  (1s): │"
+            label_sign = "   △   (sign): │"  # △ instead of Δ (single byte)
+            label_k    = "   △  (1000s): │"
+            label_h    = "   △   (100s): │"
+            label_t    = "   △    (10s): │"
+            label_o    = "   △     (1s): │"
+            label_target="    Target:   │"
             
-            # Center marker row (shows which column is identity/current position)
-            label_center = "[bold]▼[/bold]"
-            
-            # Build data rows
-            difficulty_cells = []
-            lca_cells = []
-            delta_cells = []
-            center_markers = []
+            # Build data strings (no spaces between columns)
+            diff_cells = []
+            lca_tens_cells = []
+            lca_ones_cells = []
+            sign_cells = []
+            k_cells = []  # thousands
+            h_cells = []  # hundreds
+            t_cells = []  # tens
+            o_cells = []  # ones
+            target_cells = []
             
             for preview in previews:
-                is_center = (preview.offset == 0)
+                # Actual position offset (relative to current actual, not virtual)
+                actual_offset = preview.offset
                 
-                # Difficulty: colored block character
+                # Difficulty: colored block
                 diff_char = "▨"
                 diff_color = terrain_color(preview.terrain_k)
-                difficulty_cells.append(f"[{diff_color}]{diff_char}[/]")
+                diff_cells.append(f"[{diff_color}]{diff_char}[/]")
                 
-                # LCA height with color coding
-                lca_cells.append(format_lca_color(preview.lca_height))
+                # LCA height: split into tens and ones digits
+                lca_tens_cells.append(format_lca_tens(preview.lca_height))
+                lca_ones_cells.append(format_lca_ones(preview.lca_height))
                 
-                # Delta (relative to CURRENT actual position, not virtual center)
-                delta_str = self._format_delta(preview.offset)
-                delta_cells.append(delta_str)
-                
-                # Center marker (only for virtual center, which is where we'd land)
-                if is_center:
-                    center_markers.append("[bold reverse]●[/]")
+                # Delta sign row
+                if actual_offset < 0:
+                    sign_cells.append("-")
+                elif actual_offset > 0:
+                    sign_cells.append("+")
                 else:
-                    center_markers.append(" ")
+                    sign_cells.append("±")
+                
+                # Delta magnitude digits (absolute value)
+                abs_offset = abs(actual_offset)
+                k_digit = (abs_offset // 1000) % 10 if abs_offset >= 1000 else " "
+                h_digit = (abs_offset // 100) % 10 if abs_offset >= 100 else " "
+                t_digit = (abs_offset // 10) % 10 if abs_offset >= 10 else " "
+                o_digit = abs_offset % 10
+                
+                k_cells.append(str(k_digit) if k_digit != " " else " ")
+                h_cells.append(str(h_digit) if h_digit != " " else " ")
+                t_cells.append(str(t_digit) if t_digit != " " else " ")
+                o_cells.append(str(o_digit))
+                
+                # Target markers
+                # ○ = actual current position (offset 0 relative to actual)
+                # ● = virtual target position (where we'd land if we commit)
+                is_actual_current = (actual_offset == 0)
+                is_virtual_target = (preview.offset == -virtual_offset)
+                
+                if is_actual_current and is_virtual_target:
+                    target_cells.append("[bold]◎[/]")  # Both at same spot
+                elif is_actual_current:
+                    target_cells.append("○")
+                elif is_virtual_target:
+                    target_cells.append("[bold]●[/]")
+                else:
+                    target_cells.append(" ")
             
-            # Join cells with spacing
-            difficulty_row = " ".join(difficulty_cells)
-            lca_row = "  ".join(lca_cells)
-            delta_row = " ".join(delta_cells)
-            center_row = " ".join(center_markers)
+            # Join cells with NO spaces (1 char per coordinate)
+            diff_row = "".join(diff_cells)
+            lca10_row = "".join(lca_tens_cells)
+            lca01_row = "".join(lca_ones_cells)
+            sign_row = "".join(sign_cells)
+            k_row = "".join(k_cells)
+            h_row = "".join(h_cells)
+            t_row = "".join(t_cells)
+            o_row = "".join(o_cells)
+            target_row = "".join(target_cells)
             
-            # Assemble the display
+            # Assemble display
             self.coords_display.update(
-                f"[dim]{label_difficulty:>20}[/dim] │ {difficulty_row}\n"
-                f"[dim]{label_lca:>20}[/dim] │ {lca_row}\n"
-                f"[dim]{label_delta:>20}[/dim] │ {delta_row}\n"
-                f"[dim]{'Identity:':>20}[/dim] │ {center_row}"
+                f"[dim]{label_diff}[/dim] {diff_row}\n"
+                f"[dim]{label_lca10}[/dim] {lca10_row}\n"
+                f"[dim]{label_lca01}[/dim] {lca01_row}\n"
+                f"[dim]{label_sign}[/dim] {sign_row}\n"
+                f"[dim]{label_k}[/dim] {k_row}\n"
+                f"[dim]{label_h}[/dim] {h_row}\n"
+                f"[dim]{label_t}[/dim] {t_row}\n"
+                f"[dim]{label_o}[/dim] {o_row}\n"
+                f"[dim]{label_target}[/dim] {target_row}"
             )
             
-            # Update data panel with summary stats
+            # Update data panel
             if previews:
                 avg_lca = sum(p.lca_height for p in previews) / len(previews)
                 max_lca = max(p.lca_height for p in previews)
                 min_difficulty = min(p.terrain_k for p in previews)
                 max_difficulty = max(p.terrain_k for p in previews)
                 
-                # Estimate compute time based on max LCA (rough benchmark)
-                # Assuming ~0.1ms per Cantor pair at h=20
+                # Estimate compute time
                 base_time_ms = 0.1 * (2 ** (max_lca - 15)) if max_lca > 15 else 0.1
                 time_estimate = f"{base_time_ms:.1f}ms" if base_time_ms < 1000 else f"{base_time_ms/1000:.1f}s"
                 
                 self.data_panel.update(
-                    f"Range: [cyan]{previews[0].offset:+,}[/cyan] to [cyan]{previews[-1].offset:+,}[/cyan] Gibsons\n"
+                    f"Range: [cyan]{previews[0].offset:+,}[/cyan] to [cyan]{previews[-1].offset:+,}[/cyan] │ "
                     f"LCA: avg=[yellow]{avg_lca:.1f}[/yellow] max=[red]{max_lca}[/red] │ "
-                    f"Terrain: [blue]{min_difficulty}[/blue] (easiest) → [red]{max_difficulty}[/red] (hardest)\n"
-                    f"Est. compute time (max LCA={max_lca}): ~[green]{time_estimate}[/green]"
+                    f"Terrain: [blue]{min_difficulty}[/blue]→[red]{max_difficulty}[/red] │ "
+                    f"Est: [green]{time_estimate}[/green]"
                 )
-        
-        def _format_delta(self, offset: int) -> str:
-            """Format the delta value for display."""
-            if offset == 0:
-                return "[bold reverse]  0  [/reverse]"
-            elif abs(offset) < 1000:
-                return f"{offset:+5d}"
-            else:
-                return f"{offset:+6,d}"
-    
-    class InputOffsetScreen(App):
-        """Simple screen for entering offset."""
-        def on_mount(self):
-            self.push_screen("input_modal")
     
     # Create and run the app
     app = MoveVizApp()
     result = app.run()
     
     if state.committed:
-        # Show what will be committed
         typer.echo(
             f"\n[bold]Committing movement:[/bold]\n"
             f"  X: {state.virtual_x:+,}\n"
@@ -346,33 +391,23 @@ def run_move_viz(
             f"  Z: {state.virtual_z:+,}\n"
             f"\nCalculating proof-of-work..."
         )
-        # In production: execute the actual movement here via move_commands.py
     else:
         typer.echo("Movement cancelled.")
 
 
-# Entry point for the CLI command
 def move_viz_command() -> None:
-    """Launch the terminal-based movement visualizer.
-    
-    This command opens an interactive TUI for planning and executing
-    movements through Cyberspace. Visualize LCA heights, terrain difficulty,
-    and coordinate costs before committing to the proof-of-work.
-    """
+    """Launch the terminal-based movement visualizer."""
     from cyberspace_cli.state import load_state
     from cyberspace_core.coords import coord_to_xyz
     
-    # Load current state
     state = load_state()
     if not state:
         typer.echo("No state. Use `cyberspace spawn` first.", err=True)
         raise typer.Exit(code=1)
     
-    # Parse current position
     coord_int = int.from_bytes(bytes.fromhex(state.coord_hex), "big")
     x, y, z, plane = coord_to_xyz(coord_int)
     
-    # Launch the visualizer
     run_move_viz(
         current_x=x,
         current_y=y,
