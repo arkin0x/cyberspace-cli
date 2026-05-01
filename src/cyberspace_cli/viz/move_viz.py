@@ -191,21 +191,11 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             ]
             
             # Build combined output: label (dim) + │ separator + data
-            # Add center column highlight background
             combined = []
-            center_idx = self.span  # Center column index
             for label, data in zip(label_list, data_rows):
-                # Pad data to exactly 2*span+1 characters
-                padded_data = data[:2*self.span+1].ljust(2*self.span+1)
-                # Insert center column highlight: split data at center, add background
-                if len(padded_data) > center_idx:
-                    data_before = padded_data[:center_idx]
-                    data_at_center = padded_data[center_idx]
-                    data_after = padded_data[center_idx+1:]
-                    # Highlight the center column with dark gray background
-                    padded_data = f"{data_before}[on #1a1a2e]{data_at_center}[/]{data_after}"
-                # dim label │ highlighted data
-                combined.append(f"[dim]{label:>10}[/dim][dim] │[/dim] {padded_data}")
+                # Ensure data is exactly 2*span+1 characters
+                formatted_data = data[:2*self.span+1].ljust(2*self.span+1)
+                combined.append(f"[dim]{label:>10}[/dim][dim] │[/dim] {formatted_data}")
             
             self.data_col.update("\n".join(combined))
             
