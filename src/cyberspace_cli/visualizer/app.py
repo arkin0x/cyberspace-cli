@@ -559,7 +559,7 @@ class CyberspaceVisualizerApp:
     def on_copy(self) -> None:
         value = self.coord_out_text.get("1.0", tk.END).strip()
         if not value:
-            self._set_status("Nothing to copy yet.")
+            value = self.coord_in_var.get().strip()
             return
         self.root.clipboard_clear()
         self.root.clipboard_append(value)
