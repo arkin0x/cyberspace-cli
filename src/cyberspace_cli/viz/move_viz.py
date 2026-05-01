@@ -64,10 +64,11 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         }
         
         #label-col {
-            width: 11;
+            width: 13;
             height: 100%;
             padding: 0 1;
             color: #666666;
+            text-align: right;
         }
         
         #data-col {
@@ -132,7 +133,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         
         def recalculate_span(self) -> None:
             width = get_terminal_width()
-            self.span = max(5, min(100, (width - 14) // 2))
+            # Account for: 12 (label) + 3 (space + │ + space) = 15 chars overhead
+            # Remaining width for data, each coord is 1 char
+            available = width - 15
+            self.span = max(5, min(100, available // 2))
         
         def action_switch_axis(self, axis: str) -> None:
             state.current_axis = axis
@@ -237,9 +241,9 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             virtual_idx = len(previews) // 2
             
             for i, p in enumerate(previews):
-                # Difficulty: colored block character (markup embedded)
+                # Difficulty: colored block character with inline markup
                 color = terrain_color(p.terrain_k)
-                diff.append("▨")  # Plain char, no color markup
+                diff.append(f"[{color}]▨[/{color}]")
                 
                 # All other rows: plain text characters (no markup)
                 lca10.append(str(p.lca_height // 10))
