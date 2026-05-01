@@ -190,26 +190,36 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 "  Target  ",  # Same width, centered
             ]
             
-            # Build combined output: label (dim) + │ separator + data
+            # Build combined output: label (right aligned) + │ separator + data
             combined = []
             for label, data in zip(label_list, data_rows):
                 # Ensure data is exactly 2*span+1 characters
                 formatted_data = data[:2*self.span+1].ljust(2*self.span+1)
-                combined.append(f"{label:>10} │ {formatted_data}")
+                combined.append(f"{label:>12} │ {formatted_data}")
             
             self.data_col.update("\n".join(combined))
             
             if previews:
-                avg = sum(p.lca_height for p in previews) / len(previews)
-                mx = max(p.lca_height for p in previews)
-                mink = min(p.terrain_k for p in previews)
-                maxk = max(p.terrain_k for p in previews)
-                t = 0.1 * (2 ** (mx - 15)) if mx > 15 else 0.1
-                ts = f"{t:.1f}ms" if t < 1000 else f"{t/1000:.1f}s"
+                # Find the virtual target preview (center of screen)
+                target_preview = previews[len(previews) // 2]
+                target_lca = target_preview.lca_height
+                target_k = target_preview.terrain_k
+                target_size = target_preview.subtree_size
+                
+                # Estimate time based on target's compute requirements
+                # Simple model: 2^h operations at ~1M ops/sec
+                if target_lca <= 15:
+                    t_ms = 0.1 * (2 ** (target_lca - 10))
+                else:
+                    t_ms = 0.1 * (2 ** (target_lca - 15))
+                ts = f"{t_ms:.1f}ms" if t_ms < 1000 else f"{t_ms/1000:.1f}s"
+                
                 self.data_panel.update(
-                    f"{previews[0].offset:+,} to {previews[-1].offset:+,} | "
-                    f"LCA: avg={avg:.1f} max={mx} | "
-                    f"Terrain: {mink}->{maxk} | Est: {ts}"
+                    f"Target: {target_preview.offset:+,} | "
+                    f"LCA: {target_lca} | "
+                    f"Terrain K: {target_k} | "
+                    f"Subtree: 2^{target_lca} | "
+                    f"Est: {ts}"
                 )
         
         def _build_data_rows(self, previews, virtual_offset):
@@ -274,6 +284,21 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     class InputModal(Static):
         """Modal for entering numeric offset."""
         
+        CSS = """
+        InputModal {
+            background: #1a1a2e;
+            border: solid #333366;
+            padding: 1 2;
+            width: 60;
+            height: 10;
+            align: center middle;
+        }
+        .modal-label {
+            padding: 1 0;
+            text-align: center;
+        }
+        """
+        
         BINDINGS = [
             Binding("enter", "submit", "OK"),
             Binding("escape", "dismiss", "Cancel"),
@@ -284,10 +309,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.input_value = ""
         
         def compose(self) -> ComposeResult:
-            yield Header(show_clock=False)
             yield Static(
-                "Enter offset (e.g., 1000 or -500):\n" + \
-                "Press Enter to confirm, Esc to cancel",
+                f"Enter offset (e.g., 1000 or -500):\n"
+                f"Current: {self.input_value or '0'}\n"
+                f"Press Enter to confirm, Esc to cancel",
                 classes="modal-label",
             )
             yield Footer()
@@ -296,10 +321,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             # Handle numeric input
             if event.key.isdigit() or event.key in ('-', '+'):
                 self.input_value += event.key
-                self.update(f"Offset: {self.input_value}")
+                self.refresh()
             elif event.key == "backspace":
                 self.input_value = self.input_value[:-1]
-                self.update(f"Offset: {self.input_value}")
+                self.refresh()
             elif event.key == "enter":
                 self.action_submit()
             elif event.key == "escape":
