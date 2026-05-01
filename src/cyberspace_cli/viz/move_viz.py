@@ -53,30 +53,31 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     
     class MoveVizApp(App):
         CSS = """
-        Screen { background: $surface; }
+        Screen { background: #000000; }
         
         #main-container { height: 100%; }
-        #info-bar { height: 3; background: $primary-background; padding: 0 1; }
+        #info-bar { height: 3; background: #1a1a2e; padding: 0 1; }
         
         #viz-row {
             height: 1fr;
-            background: $surface;
+            background: #000000;
         }
         
         #label-col {
             width: 11;
             height: 100%;
             padding: 0 1;
-            color: $text-muted;
+            color: #666666;
         }
         
         #data-col {
             height: 100%;
+            background: #000000;
         }
         
         #data-panel {
             height: 4;
-            background: $primary-background;
+            background: #1a1a2e;
             padding: 0 1;
         }
         """
@@ -91,6 +92,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             Binding("d", "move_virtual(1)", "Right"),
             Binding("h", "move_virtual(-1)", "Left"),
             Binding("l", "move_virtual(1)", "Right"),
+            Binding("shift+left", "move_virtual(-10)", "←10"),
+            Binding("shift+right", "move_virtual(10)", "→10"),
+            Binding("ctrl+left", "move_virtual(-100)", "←100"),
+            Binding("ctrl+right", "move_virtual(100)", "→100"),
             Binding("colon", "jump_offset", "Jump"),
             Binding("enter", "commit_movement", "Commit"),
             Binding("escape", "quit", "Cancel"),
@@ -143,13 +148,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.refresh_display()
         
         def action_jump_offset(self) -> None:
-            if state.current_axis == 'x':
-                state.virtual_x += 100 if state.virtual_x >= 0 else -100
-            elif state.current_axis == 'y':
-                state.virtual_y += 100 if state.virtual_y >= 0 else -100
-            else:
-                state.virtual_z += 100 if state.virtual_z >= 0 else -100
-            self.refresh_display()
+            """Open input modal to type offset."""
+            self.push_screen(InputModal())
         
         def action_commit_movement(self) -> None:
             state.committed = True
@@ -191,11 +191,21 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             ]
             
             # Build combined output: label (dim) + │ separator + data
+            # Add center column highlight background
             combined = []
+            center_idx = self.span  # Center column index
             for label, data in zip(label_list, data_rows):
-                # Pad or truncate data to exactly 2*span+1 characters
+                # Pad data to exactly 2*span+1 characters
                 padded_data = data[:2*self.span+1].ljust(2*self.span+1)
-                combined.append(f"[dim]{label:>10} │[/] {padded_data}")
+                # Insert center column highlight: split data at center, add background
+                if len(padded_data) > center_idx:
+                    data_before = padded_data[:center_idx]
+                    data_at_center = padded_data[center_idx]
+                    data_after = padded_data[center_idx+1:]
+                    # Highlight the center column with dark gray background
+                    padded_data = f"{data_before}[on #1a1a2e]{data_at_center}[/]{data_after}"
+                # dim label │ highlighted data
+                combined.append(f"[dim]{label:>10}[/dim][dim] │[/dim] {padded_data}")
             
             self.data_col.update("\n".join(combined))
             
@@ -273,6 +283,56 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 "".join(o),
                 "".join(tgt),
             ]
+    
+    class InputModal(Static):
+        """Modal for entering numeric offset."""
+        
+        BINDINGS = [
+            Binding("enter", "submit", "OK"),
+            Binding("escape", "dismiss", "Cancel"),
+        ]
+        
+        def __init__(self):
+            super().__init__()
+            self.input_value = ""
+        
+        def compose(self) -> ComposeResult:
+            yield Header(show_clock=False)
+            yield Static(
+                "Enter offset (e.g., 1000 or -500):\n" + \
+                "Press Enter to confirm, Esc to cancel",
+                classes="modal-label",
+            )
+            yield Footer()
+        
+        def on_key(self, event) -> None:
+            # Handle numeric input
+            if event.key.isdigit() or event.key in ('-', '+'):
+                self.input_value += event.key
+                self.update(f"Offset: {self.input_value}")
+            elif event.key == "backspace":
+                self.input_value = self.input_value[:-1]
+                self.update(f"Offset: {self.input_value}")
+            elif event.key == "enter":
+                self.action_submit()
+            elif event.key == "escape":
+                self.action_dismiss()
+        
+        def action_submit(self) -> None:
+            try:
+                offset = int(self.input_value) if self.input_value else 0
+                if state.current_axis == 'x':
+                    state.virtual_x = offset
+                elif state.current_axis == 'y':
+                    state.virtual_y = offset
+                else:
+                    state.virtual_z = offset
+            except ValueError:
+                pass
+            self.app.pop_screen()
+        
+        def action_dismiss(self) -> None:
+            self.app.pop_screen()
     
     app = MoveVizApp()
     app.run()
