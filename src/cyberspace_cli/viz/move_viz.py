@@ -225,12 +225,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         def _build_data_rows(self, previews, virtual_offset):
             """Build data rows. ○ = virtual target (center), ● = actual position.
             
-            previews[span] = virtual position (screen center)
-            previews[i].offset is from preview_movement = axis_value - current_actual
-            
-            Virtual target is at screen center (always previews[span]).
-            Actual position offset from virtual = -virtual_offset.
-            So actual is at preview index: span - virtual_offset
+            Data is plain text (no markup) to allow center column highlighting.
+            Difficulty blocks use color codes built into the string.
             """
             diff, lca10, lca01 = [], [], []
             sign, k, h, t, o, tgt = [], [], [], [], [], []
@@ -241,10 +237,11 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             virtual_idx = len(previews) // 2
             
             for i, p in enumerate(previews):
-                # offset_from_actual is what we stored in preview_movement
-                offset_from_actual = p.offset
+                # Difficulty: colored block character (markup embedded)
+                color = terrain_color(p.terrain_k)
+                diff.append(f"[{color}]▨[/]")
                 
-                diff.append(f"[{terrain_color(p.terrain_k)}]▨[/]")
+                # All other rows: plain text characters (no markup)
                 lca10.append(str(p.lca_height // 10))
                 lca01.append(str(p.lca_height % 10))
                 
@@ -259,16 +256,16 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 t.append(str((abs_d//10)%10) if abs_d>=10 else " ")
                 o.append(str(abs_d % 10))
                 
-                # Target markers
+                # Target markers: plain text
                 is_virtual = (i == virtual_idx)
                 is_actual = (i == actual_idx)
                 
                 if is_virtual and is_actual:
-                    tgt.append("[bold]◎[/]")
+                    tgt.append("◎")
                 elif is_virtual:
                     tgt.append("○")
                 elif is_actual:
-                    tgt.append("[bold]●[/]")
+                    tgt.append("●")
                 else:
                     tgt.append(" ")
             
