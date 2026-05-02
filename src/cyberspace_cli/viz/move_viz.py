@@ -429,12 +429,12 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         def _render_isometric_offset(self, dx: int, dy: int, dz: int) -> str:
             """Render a compact isometric view of the 3D offset.
             
-            Isometric projection:
-            - X axis: goes right-down (╲ direction)
-            - Y axis: goes left-down (╱ direction)  
-            - Z axis: goes straight up (│)
+            Cyberspace coordinate system:
+            - X axis: X+ is right, X- is left
+            - Y axis: Y+ is up, Y- is down  
+            - Z axis: Z+ is away (into screen), Z- is toward viewer
             
-            Shows origin (●) and target (○) with connecting lines.
+            Shows origin (●) and target (○) with axis guides.
             """
             # Scale factors to fit in ~25 char width
             scale = 1  # 1 char per unit, clamp to reasonable size
@@ -445,11 +445,22 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             dy_clamped = max(-max_dim, min(max_dim, dy))
             dz_clamped = max(-max_dim, min(max_dim, dz))
             
-            # Isometric projection formulas (adjusted for monospace aspect ratio)
+            # Isometric projection with correct Cyberspace axes:
+            # X (left/right) -> horizontal screen movement
+            # Y (up/down) -> vertical screen movement
+            # Z (depth) -> diagonal movement (into/out of screen)
             def project(x, y, z):
-                """Convert 3D coords to 2D screen position."""
-                sx = (x - y)
-                sy = (x + y) // 2 - z
+                """Convert 3D coords to 2D screen position.
+                
+                Isometric view: looking from corner, so:
+                - X moves horizontally (positive = right)
+                - Y moves vertically (positive = up, so negative screen Y)
+                - Z moves diagonally (positive = into screen = down-right)
+                """
+                # Screen X: X axis + Z axis contribution (Z+ goes right into screen)
+                sx = x + z
+                # Screen Y: Y axis + Z axis contribution (both Y+ and Z+ go down on screen)
+                sy = z - y  # Y+ is up in world, so negative on screen
                 return sx, sy
             
             # Calculate origin and target positions
@@ -469,31 +480,31 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             canvas = [[' ' for _ in range(width)] for _ in range(height)]
             
             # Draw axis lines from origin
-            # X axis (positive = right-down, negative = left-up)
+            # X axis (positive = right, negative = left)
             for i in range(abs(dx_clamped) + 1):
                 sign = 1 if dx_clamped >= 0 else -1
                 px, py = project(i * sign, 0, 0)
                 cx, cy = px - min_x, py - min_y
                 if 0 <= cy < height and 0 <= cx < width:
-                    canvas[cy][cx] = '╌' if i > 0 else '●'
+                    canvas[cy][cx] = '─' if i > 0 else '●'
             
-            # Y axis (positive = left-down, negative = right-up)
+            # Y axis (positive = up, negative = down)
             for i in range(abs(dy_clamped) + 1):
                 sign = 1 if dy_clamped >= 0 else -1
                 px, py = project(0, i * sign, 0)
                 cx, cy = px - min_x, py - min_y
                 if 0 <= cy < height and 0 <= cx < width:
                     if canvas[cy][cx] == ' ':
-                        canvas[cy][cx] = '╌'
+                        canvas[cy][cx] = '│'
             
-            # Z axis (positive = up, negative = down)
+            # Z axis (positive = away/into screen, negative = toward viewer)
             for i in range(abs(dz_clamped) + 1):
                 sign = 1 if dz_clamped >= 0 else -1
                 px, py = project(0, 0, i * sign)
                 cx, cy = px - min_x, py - min_y
                 if 0 <= cy < height and 0 <= cx < width:
                     if canvas[cy][cx] == ' ':
-                        canvas[cy][cx] = '┊'
+                        canvas[cy][cx] = '╌'  # Dashed for depth axis
             
             # Draw line from origin to target
             ox_screen, oy_screen = ox - min_x, oy - min_y
