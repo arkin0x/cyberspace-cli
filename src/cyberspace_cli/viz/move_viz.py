@@ -429,118 +429,93 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         def _render_isometric_offset(self, dx: int, dy: int, dz: int) -> str:
             """Render a compact isometric view of the 3D offset.
             
-            Isometric projection:
-            - X axis: horizontal (X+ right, X- left)
-            - Y axis: vertical (Y+ up, Y- down)
-            - Z axis: diagonal (Z+ away/into screen, Z- toward viewer)
-            
-            Shows origin (●) and target (○) with connecting lines.
+            Fixed canvas with centered origin. Axes always visible.
+            Target position is log-scaled so large offsets stay on screen.
             """
-            # Scale factors to fit in ~25 char width
-            scale = 1  # 1 char per unit, clamp to reasonable size
-            max_dim = 12  # Maximum extent in each direction
-            
-            # Clamp values for display
-            dx_clamped = max(-max_dim, min(max_dim, dx))
-            dy_clamped = max(-max_dim, min(max_dim, dy))
-            dz_clamped = max(-max_dim, min(max_dim, dz))
-            
-            # Isometric projection formulas
-            # screen_x = x + z (X horizontal, Z adds diagonal depth)
-            # screen_y = z - y (Z and inverted Y for vertical, Y+ = up in world)
-            def project(x, y, z):
-                """Convert 3D coords to 2D screen position."""
-                sx = x + z
-                sy = z - y
-                return sx, sy
-            
-            # Calculate origin and target positions
-            ox, oy = project(0, 0, 0)
-            tx, ty = project(dx_clamped, dy_clamped, dz_clamped)
-            
-            # Determine canvas size based on extent
-            min_x = min(ox, tx) - 2
-            max_x = max(ox, tx) + 2
-            min_y = min(oy, ty) - 2
-            max_y = max(oy, ty) + 2
-            
-            width = max_x - min_x + 1
-            height = max_y - min_y + 1
+            # Fixed canvas size - tall enough for Z axis diagonal
+            width = 25
+            height = 9
             
             # Initialize canvas with spaces
             canvas = [[' ' for _ in range(width)] for _ in range(height)]
             
-            # Calculate center offset to position origin in middle of canvas
-            # Origin projects to (0, 0), so we offset by half the extent in each direction
-            center_offset_x = max_dim + 2  # Center origin horizontally
-            center_offset_y = max_dim + 1  # Center origin vertically
+            # Origin is centered horizontally, positioned in lower third (to show Y+ up and Z+ diagonal)
+            origin_x = width // 2
+            origin_y = height - 3  # Position origin near bottom to give room above for Y+ and below for Z+
+            axis_length = 8
             
-            # Draw axis lines from origin
-            # X axis (positive = right, negative = left)
-            for i in range(abs(dx_clamped) + 1):
-                sign = 1 if dx_clamped >= 0 else -1
-                px, py = project(i * sign, 0, 0)
-                cx = px + center_offset_x
-                cy = py + center_offset_y
-                if 0 <= cy < height and 0 <= cx < width:
-                    canvas[cy][cx] = '─' if i > 0 else '●'
+            # Draw axes from origin (fixed length for visibility)
+            # Draw axes FIRST so markers overwrite them
+            # X axis: horizontal line
+            for i in range(1, axis_length + 1):
+                if 0 <= origin_x + i < width:
+                    canvas[origin_y][origin_x + i] = '─'  # X+ right
+                if 0 <= origin_x - i < width:
+                    canvas[origin_y][origin_x - i] = '─'  # X- left
             
-            # Y axis (positive = up, negative = down)
-            for i in range(abs(dy_clamped) + 1):
-                sign = 1 if dy_clamped >= 0 else -1
-                px, py = project(0, i * sign, 0)
-                cx = px + center_offset_x
-                cy = py + center_offset_y
-                if 0 <= cy < height and 0 <= cx < width:
-                    if canvas[cy][cx] == ' ':
-                        canvas[cy][cx] = '│'
+            # Y axis: vertical line
+            for i in range(1, axis_length + 1):
+                if 0 <= origin_y - i < height:
+                    canvas[origin_y - i][origin_x] = '│'  # Y+ up
+                if 0 <= origin_y + i < height:
+                    canvas[origin_y + i][origin_x] = '│'  # Y- down
             
-            # Z axis (positive = away/diagonal, negative = toward)
-            for i in range(abs(dz_clamped) + 1):
-                sign = 1 if dz_clamped >= 0 else -1
-                px, py = project(0, 0, i * sign)
-                cx = px + center_offset_x
-                cy = py + center_offset_y
-                if 0 <= cy < height and 0 <= cx < width:
-                    if canvas[cy][cx] == ' ':
-                        canvas[cy][cx] = '╌'
+            # Z axis: diagonal (down-right = away, up-left = toward)
+            for i in range(1, axis_length + 1):
+                if 0 <= origin_y + i < height and 0 <= origin_x + i < width:
+                    canvas[origin_y + i][origin_x + i] = '╌'  # Z+ away
+                if 0 <= origin_y - i < height and 0 <= origin_x - i < width:
+                    canvas[origin_y - i][origin_x - i] = '╌'  # Z- toward
             
-            # Draw line from origin to target
-            ox_screen = ox + center_offset_x
-            oy_screen = oy + center_offset_y
-            tx_screen = tx + center_offset_x
-            ty_screen = ty + center_offset_y
+            # Mark origin LAST so it's visible
+            canvas[origin_y][origin_x] = '●'
             
-            # Bresenham line algorithm for connecting line
-            x0, y0 = ox_screen, oy_screen
-            x1, y1 = tx_screen, ty_screen
-            dx_line = abs(x1 - x0)
-            dy_line = abs(y1 - y0)
-            sx = 1 if x0 < x1 else -1
-            sy = 1 if y0 < y1 else -1
-            err = dx_line - dy_line
+            # Calculate target position using log scale
+            # log10(|offset|) gives us ~1 char per order of magnitude
+            def log_scale(offset):
+                if offset == 0:
+                    return 0
+                import math
+                sign = 1 if offset > 0 else -1
+                # log10 of absolute value, capped at axis_length
+                scaled = int(math.log10(abs(offset)) * 1.5)  # 1.5x multiplier for better visibility
+                return sign * min(scaled, axis_length)
             
-            while True:
-                if 0 <= y0 < height and 0 <= x0 < width:
-                    if canvas[y0][x0] == ' ':
-                        canvas[y0][x0] = '·'  # Dotted line
-                if x0 == x1 and y0 == y1:
-                    break
-                e2 = 2 * err
-                if e2 > -dy_line:
-                    err -= dy_line
-                    x0 += sx
-                if e2 < dx_line:
-                    err += dx_line
-                    y0 += sy
+            target_dx = log_scale(dx)
+            target_dy = log_scale(dy)
+            target_dz = log_scale(dz)
             
-            # Draw target marker
-            if 0 <= ty_screen < height and 0 <= tx_screen < width:
-                canvas[ty_screen][tx_screen] = '○'
+            # Project target to screen coordinates
+            # X: horizontal movement, Y: vertical (inverted, up is -), Z: diagonal down-right
+            target_x = origin_x + target_dx + target_dz
+            target_y = origin_y - target_dy + target_dz
             
-            # Ensure origin is marked
-            if 0 <= oy_screen < height and 0 <= ox_screen < width:
-                canvas[oy_screen][ox_screen] = '●'
+            # Draw target marker if on screen
+            if 0 <= target_y < height and 0 <= target_x < width:
+                # Draw dotted line from origin to target (Bresenham)
+                x0, y0 = origin_x, origin_y
+                x1, y1 = target_x, target_y
+                dx_line = abs(x1 - x0)
+                dy_line = abs(y1 - y0)
+                sx = 1 if x0 < x1 else -1
+                sy = 1 if y0 < y1 else -1
+                err = dx_line - dy_line
+                
+                while True:
+                    if 0 <= y0 < height and 0 <= x0 < width:
+                        if canvas[y0][x0] == ' ':
+                            canvas[y0][x0] = '·'
+                    if x0 == x1 and y0 == y1:
+                        break
+                    e2 = 2 * err
+                    if e2 > -dy_line:
+                        err -= dy_line
+                        x0 += sx
+                    if e2 < dx_line:
+                        err += dx_line
+                        y0 += sy
+                
+                canvas[target_y][target_x] = '○'
             
             # Convert canvas to string
             lines = [''.join(row) for row in canvas]
