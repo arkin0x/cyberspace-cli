@@ -72,7 +72,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         }
         
         #viz-container {
-            height: 1fr;
+            height: 12;
             layout: horizontal;
         }
         
@@ -441,18 +441,21 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 self.value += event.key
                 self.query_one("#jump-value", Static).update(self.value or "0")
                 event.stop()
-            elif event.key == "-":
-                # Toggle sign
+                event.prevent_default()
+            elif event.key in ("hyphen", "minus", "_"):
+                # Toggle sign - supports multiple keyboard layouts
                 if self.value.startswith("-"):
                     self.value = self.value[1:]
                 else:
                     self.value = "-" + self.value
                 self.query_one("#jump-value", Static).update(self.value or "0")
                 event.stop()
+                event.prevent_default()
             elif event.key == "backspace":
                 self.value = self.value[:-1]
                 self.query_one("#jump-value", Static).update(self.value or "0")
                 event.stop()
+                event.prevent_default()
             # Don't stop enter/escape - let the action handlers deal with them
         
         def action_submit(self) -> None:
@@ -471,9 +474,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             if hasattr(self.app, 'modal_open'):
                 self.app.modal_open = False
             self.app.pop_screen()
-            # Force parent to refresh after modal closes
-            from textual import events
-            self.app.post_message(events.Resize(event_size=self.app.size))
+            # Parent app will refresh automatically via on_screen_resume
         
         def action_dismiss(self) -> None:
             # Stop the escape key from propagating - we're just dismissing, not resetting
