@@ -114,14 +114,16 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             yield Header(show_clock=False)
             with Container(id="main-container"):
                 yield Static(id="info-bar")
-                # Use a Static with markup for the two-column layout
-                yield Static(id="viz-row")
+                # Separate widgets for label column and data
+                yield Static(id="label-col")
+                yield Static(id="data-col")
                 yield Static(id="data-panel")
             yield Footer()
         
         def on_mount(self) -> None:
             self.info_bar = self.query_one("#info-bar", Static)
-            self.data_col = self.query_one("#viz-row", Static)
+            self.label_col = self.query_one("#label-col", Static)
+            self.data_col = self.query_one("#data-col", Static)
             self.data_panel = self.query_one("#data-panel", Static)
             self.recalculate_span()
             self.refresh_display()
@@ -160,7 +162,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.exit(return_code=0)
         
         def refresh_display(self) -> None:
-            if not all([self.info_bar, self.data_col, self.data_panel]):
+            if not all([self.info_bar, self.label_col, self.data_col, self.data_panel]):
                 return
             
             voff = (state.virtual_x if state.current_axis == 'x' else
@@ -177,31 +179,27 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 f"Offset: [yellow]{voff:+,}[/]"
             )
             
-            # Build label and data columns separately, render as markup table
-            # Using markup to position label column at start of each line
+            # Build label and data columns separately
             data_rows = self._build_data_rows(previews, voff)
             
-            # Labels - all exactly 10 chars
+            # Labels - all exactly 12 chars, right aligned
             label_list = [
                 "Difficulty",
-                " LCA (10s)",
-                " LCA  (1s)",
-                " △  (sign)",
-                " △ (1000s)",
-                " △  (100s)",
-                " △   (10s)",
-                " △    (1s)",
-                "  Target  ",  # Same width, centered
+                "  LCA (10s)",
+                "  LCA  (1s)",
+                "  △  (sign)",
+                "  △ (1000s)",
+                "  △  (100s)",
+                "  △   (10s)",
+                "  △    (1s)",
+                "   Target  ",
             ]
             
-            # Build combined output: label (right aligned) + │ separator + data
-            combined = []
-            for label, data in zip(label_list, data_rows):
-                # Ensure data is exactly 2*span+1 characters
-                formatted_data = data[:2*self.span+1].ljust(2*self.span+1)
-                combined.append(f"{label:>12} │ {formatted_data}")
+            # Render label column (plain text, right aligned)
+            self.label_col.update("\n".join(label_list))
             
-            self.data_col.update("\n".join(combined))
+            # Render data column with proper color segments
+            self.data_col.update("\n".join(data_rows))
             
             if previews:
                 # Find the virtual target preview (center of screen)
@@ -229,8 +227,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         def _build_data_rows(self, previews, virtual_offset):
             """Build data rows. ○ = virtual target (center), ● = actual position.
             
-            Data is plain text (no markup) to allow center column highlighting.
-            Difficulty blocks use color codes built into the string.
+            Difficulty row uses inline markup with balanced tags per character.
+            All other rows are plain text.
             """
             diff, lca10, lca01 = [], [], []
             sign, k, h, t, o, tgt = [], [], [], [], [], []
@@ -241,7 +239,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             virtual_idx = len(previews) // 2
             
             for i, p in enumerate(previews):
-                # Difficulty: colored block character with inline markup
+                # Difficulty: each block has its own balanced markup tag
                 color = terrain_color(p.terrain_k)
                 diff.append(f"[{color}]▨[/{color}]")
                 
