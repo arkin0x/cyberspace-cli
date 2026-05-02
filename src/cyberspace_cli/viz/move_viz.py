@@ -401,7 +401,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         
         def compose(self) -> ComposeResult:
             with Container(id="jump-container"):
-                yield Static("Enter offset:", id="jump-label")
+                yield Static("Enter relative offset:", id="jump-label")
                 yield Static("0", id="jump-value")
         
         def on_mount(self) -> None:
@@ -425,12 +425,13 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         def action_submit(self) -> None:
             try:
                 offset = int(self.value) if self.value else 0
+                # Offset is relative to current virtual position
                 if state.current_axis == 'x':
-                    state.virtual_x = offset
+                    state.virtual_x += offset
                 elif state.current_axis == 'y':
-                    state.virtual_y = offset
+                    state.virtual_y += offset
                 else:
-                    state.virtual_z = offset
+                    state.virtual_z += offset
             except ValueError:
                 pass
             # Signal parent that modal is closing
