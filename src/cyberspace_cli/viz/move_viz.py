@@ -429,12 +429,12 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         def _render_isometric_offset(self, dx: int, dy: int, dz: int) -> str:
             """Render a compact isometric view of the 3D offset.
             
-            Cyberspace coordinate system:
-            - X axis: X+ is right, X- is left
-            - Y axis: Y+ is up, Y- is down  
-            - Z axis: Z+ is away (into screen), Z- is toward viewer
+            Isometric projection:
+            - X axis: horizontal (X+ right, X- left)
+            - Y axis: vertical (Y+ up, Y- down)
+            - Z axis: diagonal (Z+ away/into screen, Z- toward viewer)
             
-            Shows origin (●) and target (○) with axis guides.
+            Shows origin (●) and target (○) with connecting lines.
             """
             # Scale factors to fit in ~25 char width
             scale = 1  # 1 char per unit, clamp to reasonable size
@@ -445,29 +445,20 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             dy_clamped = max(-max_dim, min(max_dim, dy))
             dz_clamped = max(-max_dim, min(max_dim, dz))
             
-            # Isometric projection with correct Cyberspace axes:
-            # X (left/right) -> horizontal screen movement
-            # Y (up/down) -> vertical screen movement
-            # Z (depth) -> diagonal movement (into/out of screen)
+            # Isometric projection formulas
+            # screen_x = x + z (X horizontal, Z adds diagonal depth)
+            # screen_y = z - y (Z and inverted Y for vertical, Y+ = up in world)
             def project(x, y, z):
-                """Convert 3D coords to 2D screen position.
-                
-                Isometric view: looking from corner, so:
-                - X moves horizontally (positive = right)
-                - Y moves vertically (positive = up, so negative screen Y)
-                - Z moves diagonally (positive = into screen = down-right)
-                """
-                # Screen X: X axis + Z axis contribution (Z+ goes right into screen)
+                """Convert 3D coords to 2D screen position."""
                 sx = x + z
-                # Screen Y: Y axis + Z axis contribution (both Y+ and Z+ go down on screen)
-                sy = z - y  # Y+ is up in world, so negative on screen
+                sy = z - y
                 return sx, sy
             
             # Calculate origin and target positions
             ox, oy = project(0, 0, 0)
             tx, ty = project(dx_clamped, dy_clamped, dz_clamped)
             
-            # Determine canvas size
+            # Determine canvas size based on extent
             min_x = min(ox, tx) - 2
             max_x = max(ox, tx) + 2
             min_y = min(oy, ty) - 2
@@ -479,12 +470,18 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             # Initialize canvas with spaces
             canvas = [[' ' for _ in range(width)] for _ in range(height)]
             
+            # Calculate center offset to position origin in middle of canvas
+            # Origin projects to (0, 0), so we offset by half the extent in each direction
+            center_offset_x = max_dim + 2  # Center origin horizontally
+            center_offset_y = max_dim + 1  # Center origin vertically
+            
             # Draw axis lines from origin
             # X axis (positive = right, negative = left)
             for i in range(abs(dx_clamped) + 1):
                 sign = 1 if dx_clamped >= 0 else -1
                 px, py = project(i * sign, 0, 0)
-                cx, cy = px - min_x, py - min_y
+                cx = px + center_offset_x
+                cy = py + center_offset_y
                 if 0 <= cy < height and 0 <= cx < width:
                     canvas[cy][cx] = '─' if i > 0 else '●'
             
@@ -492,23 +489,27 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             for i in range(abs(dy_clamped) + 1):
                 sign = 1 if dy_clamped >= 0 else -1
                 px, py = project(0, i * sign, 0)
-                cx, cy = px - min_x, py - min_y
+                cx = px + center_offset_x
+                cy = py + center_offset_y
                 if 0 <= cy < height and 0 <= cx < width:
                     if canvas[cy][cx] == ' ':
                         canvas[cy][cx] = '│'
             
-            # Z axis (positive = away/into screen, negative = toward viewer)
+            # Z axis (positive = away/diagonal, negative = toward)
             for i in range(abs(dz_clamped) + 1):
                 sign = 1 if dz_clamped >= 0 else -1
                 px, py = project(0, 0, i * sign)
-                cx, cy = px - min_x, py - min_y
+                cx = px + center_offset_x
+                cy = py + center_offset_y
                 if 0 <= cy < height and 0 <= cx < width:
                     if canvas[cy][cx] == ' ':
-                        canvas[cy][cx] = '╌'  # Dashed for depth axis
+                        canvas[cy][cx] = '╌'
             
             # Draw line from origin to target
-            ox_screen, oy_screen = ox - min_x, oy - min_y
-            tx_screen, ty_screen = tx - min_x, ty - min_y
+            ox_screen = ox + center_offset_x
+            oy_screen = oy + center_offset_y
+            tx_screen = tx + center_offset_x
+            ty_screen = ty + center_offset_y
             
             # Bresenham line algorithm for connecting line
             x0, y0 = ox_screen, oy_screen
