@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Optional, List
 import typer
 import os
+import sys
 
 TERRAIN_COLORS = [
     "#0000ff", "#0044ff", "#0088ff", "#00ccff", "#00ffff",
@@ -55,16 +56,21 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         CSS = """
         Screen { background: #000000; }
         
-        #main-container { height: 100%; }
-        #info-bar { height: 3; background: #1a1a2e; padding: 0 1; }
+        #main-container { 
+            height: 100%;
+            layout: grid;
+            grid-size: 2;
+            grid-columns: 13 1fr;
+        }
         
-        #viz-row {
-            height: 1fr;
-            background: #000000;
+        #info-bar { 
+            height: 3; 
+            background: #1a1a2e; 
+            padding: 0 1;
+            column-span: 2;
         }
         
         #label-col {
-            width: 13;
             height: 100%;
             padding: 0 1;
             color: #666666;
@@ -80,6 +86,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             height: 4;
             background: #1a1a2e;
             padding: 0 1;
+            column-span: 2;
         }
         """
         
