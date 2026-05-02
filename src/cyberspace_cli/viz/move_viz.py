@@ -97,31 +97,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         }
         
         #summary-panel {
-            height: 3;
+            height: 8;
             background: #0d0d1a;
             padding: 0 1;
             border: solid #444466;
-        }
-        
-        #bottom-row {
-            height: 1fr;
-            layout: horizontal;
-        }
-        
-        #iso-panel {
-            width: 50%;
-            height: 100%;
-            background: #000000;
-            padding: 0 1;
-            border: solid #333344;
-        }
-        
-        #info-panel {
-            width: 50%;
-            height: 100%;
-            background: #0a0a15;
-            padding: 0 1;
-            border: solid #333344;
         }
         """
         
@@ -152,8 +131,6 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.data_col = None
             self.data_panel = None
             self.summary_panel = None
-            self.iso_panel = None
-            self.info_panel = None
             self.span = 30
             self.modal_open = False
         
@@ -166,9 +143,6 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                     yield Static(id="data-col")
                 yield Static(id="data-panel")
                 yield Static(id="summary-panel")
-                with Container(id="bottom-row"):
-                    yield Static(id="iso-panel")
-                    yield Static(id="info-panel")
             yield Footer()
         
         def on_mount(self) -> None:
@@ -177,8 +151,6 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.data_col = self.query_one("#data-col", Static)
             self.data_panel = self.query_one("#data-panel", Static)
             self.summary_panel = self.query_one("#summary-panel", Static)
-            self.iso_panel = self.query_one("#iso-panel", Static)
-            self.info_panel = self.query_one("#info-panel", Static)
             self.recalculate_span()
             self.refresh_display()
         
@@ -245,7 +217,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.exit(return_code=0)
         
         def refresh_display(self) -> None:
-            if not all([self.info_bar, self.label_col, self.data_col, self.data_panel, self.summary_panel, self.iso_panel, self.info_panel]):
+            if not all([self.info_bar, self.label_col, self.data_col, self.data_panel, self.summary_panel]):
                 return
             
             voff = (state.virtual_x if state.current_axis == 'x' else
@@ -333,17 +305,15 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                     f"Est: {ts}"
                 )
             
-            # Update summary panel with cumulative virtual movement
-            self.summary_panel.update(
-                f"X: [green]{state.virtual_x:+,}[/]  |  "
-                f"Y: [blue]{state.virtual_y:+,}[/]  |  "
-                f"Z: [red]{state.virtual_z:+,}[/]"
-            )
-            
-            # Update isometric visualization panel separately
+            # Update summary panel with cumulative virtual movement and isometric visualization
+            # Isometric projection: X goes right-down, Y goes left-down, Z goes vertical
             iso_viz = self._render_isometric_offset(state.virtual_x, state.virtual_y, state.virtual_z)
-            if self.iso_panel:
-                self.iso_panel.update(iso_viz)
+            self.summary_panel.update(
+                f"{iso_viz}\n"
+                f"X: [cyan]{state.virtual_x:+,}[/]  |  "
+                f"Y: [cyan]{state.virtual_y:+,}[/]  |  "
+                f"Z: [cyan]{state.virtual_z:+,}[/]"
+            )
         
         def _build_data_rows(self, previews, virtual_offset):
             """Build data rows. O = virtual target (center), X = actual position.
@@ -426,100 +396,113 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 "".join(terrain_row),
             ]
     
-        def _render_isometric_offset(self, dx: int, dy: int, dz: int) -> str:
-            """Render a compact isometric view of the 3D offset.
-            
-            Fixed canvas with centered origin. Axes always visible.
-            Target position is log-scaled so large offsets stay on screen.
-            """
-            # Fixed canvas size - tall enough for Z axis diagonal
-            width = 25
-            height = 9
-            
-            # Initialize canvas with spaces
-            canvas = [[' ' for _ in range(width)] for _ in range(height)]
-            
-            # Origin is centered horizontally, positioned in lower third (to show Y+ up and Z+ diagonal)
-            origin_x = width // 2
-            origin_y = height - 3  # Position origin near bottom to give room above for Y+ and below for Z+
-            axis_length = 8
-            
-            # Draw axes from origin (fixed length for visibility)
-            # Draw axes FIRST so markers overwrite them
-            # X axis: horizontal line
-            for i in range(1, axis_length + 1):
-                if 0 <= origin_x + i < width:
-                    canvas[origin_y][origin_x + i] = '─'  # X+ right
-                if 0 <= origin_x - i < width:
-                    canvas[origin_y][origin_x - i] = '─'  # X- left
-            
-            # Y axis: vertical line
-            for i in range(1, axis_length + 1):
-                if 0 <= origin_y - i < height:
-                    canvas[origin_y - i][origin_x] = '│'  # Y+ up
-                if 0 <= origin_y + i < height:
-                    canvas[origin_y + i][origin_x] = '│'  # Y- down
-            
-            # Z axis: diagonal (down-right = away, up-left = toward)
-            for i in range(1, axis_length + 1):
-                if 0 <= origin_y + i < height and 0 <= origin_x + i < width:
-                    canvas[origin_y + i][origin_x + i] = '╌'  # Z+ away
-                if 0 <= origin_y - i < height and 0 <= origin_x - i < width:
-                    canvas[origin_y - i][origin_x - i] = '╌'  # Z- toward
-            
-            # Mark origin LAST so it's visible
-            canvas[origin_y][origin_x] = '●'
-            
-            # Calculate target position using log scale
-            # log10(|offset|) gives us ~1 char per order of magnitude
-            def log_scale(offset):
-                if offset == 0:
-                    return 0
-                import math
-                sign = 1 if offset > 0 else -1
-                # log10 of absolute value, capped at axis_length
-                scaled = int(math.log10(abs(offset)) * 1.5)  # 1.5x multiplier for better visibility
-                return sign * min(scaled, axis_length)
-            
-            target_dx = log_scale(dx)
-            target_dy = log_scale(dy)
-            target_dz = log_scale(dz)
-            
-            # Project target to screen coordinates
-            # X: horizontal movement, Y: vertical (inverted, up is -), Z: diagonal down-right
-            target_x = origin_x + target_dx + target_dz
-            target_y = origin_y - target_dy + target_dz
-            
-            # Draw target marker if on screen
-            if 0 <= target_y < height and 0 <= target_x < width:
-                # Draw dotted line from origin to target (Bresenham)
-                x0, y0 = origin_x, origin_y
-                x1, y1 = target_x, target_y
-                dx_line = abs(x1 - x0)
-                dy_line = abs(y1 - y0)
-                sx = 1 if x0 < x1 else -1
-                sy = 1 if y0 < y1 else -1
-                err = dx_line - dy_line
-                
-                while True:
-                    if 0 <= y0 < height and 0 <= x0 < width:
-                        if canvas[y0][x0] == ' ':
-                            canvas[y0][x0] = '·'
-                    if x0 == x1 and y0 == y1:
-                        break
-                    e2 = 2 * err
-                    if e2 > -dy_line:
-                        err -= dy_line
-                        x0 += sx
-                    if e2 < dx_line:
-                        err += dx_line
-                        y0 += sy
-                
-                canvas[target_y][target_x] = '○'
-            
-            # Convert canvas to string
-            lines = [''.join(row) for row in canvas]
-            return '\n'.join(lines)
+    def _render_isometric_offset(self, dx: int, dy: int, dz: int) -> str:
+        """Render a compact isometric view of the 3D offset.
+        
+        Isometric projection:
+        - X axis: goes right-down (╲ direction)
+        - Y axis: goes left-down (╱ direction)  
+        - Z axis: goes straight up (│)
+        
+        Shows origin (●) and target (○) with connecting lines.
+        """
+        # Scale factors to fit in ~25 char width
+        scale = 1  # 1 char per unit, clamp to reasonable size
+        max_dim = 12  # Maximum extent in each direction
+        
+        # Clamp values for display
+        dx_clamped = max(-max_dim, min(max_dim, dx))
+        dy_clamped = max(-max_dim, min(max_dim, dy))
+        dz_clamped = max(-max_dim, min(max_dim, dz))
+        
+        # Isometric projection formulas (adjusted for monospace aspect ratio)
+        def project(x, y, z):
+            """Convert 3D coords to 2D screen position."""
+            sx = (x - y)
+            sy = (x + y) // 2 - z
+            return sx, sy
+        
+        # Calculate origin and target positions
+        ox, oy = project(0, 0, 0)
+        tx, ty = project(dx_clamped, dy_clamped, dz_clamped)
+        
+        # Determine canvas size
+        min_x = min(ox, tx) - 2
+        max_x = max(ox, tx) + 2
+        min_y = min(oy, ty) - 2
+        max_y = max(oy, ty) + 2
+        
+        width = max_x - min_x + 1
+        height = max_y - min_y + 1
+        
+        # Initialize canvas with spaces
+        canvas = [[' ' for _ in range(width)] for _ in range(height)]
+        
+        # Draw axis lines from origin
+        # X axis (positive = right-down, negative = left-up)
+        for i in range(abs(dx_clamped) + 1):
+            sign = 1 if dx_clamped >= 0 else -1
+            px, py = project(i * sign, 0, 0)
+            cx, cy = px - min_x, py - min_y
+            if 0 <= cy < height and 0 <= cx < width:
+                canvas[cy][cx] = '╌' if i > 0 else '●'
+        
+        # Y axis (positive = left-down, negative = right-up)
+        for i in range(abs(dy_clamped) + 1):
+            sign = 1 if dy_clamped >= 0 else -1
+            px, py = project(0, i * sign, 0)
+            cx, cy = px - min_x, py - min_y
+            if 0 <= cy < height and 0 <= cx < width:
+                if canvas[cy][cx] == ' ':
+                    canvas[cy][cx] = '╌'
+        
+        # Z axis (positive = up, negative = down)
+        for i in range(abs(dz_clamped) + 1):
+            sign = 1 if dz_clamped >= 0 else -1
+            px, py = project(0, 0, i * sign)
+            cx, cy = px - min_x, py - min_y
+            if 0 <= cy < height and 0 <= cx < width:
+                if canvas[cy][cx] == ' ':
+                    canvas[cy][cx] = '┊'
+        
+        # Draw line from origin to target
+        ox_screen, oy_screen = ox - min_x, oy - min_y
+        tx_screen, ty_screen = tx - min_x, ty - min_y
+        
+        # Bresenham line algorithm for connecting line
+        x0, y0 = ox_screen, oy_screen
+        x1, y1 = tx_screen, ty_screen
+        dx_line = abs(x1 - x0)
+        dy_line = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        err = dx_line - dy_line
+        
+        while True:
+            if 0 <= y0 < height and 0 <= x0 < width:
+                if canvas[y0][x0] == ' ':
+                    canvas[y0][x0] = '·'  # Dotted line
+            if x0 == x1 and y0 == y1:
+                break
+            e2 = 2 * err
+            if e2 > -dy_line:
+                err -= dy_line
+                x0 += sx
+            if e2 < dx_line:
+                err += dx_line
+                y0 += sy
+        
+        # Draw target marker
+        if 0 <= ty_screen < height and 0 <= tx_screen < width:
+            canvas[ty_screen][tx_screen] = '○'
+        
+        # Ensure origin is marked
+        if 0 <= oy_screen < height and 0 <= ox_screen < width:
+            canvas[oy_screen][ox_screen] = '●'
+        
+        # Convert canvas to string
+        lines = [''.join(row) for row in canvas]
+        return '\n'.join(lines)
     
     class JumpInput(Screen):
         """Screen for entering jump offset."""
