@@ -283,7 +283,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             LCA 10s row shows space when digit is 0.
             On Z axis, adds black sun (☣) marker at far right of Target row.
             """
-            lca10, lca01 = [], [], []
+            lca10, lca01 = [], []
             sign, k, h, t, o, tgt = [], [], [], [], [], []
             terrain_row = []
             
