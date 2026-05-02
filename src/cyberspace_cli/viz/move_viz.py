@@ -54,40 +54,43 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     
     class MoveVizApp(App):
         CSS = """
-        Screen { background: #000000; }
+        Screen { 
+            background: #000000;
+        }
         
-        #main-container { 
+        #main-container {
             height: 100%;
-            layout: grid;
-            grid-size: 2;
-            grid-columns: 13 1fr;
+            layout: vertical;
         }
         
         #info-bar { 
             height: 3; 
             background: #1a1a2e; 
             padding: 0 1;
-            column-span: 2;
+        }
+        
+        #viz-container {
+            height: 1fr;
+            layout: horizontal;
         }
         
         #label-col {
+            width: 13;
             height: 100%;
-            padding: 0 1;
             color: #666666;
             text-align: right;
+            background: #000000;
         }
         
         #data-col {
             height: 100%;
             background: #000000;
-            content-align: left top;
         }
         
         #data-panel {
             height: 4;
             background: #1a1a2e;
             padding: 0 1;
-            column-span: 2;
         }
         """
         
@@ -122,9 +125,9 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             yield Header(show_clock=False)
             with Container(id="main-container"):
                 yield Static(id="info-bar")
-                # Separate widgets for label column and data
-                yield Static(id="label-col")
-                yield Static(id="data-col")
+                with Container(id="viz-container"):
+                    yield Static(id="label-col")
+                    yield Static(id="data-col")
                 yield Static(id="data-panel")
             yield Footer()
         
@@ -209,7 +212,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             # Render data column - difficulty row has markup, others are plain
             # Static widgets have markup=True by default
             data_content = "\n".join(data_rows)
-            print(f"DEBUG: data_content length={len(data_content)}, first row len={len(data_rows[0]) if data_rows else 0}", file=sys.stderr)
+            print(f"DEBUG: {len(data_rows)} rows, lengths={[len(r) for r in data_rows]}", file=sys.stderr)
             print(f"DEBUG: span={self.span}, previews count={len(previews) if previews else 0}", file=sys.stderr)
             self.data_col.update(data_content)
             
