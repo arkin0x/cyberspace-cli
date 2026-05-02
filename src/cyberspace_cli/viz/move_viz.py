@@ -365,6 +365,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     class JumpInput(Screen):
         """Screen for entering jump offset."""
         
+        # Screen has its own Enter/Escape bindings - don't inherit parent's
         BINDINGS = [
             Binding("enter", "submit", "Submit offset"),
             Binding("escape", "dismiss", "Cancel"),
@@ -403,7 +404,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.focus()  # Ensure screen has focus to capture key events
         
         def on_key(self, event: events.Key) -> None:
-            # Only handle numeric input and backspace - let bindings handle Enter/Escape
+            # Only handle numeric input and backspace here
+            # Enter/Escape are handled by BINDINGS actions
             if event.key.isdigit() or event.key in ('-', '+'):
                 self.value += event.key
                 self.query_one("#jump-value", Static).update(self.value or "0")
@@ -412,7 +414,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 self.value = self.value[:-1]
                 self.query_one("#jump-value", Static).update(self.value or "0")
                 event.stop()
-            # Don't handle enter/escape here - let the bindings do it
+            # Don't stop enter/escape - let the action handlers deal with them
         
         def action_submit(self) -> None:
             try:
@@ -431,6 +433,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.app.pop_screen()
         
         def action_dismiss(self) -> None:
+            # Stop the escape key from propagating - we're just dismissing, not resetting
             # Signal parent that modal is closing
             if hasattr(self.app, 'modal_open'):
                 self.app.modal_open = False
