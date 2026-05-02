@@ -333,9 +333,16 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 k_display = str(p.terrain_k) if p.terrain_k < 10 else str(p.terrain_k)[-1]
                 terrain_row.append(f"[{color}]{k_display}[/{color}]")
             
-            # Add black sun (☣) marker at far right for Z+ axis
+            # On Z axis, append black sun marker after the target row
+            # This adds one extra character at the far right end
             if is_z_axis:
-                tgt.append("[purple]☣[/]")
+                # The target row already has all coordinates; black sun goes at the end
+                # We'll handle this separately - append to final joined string
+                pass
+            
+            target_str = "".join(tgt)
+            if is_z_axis:
+                target_str += "[purple]☣[/]"
             
             return [
                 "".join(lca10),
@@ -345,7 +352,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 "".join(h),
                 "".join(t),
                 "".join(o),
-                "".join(tgt),
+                target_str,
                 "".join(terrain_row),
             ]
     
