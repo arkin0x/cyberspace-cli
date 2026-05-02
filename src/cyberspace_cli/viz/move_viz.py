@@ -306,13 +306,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 else:
                     tgt.append(" ")
                 
-                # Terrain K: use ᚐ (rune perthro) repeated K times
-                # Each position shows ᚐ repeated terrain_k times for visual "number line" effect
-                k_symbol = "ᚐ" * p.terrain_k
-                # Pad to consistent width if needed, or just show the symbols
-                # For compact display, show single ᚐ with the number as tooltip
-                # Actually, just show the number for now - the ᚐ is decorative
-                terrain_row.append("ᚐ" if p.terrain_k > 0 else " ")
+                # Terrain K: show the numeric value
+                # Using ᚐ as a decorative prefix would be too wide
+                # Just show the K value (0-16) as a digit or two
+                terrain_row.append(f"{p.terrain_k:2d}"[-1])  # Show only ones digit
             
             return [
                 "".join(lca10),
