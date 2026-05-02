@@ -367,9 +367,11 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             if event.key.isdigit() or event.key in ('-', '+'):
                 self.value += event.key
                 self.query_one("#jump-value", Static).update(self.value or "0")
+                event.stop()  # Stop bubbling after handling
             elif event.key == "backspace":
                 self.value = self.value[:-1]
                 self.query_one("#jump-value", Static).update(self.value or "0")
+                event.stop()
             elif event.key == "enter":
                 self.action_submit()
             elif event.key == "escape":
