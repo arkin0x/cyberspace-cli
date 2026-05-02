@@ -364,6 +364,11 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     class JumpInput(Screen):
         """Screen for entering jump offset."""
         
+        BINDINGS = [
+            Binding("enter", "submit", "Submit offset"),
+            Binding("escape", "dismiss", "Cancel"),
+        ]
+        
         CSS = """
         JumpInput {
             align: center middle;
