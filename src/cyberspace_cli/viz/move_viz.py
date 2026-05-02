@@ -97,7 +97,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         }
         
         #summary-panel {
-            height: 8;
+            height: 3;
             background: #0d0d1a;
             padding: 0 1;
             border: solid #444466;
@@ -305,11 +305,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                     f"Est: {ts}"
                 )
             
-            # Update summary panel with cumulative virtual movement and isometric visualization
-            # Isometric projection: X goes right-down, Y goes left-down, Z goes vertical
-            iso_viz = self._render_isometric_offset(state.virtual_x, state.virtual_y, state.virtual_z)
+            # Update summary panel with cumulative virtual movement
             self.summary_panel.update(
-                f"{iso_viz}\n"
                 f"X: [cyan]{state.virtual_x:+,}[/]  |  "
                 f"Y: [cyan]{state.virtual_y:+,}[/]  |  "
                 f"Z: [cyan]{state.virtual_z:+,}[/]"
@@ -395,114 +392,6 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 target_str,
                 "".join(terrain_row),
             ]
-    
-    def _render_isometric_offset(self, dx: int, dy: int, dz: int) -> str:
-        """Render a compact isometric view of the 3D offset.
-        
-        Isometric projection:
-        - X axis: goes right-down (╲ direction)
-        - Y axis: goes left-down (╱ direction)  
-        - Z axis: goes straight up (│)
-        
-        Shows origin (●) and target (○) with connecting lines.
-        """
-        # Scale factors to fit in ~25 char width
-        scale = 1  # 1 char per unit, clamp to reasonable size
-        max_dim = 12  # Maximum extent in each direction
-        
-        # Clamp values for display
-        dx_clamped = max(-max_dim, min(max_dim, dx))
-        dy_clamped = max(-max_dim, min(max_dim, dy))
-        dz_clamped = max(-max_dim, min(max_dim, dz))
-        
-        # Isometric projection formulas (adjusted for monospace aspect ratio)
-        def project(x, y, z):
-            """Convert 3D coords to 2D screen position."""
-            sx = (x - y)
-            sy = (x + y) // 2 - z
-            return sx, sy
-        
-        # Calculate origin and target positions
-        ox, oy = project(0, 0, 0)
-        tx, ty = project(dx_clamped, dy_clamped, dz_clamped)
-        
-        # Determine canvas size
-        min_x = min(ox, tx) - 2
-        max_x = max(ox, tx) + 2
-        min_y = min(oy, ty) - 2
-        max_y = max(oy, ty) + 2
-        
-        width = max_x - min_x + 1
-        height = max_y - min_y + 1
-        
-        # Initialize canvas with spaces
-        canvas = [[' ' for _ in range(width)] for _ in range(height)]
-        
-        # Draw axis lines from origin
-        # X axis (positive = right-down, negative = left-up)
-        for i in range(abs(dx_clamped) + 1):
-            sign = 1 if dx_clamped >= 0 else -1
-            px, py = project(i * sign, 0, 0)
-            cx, cy = px - min_x, py - min_y
-            if 0 <= cy < height and 0 <= cx < width:
-                canvas[cy][cx] = '╌' if i > 0 else '●'
-        
-        # Y axis (positive = left-down, negative = right-up)
-        for i in range(abs(dy_clamped) + 1):
-            sign = 1 if dy_clamped >= 0 else -1
-            px, py = project(0, i * sign, 0)
-            cx, cy = px - min_x, py - min_y
-            if 0 <= cy < height and 0 <= cx < width:
-                if canvas[cy][cx] == ' ':
-                    canvas[cy][cx] = '╌'
-        
-        # Z axis (positive = up, negative = down)
-        for i in range(abs(dz_clamped) + 1):
-            sign = 1 if dz_clamped >= 0 else -1
-            px, py = project(0, 0, i * sign)
-            cx, cy = px - min_x, py - min_y
-            if 0 <= cy < height and 0 <= cx < width:
-                if canvas[cy][cx] == ' ':
-                    canvas[cy][cx] = '┊'
-        
-        # Draw line from origin to target
-        ox_screen, oy_screen = ox - min_x, oy - min_y
-        tx_screen, ty_screen = tx - min_x, ty - min_y
-        
-        # Bresenham line algorithm for connecting line
-        x0, y0 = ox_screen, oy_screen
-        x1, y1 = tx_screen, ty_screen
-        dx_line = abs(x1 - x0)
-        dy_line = abs(y1 - y0)
-        sx = 1 if x0 < x1 else -1
-        sy = 1 if y0 < y1 else -1
-        err = dx_line - dy_line
-        
-        while True:
-            if 0 <= y0 < height and 0 <= x0 < width:
-                if canvas[y0][x0] == ' ':
-                    canvas[y0][x0] = '·'  # Dotted line
-            if x0 == x1 and y0 == y1:
-                break
-            e2 = 2 * err
-            if e2 > -dy_line:
-                err -= dy_line
-                x0 += sx
-            if e2 < dx_line:
-                err += dx_line
-                y0 += sy
-        
-        # Draw target marker
-        if 0 <= ty_screen < height and 0 <= tx_screen < width:
-            canvas[ty_screen][tx_screen] = '○'
-        
-        # Ensure origin is marked
-        if 0 <= oy_screen < height and 0 <= ox_screen < width:
-            canvas[oy_screen][ox_screen] = '●'
-        
-        # Convert canvas to string
-        lines = [''.join(row) for row in canvas]
-        return '\n'.join(lines)
     
     class JumpInput(Screen):
         """Screen for entering jump offset."""
