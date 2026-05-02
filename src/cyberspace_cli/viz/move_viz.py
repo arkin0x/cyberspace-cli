@@ -241,13 +241,13 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             
             # Labels - all exactly 12 chars, right aligned
             label_list = [
-                "  LCA (10s)",
-                "  LCA  (1s)",
                 "  △  (sign)",
                 "  △ (1000s)",
                 "  △  (100s)",
                 "  △   (10s)",
                 "  △    (1s)",
+                "  LCA (10s)",
+                "  LCA  (1s)",
                 "   Target  ",
                 " Terrain K ",
             ]
@@ -255,8 +255,19 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             # Render label column (plain text, right aligned)
             self.label_col.update("\n".join(label_list))
             
-            # Render data column
-            data_content = "\n".join(data_rows)
+            # Render data column - reorder rows to match new label order
+            # Delta rows first, then LCA rows, then Target, then Terrain K
+            data_content = "\n".join([
+                data_rows[2],  # △ (sign)
+                data_rows[3],  # △ (1000s)
+                data_rows[4],  # △ (100s)
+                data_rows[5],  # △ (10s)
+                data_rows[6],  # △ (1s)
+                data_rows[0],  # LCA (10s)
+                data_rows[1],  # LCA (1s)
+                data_rows[7],  # Target
+                data_rows[8],  # Terrain K
+            ])
             self.data_col.update(data_content)
             
             if previews:
