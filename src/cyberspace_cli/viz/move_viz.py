@@ -198,8 +198,12 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             # Render label column (plain text, right aligned)
             self.label_col.update("\n".join(label_list))
             
-            # Render data column with proper color segments
-            self.data_col.update("\n".join(data_rows))
+            # Render data column - difficulty row has markup, others are plain
+            # Static widgets have markup=True by default
+            data_content = "\n".join(data_rows)
+            print(f"DEBUG: data_content length={len(data_content)}, first row len={len(data_rows[0]) if data_rows else 0}", file=sys.stderr)
+            print(f"DEBUG: span={self.span}, previews count={len(previews) if previews else 0}", file=sys.stderr)
+            self.data_col.update(data_content)
             
             if previews:
                 # Find the virtual target preview (center of screen)
