@@ -50,6 +50,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         current_axis: str = 'x'
         committed: bool = False
         escape_pressed: bool = False
+        plane: int = 0
     
     state = VizState()
     
@@ -214,7 +215,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             axis_name, center_val, previews = preview_movement(
                 current_x, current_y, current_z,
                 state.virtual_x, state.virtual_y, state.virtual_z,
-                state.current_axis, self.span, plane,
+                state.current_axis, self.span, state.plane,
             )
             
             # Show reset warning if escape was pressed
@@ -279,9 +280,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             """Build data rows. O = virtual target (center), X = actual position.
             
             Terrain K row uses numeric values with colors. All other rows are plain text.
-            LCA 10s row shows empty string when digit is 0.
+            LCA 10s row shows space when digit is 0.
+            On Z axis, adds black sun (☣) marker at far right of Target row.
             """
-            lca10, lca01 = [], []
+            lca10, lca01 = [], [], []
             sign, k, h, t, o, tgt = [], [], [], [], [], []
             terrain_row = []
             
@@ -291,6 +293,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             virtual_idx = len(previews) // 2
             # Center column index for highlighting
             center_idx = len(previews) // 2
+            # Is Z axis? (for black sun marker)
+            is_z_axis = (state.current_axis == 'z')
             
             for i, p in enumerate(previews):
                 is_center = (i == center_idx)
@@ -328,6 +332,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 color = terrain_color(p.terrain_k)
                 k_display = str(p.terrain_k) if p.terrain_k < 10 else str(p.terrain_k)[-1]
                 terrain_row.append(f"[{color}]{k_display}[/{color}]")
+            
+            # Add black sun (☣) marker at far right for Z+ axis
+            if is_z_axis:
+                tgt.append("[purple]☣[/]")
             
             return [
                 "".join(lca10),
