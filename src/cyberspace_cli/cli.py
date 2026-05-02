@@ -2126,6 +2126,7 @@ def hyperjump_nearest(
 
 @move_app.callback()
 def move(
+    ctx: typer.Context,
     to: str = typer.Option(
         None,
         "--to",
@@ -2179,6 +2180,10 @@ def move(
     ),
 ) -> None:
     """Move locally by appending a hop, sidestep, or hyperjump event to the active chain."""
+    # If a subcommand is being invoked (like 'viz'), skip the callback
+    if ctx.invoked_subcommand is not None:
+        return
+    
     if isinstance(hyperjump, OptionInfo):
         hyperjump = False
     if isinstance(hyperjump_relay, OptionInfo):
