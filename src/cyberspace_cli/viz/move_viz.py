@@ -155,6 +155,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         
         def action_switch_axis(self, axis: str) -> None:
             state.current_axis = axis
+            state.escape_pressed = False  # Clear escape flag on axis switch
             self.refresh_display()
         
         def action_move_virtual(self, delta: int) -> None:
@@ -164,10 +165,14 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 state.virtual_y += delta
             else:
                 state.virtual_z += delta
+            # Any movement clears the escape flag - must press ESC twice in a row to exit
+            state.escape_pressed = False
             self.refresh_display()
         
         def action_jump_offset(self) -> None:
             """Open input screen to type offset."""
+            # Clear escape flag on any new input action
+            state.escape_pressed = False
             self.push_screen(JumpInput())
         
         def action_reset_to_origin(self) -> None:
