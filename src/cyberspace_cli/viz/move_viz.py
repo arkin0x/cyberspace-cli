@@ -218,7 +218,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             )
             
             # Show reset warning if escape was pressed
-            reset_status = "[red]Press ESC again to cancel[/]" if state.escape_pressed else "Ready"
+            reset_status = "[red]Press ESC again to EXIT[/]" if state.escape_pressed else "Ready"
             self.info_bar.update(
                 f"[bold]{axis_name}[/] | Pos: [cyan]{center_val:,}[/] | "
                 f"Offset: [yellow]{voff:+,}[/] | {reset_status}"
