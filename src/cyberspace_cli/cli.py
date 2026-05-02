@@ -68,6 +68,7 @@ config_app = typer.Typer(no_args_is_help=True)
 target_app = typer.Typer(no_args_is_help=True)
 hyperjump_app = typer.Typer(no_args_is_help=True)
 geoid_app = typer.Typer(no_args_is_help=True)
+move_app = typer.Typer(no_args_is_help=True, invoke_without_command=True)
 app.add_typer(chain_app, name="chain", help="Manage local movement chains.")
 app.add_typer(config_app, name="config", help="Show/set persisted CLI defaults.")
 app.add_typer(target_app, name="target", help="Manage saved movement targets.")
@@ -77,6 +78,7 @@ app.add_typer(
     name="hyperjump",
     help="Inspect hyperjumps from anywhere (show/nearest); creating hyperjump actions (to/next/prev) requires being on the hyperjump system.",
 )
+app.add_typer(move_app, name="move", help="Movement commands including interactive visualization.")
 
 
 def _plane_label(plane: int) -> str:
@@ -2122,8 +2124,9 @@ def hyperjump_nearest(
     _print_ranked_hyperjumps(ranked, cur_coord_hex, cx, cy, cz, cplane, search_radius=effective_radius)
 
 
-@app.command()
+@move_app.callback()
 def move(
+    ctx: typer.Context,
     to: str = typer.Option(
         None,
         "--to",
@@ -2177,6 +2180,10 @@ def move(
     ),
 ) -> None:
     """Move locally by appending a hop, sidestep, or hyperjump event to the active chain."""
+    # If a subcommand is being invoked (like 'viz'), skip the callback
+    if ctx.invoked_subcommand is not None:
+        return
+    
     if isinstance(hyperjump, OptionInfo):
         hyperjump = False
     if isinstance(hyperjump_relay, OptionInfo):
@@ -2714,6 +2721,18 @@ def chain_status() -> None:
     if cur != last:
         typer.echo("warning: state coord != last chain coord", err=True)
     typer.echo(f"delta_xyz: dx={dx} dy={dy} dz={dz} (plane={cplane} {_plane_label(cplane)})")
+
+
+@move_app.command("viz")
+def move_viz() -> None:
+    """Launch interactive terminal visualization for movement planning.
+    
+    Opens a TUI showing your current position on a selected axis with
+    adjacent coordinates, their LCA heights, and terrain difficulty.
+    Use arrow keys or a/d to explore, Enter to commit movement.
+    """
+    from cyberspace_cli.viz.move_viz import move_viz_command
+    move_viz_command()
 
 
 if __name__ == "__main__":

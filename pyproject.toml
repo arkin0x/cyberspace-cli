@@ -23,6 +23,10 @@ visualizer = [
   "matplotlib>=3.8",
   "numpy>=1.26",
 ]
+# Optional TUI visualizer for `cyberspace move viz`.
+viz = [
+  "textual>=0.50.0",
+]
 
 [project.scripts]
 cyberspace = "cyberspace_cli.cli:app"
