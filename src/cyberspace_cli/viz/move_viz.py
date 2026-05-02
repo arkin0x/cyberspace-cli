@@ -186,6 +186,12 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.modal_open = True
             self.push_screen(JumpInput())
         
+        def on_screen_resume(self) -> None:
+            # Called when returning from a pushed screen (like JumpInput)
+            # Refresh display to show any offset changes from the modal
+            self.modal_open = False
+            self.refresh_display()
+        
         def action_reset_to_origin(self) -> None:
             """Reset virtual position to origin."""
             state.virtual_x = 0
