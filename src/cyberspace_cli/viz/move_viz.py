@@ -167,8 +167,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.refresh_display()
         
         def action_jump_offset(self) -> None:
-            """Open input modal to type offset."""
-            self.push_screen(InputModal())
+            """Open input screen to type offset."""
+            self.push_screen(JumpInput())
         
         def action_reset_to_origin(self) -> None:
             """Reset virtual position to origin."""
@@ -324,24 +324,28 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 "".join(terrain_row),
             ]
     
-    class InputModal(Screen):
-        """Modal for entering numeric offset."""
+    class JumpInput(Screen):
+        """Screen for entering jump offset."""
         
         CSS = """
-        InputModal {
+        JumpInput {
+            align: center middle;
+            background: #000000aa;
+        }
+        #jump-container {
+            width: 50;
+            height: 10;
             background: #1a1a2e;
             border: solid #333366;
             padding: 1 2;
-            align: center middle;
         }
-        #modal-content {
-            width: 60;
-            height: 8;
-            background: #1a1a2e;
-        }
-        .modal-label {
-            padding: 1 0;
+        #jump-label {
             text-align: center;
+            padding: 1 0;
+        }
+        #jump-input {
+            width: 100%;
+            margin: 1 0;
         }
         """
         
@@ -350,26 +354,22 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             Binding("escape", "dismiss", "Cancel"),
         ]
         
-        def __init__(self):
-            super().__init__()
-            self.input_value = ""
-        
         def compose(self) -> ComposeResult:
-            with Container(id="modal-content"):
-                yield Static(
-                    f"Enter offset (e.g., 1000 or -500):\n"
-                    f"Current: {self.input_value or '0'}\n"
-                    f"Press Enter to confirm, Esc to cancel",
-                    classes="modal-label",
-                )
+            with Container(id="jump-container"):
+                yield Static("Enter offset:", id="jump-label")
+                yield Static("0", id="jump-value")
         
-        def on_key(self, event) -> None:
+        def on_mount(self) -> None:
+            self.value = ""
+            self.query_one("#jump-value", Static).update("0")
+        
+        def on_key(self, event: events.Key) -> None:
             if event.key.isdigit() or event.key in ('-', '+'):
-                self.input_value += event.key
-                self.refresh()
+                self.value += event.key
+                self.query_one("#jump-value", Static).update(self.value or "0")
             elif event.key == "backspace":
-                self.input_value = self.input_value[:-1]
-                self.refresh()
+                self.value = self.value[:-1]
+                self.query_one("#jump-value", Static).update(self.value or "0")
             elif event.key == "enter":
                 self.action_submit()
             elif event.key == "escape":
@@ -377,7 +377,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         
         def action_submit(self) -> None:
             try:
-                offset = int(self.input_value) if self.input_value else 0
+                offset = int(self.value) if self.value else 0
                 if state.current_axis == 'x':
                     state.virtual_x = offset
                 elif state.current_axis == 'y':
