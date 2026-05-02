@@ -364,10 +364,12 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     class JumpInput(Screen):
         """Screen for entering jump offset."""
         
+        # Don't inherit parent app bindings (Enter should submit, not commit movement)
         BINDINGS = [
             Binding("enter", "submit", "Submit offset"),
             Binding("escape", "dismiss", "Cancel"),
         ]
+        INHERIT_BINDINGS = False
         
         CSS = """
         JumpInput {
