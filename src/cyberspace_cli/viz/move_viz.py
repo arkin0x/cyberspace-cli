@@ -412,8 +412,16 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         def on_key(self, event: events.Key) -> None:
             # Only handle numeric input and backspace here
             # Enter/Escape are handled by BINDINGS actions
-            if event.key.isdigit() or event.key in ('-', '+'):
+            if event.key.isdigit():
                 self.value += event.key
+                self.query_one("#jump-value", Static).update(self.value or "0")
+                event.stop()
+            elif event.key == "-":
+                # Toggle sign
+                if self.value.startswith("-"):
+                    self.value = self.value[1:]
+                else:
+                    self.value = "-" + self.value
                 self.query_one("#jump-value", Static).update(self.value or "0")
                 event.stop()
             elif event.key == "backspace":
@@ -438,6 +446,9 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             if hasattr(self.app, 'modal_open'):
                 self.app.modal_open = False
             self.app.pop_screen()
+            # Force parent to refresh after modal closes
+            from textual import events
+            self.app.post_message(events.Resize(event_size=self.app.size))
         
         def action_dismiss(self) -> None:
             # Stop the escape key from propagating - we're just dismissing, not resetting
