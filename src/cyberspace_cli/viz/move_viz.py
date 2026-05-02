@@ -132,6 +132,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.data_panel = None
             self.summary_panel = None
             self.span = 30
+            self.modal_open = False
         
         def compose(self) -> ComposeResult:
             yield Header(show_clock=False)
@@ -177,8 +178,12 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         
         def action_jump_offset(self) -> None:
             """Open input screen to type offset."""
+            # Prevent stacking modals
+            if self.modal_open:
+                return
             # Clear escape flag on any new input action
             state.escape_pressed = False
+            self.modal_open = True
             self.push_screen(JumpInput())
         
         def action_reset_to_origin(self) -> None:
@@ -420,9 +425,15 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                     state.virtual_z = offset
             except ValueError:
                 pass
+            # Signal parent that modal is closing
+            if hasattr(self.app, 'modal_open'):
+                self.app.modal_open = False
             self.app.pop_screen()
         
         def action_dismiss(self) -> None:
+            # Signal parent that modal is closing
+            if hasattr(self.app, 'modal_open'):
+                self.app.modal_open = False
             self.app.pop_screen()
     
     app = MoveVizApp()
