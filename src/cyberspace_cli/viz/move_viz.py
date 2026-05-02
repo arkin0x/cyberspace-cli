@@ -487,7 +487,25 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     app.run()
     
     if state.committed:
-        typer.echo(f"\n[bold]Committing:[/]\n  X: {state.virtual_x:+,}\n  Y: {state.virtual_y:+,}\n  Z: {state.virtual_z:+,}\n")
+        # Execute the actual movement using cyberspace move --by
+        from cyberspace_cli.cli import move
+        import sys
+        
+        # Build the --by argument string
+        by_arg = f"{state.virtual_x},{state.virtual_y},{state.virtual_z}"
+        
+        typer.echo(f"\n[bold]Executing move:[/] dx={state.virtual_x:+,}, dy={state.virtual_y:+,}, dz={state.virtual_z:+,}")
+        
+        try:
+            # Call the move command with --by parameter
+            move(by=by_arg)
+            typer.echo("[green]✓ Move executed successfully![/]")
+        except typer.Exit as e:
+            typer.echo(f"[red]Move failed with exit code {e.exit_code}[/]")
+            sys.exit(e.exit_code)
+        except Exception as e:
+            typer.echo(f"[red]Move failed: {e}[/]")
+            sys.exit(1)
     elif state.escape_pressed:
         typer.echo("Cancelled.")
     else:
