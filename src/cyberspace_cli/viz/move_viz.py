@@ -400,6 +400,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         def on_mount(self) -> None:
             self.value = ""
             self.query_one("#jump-value", Static).update("0")
+            self.focus()  # Ensure screen has focus to capture key events
         
         def on_key(self, event: events.Key) -> None:
             # Only handle numeric input and backspace - let bindings handle Enter/Escape
