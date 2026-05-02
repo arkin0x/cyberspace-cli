@@ -295,9 +295,9 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             for i, p in enumerate(previews):
                 is_center = (i == center_idx)
                 
-                # LCA 10s: empty if 0, otherwise the digit
+                # LCA 10s: space if 0, otherwise the digit (must be 1 char to maintain alignment)
                 tens = p.lca_height // 10
-                lca10.append("" if tens == 0 else str(tens))
+                lca10.append(" " if tens == 0 else str(tens))
                 lca01.append(str(p.lca_height % 10))
                 
                 # Sign relative to actual position
