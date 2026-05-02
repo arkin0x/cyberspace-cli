@@ -347,7 +347,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             
             target_str = "".join(tgt)
             if is_z_axis:
-                target_str += "[purple]☣[/]"
+                target_str += "[#8613d3]☼[/]"
             
             return [
                 "".join(lca10),
