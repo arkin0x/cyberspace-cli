@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import Optional, List
 import typer
 import os
-import sys
 
 TERRAIN_COLORS = [
     "#0000ff", "#0044ff", "#0088ff", "#00ccff", "#00ffff",
@@ -210,10 +209,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.label_col.update("\n".join(label_list))
             
             # Render data column - difficulty row has markup, others are plain
-            # Static widgets have markup=True by default
             data_content = "\n".join(data_rows)
-            print(f"DEBUG: {len(data_rows)} rows, lengths={[len(r) for r in data_rows]}", file=sys.stderr)
-            print(f"DEBUG: span={self.span}, previews count={len(previews) if previews else 0}", file=sys.stderr)
             self.data_col.update(data_content)
             
             if previews:
