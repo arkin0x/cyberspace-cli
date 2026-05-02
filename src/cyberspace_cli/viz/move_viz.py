@@ -73,34 +73,39 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         
         #viz-container {
             height: 1fr;
-            layout: horizontal;
+            layout: grid;
+            grid-size: 2;
+            grid-columns: 13 1fr;
         }
         
         #label-col {
             width: 13;
-            height: 100%;
+            height: 1fr;
             color: #666666;
             text-align: right;
             background: #000000;
         }
         
         #data-col {
-            height: 100%;
+            height: 1fr;
             background: #000000;
         }
         
-        #data-panel {
-            height: auto;
-            min-height: 2;
-            max-height: 4;
-            background: #1a1a2e;
-            padding: 0 1;
-        }
-        
         #summary-panel {
-            height: 4;
+            width: 100%;
+            height: 3;
+            margin-top: 1;
             background: #0d0d1a;
             padding: 0 1;
+            border: solid #444466;
+            column-span: 2;
+        }
+        
+        #data-panel {
+            height: 4;
+            background: #1a1a2e;
+            padding: 0 1;
+            border: solid #444466;
         }
         """
         
@@ -141,16 +146,16 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 with Container(id="viz-container"):
                     yield Static(id="label-col")
                     yield Static(id="data-col")
+                    yield Static(id="summary-panel")
                 yield Static(id="data-panel")
-                yield Static(id="summary-panel")
             yield Footer()
         
         def on_mount(self) -> None:
             self.info_bar = self.query_one("#info-bar", Static)
             self.label_col = self.query_one("#label-col", Static)
             self.data_col = self.query_one("#data-col", Static)
-            self.data_panel = self.query_one("#data-panel", Static)
             self.summary_panel = self.query_one("#summary-panel", Static)
+            self.data_panel = self.query_one("#data-panel", Static)
             self.recalculate_span()
             self.refresh_display()
         
