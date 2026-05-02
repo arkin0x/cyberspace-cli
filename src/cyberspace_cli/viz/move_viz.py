@@ -335,9 +335,9 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             
             # Update summary panel with cumulative virtual movement
             self.summary_panel.update(
-                f"X: [cyan]{state.virtual_x:+,}[/]  |  "
-                f"Y: [cyan]{state.virtual_y:+,}[/]  |  "
-                f"Z: [cyan]{state.virtual_z:+,}[/]"
+                f"X: [green]{state.virtual_x:+,}[/]  |  "
+                f"Y: [blue]{state.virtual_y:+,}[/]  |  "
+                f"Z: [red]{state.virtual_z:+,}[/]"
             )
             
             # Update isometric visualization panel separately
