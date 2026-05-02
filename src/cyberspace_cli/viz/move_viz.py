@@ -364,10 +364,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 else:
                     tgt.append(" ")
                 
-                # Terrain K: show the numeric value with color markup
+                # Terrain K: show the ᚐ symbol with color based on difficulty
+                # Color conveys the value (green=low, red=high), symbol is constant
                 color = terrain_color(p.terrain_k)
-                k_display = str(p.terrain_k) if p.terrain_k < 10 else str(p.terrain_k)[-1]
-                terrain_row.append(f"[{color}]{k_display}[/{color}]")
+                terrain_row.append(f"[{color}]ᚐ[/{color}]")
             
             # On Z axis, append black sun marker after the target row
             # This adds one extra character at the far right end
