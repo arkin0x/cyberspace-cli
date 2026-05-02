@@ -40,6 +40,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         raise typer.Exit(code=1)
     
     from cyberspace_core.movement import preview_movement
+    from textual.screen import Screen
     
     @dataclass
     class VizState:
@@ -306,10 +307,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 else:
                     tgt.append(" ")
                 
-                # Terrain K: show the numeric value
-                # Using ᚐ as a decorative prefix would be too wide
-                # Just show the K value (0-16) as a digit or two
-                terrain_row.append(f"{p.terrain_k:2d}"[-1])  # Show only ones digit
+                # Terrain K: show the numeric value with color markup
+                color = terrain_color(p.terrain_k)
+                k_display = str(p.terrain_k) if p.terrain_k < 10 else str(p.terrain_k)[-1]
+                terrain_row.append(f"[{color}]{k_display}[/{color}]")
             
             return [
                 "".join(lca10),
@@ -323,7 +324,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 "".join(terrain_row),
             ]
     
-    class InputModal(Static):
+    class InputModal(Screen):
         """Modal for entering numeric offset."""
         
         CSS = """
@@ -331,9 +332,12 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             background: #1a1a2e;
             border: solid #333366;
             padding: 1 2;
-            width: 60;
-            height: 10;
             align: center middle;
+        }
+        #modal-content {
+            width: 60;
+            height: 8;
+            background: #1a1a2e;
         }
         .modal-label {
             padding: 1 0;
@@ -351,13 +355,13 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.input_value = ""
         
         def compose(self) -> ComposeResult:
-            yield Static(
-                f"Enter offset (e.g., 1000 or -500):\n"
-                f"Current: {self.input_value or '0'}\n"
-                f"Press Enter to confirm, Esc to cancel",
-                classes="modal-label",
-            )
-            yield Footer()
+            with Container(id="modal-content"):
+                yield Static(
+                    f"Enter offset (e.g., 1000 or -500):\n"
+                    f"Current: {self.input_value or '0'}\n"
+                    f"Press Enter to confirm, Esc to cancel",
+                    classes="modal-label",
+                )
         
         def on_key(self, event) -> None:
             if event.key.isdigit() or event.key in ('-', '+'):
