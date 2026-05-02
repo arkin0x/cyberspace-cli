@@ -487,33 +487,25 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     app.run()
     
     if state.committed:
-        # Execute the actual movement using cyberspace move --by
+        # Execute the actual movement using subprocess to avoid Typer OptionInfo issues
         import subprocess
         import sys
         
-        # Build the --by argument string
+        # Build the --by argument with our virtual offsets
         by_arg = f"{state.virtual_x},{state.virtual_y},{state.virtual_z}"
         
         typer.echo(f"\n[bold]Executing move:[/] dx={state.virtual_x:+,}, dy={state.virtual_y:+,}, dz={state.virtual_z:+,}")
         
-        try:
-            # Call cyberspace move --by as a subprocess
-            result = subprocess.run(
-                ["cyberspace", "move", "--by", by_arg],
-                capture_output=False,
-                text=True,
-            )
-            if result.returncode == 0:
-                typer.echo("\n[green]✓ Move executed successfully![/]")
-            else:
-                typer.echo(f"\n[red]Move failed with exit code {result.returncode}[/]")
-                sys.exit(result.returncode)
-        except FileNotFoundError:
-            typer.echo("[red]Error: 'cyberspace' command not found. Make sure it's installed and in PATH.[/]")
-            sys.exit(1)
-        except Exception as e:
-            typer.echo(f"[red]Move failed: {e}[/]")
-            sys.exit(1)
+        # Call cyberspace move --by as a subprocess
+        result = subprocess.run(
+            ["cyberspace", "move", "--by", by_arg],
+            capture_output=False,  # Show output directly to user
+            text=True
+        )
+        
+        if result.returncode != 0:
+            typer.echo(f"\n[red]Move failed with exit code {result.returncode}[/]")
+            sys.exit(result.returncode)
     elif state.escape_pressed:
         typer.echo("Cancelled.")
     else:

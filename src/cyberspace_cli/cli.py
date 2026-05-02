@@ -68,7 +68,7 @@ config_app = typer.Typer(no_args_is_help=True)
 target_app = typer.Typer(no_args_is_help=True)
 hyperjump_app = typer.Typer(no_args_is_help=True)
 geoid_app = typer.Typer(no_args_is_help=True)
-move_app = typer.Typer(no_args_is_help=True)
+move_app = typer.Typer(no_args_is_help=True, invoke_without_command=True)
 app.add_typer(chain_app, name="chain", help="Manage local movement chains.")
 app.add_typer(config_app, name="config", help="Show/set persisted CLI defaults.")
 app.add_typer(target_app, name="target", help="Manage saved movement targets.")
@@ -2124,7 +2124,7 @@ def hyperjump_nearest(
     _print_ranked_hyperjumps(ranked, cur_coord_hex, cx, cy, cz, cplane, search_radius=effective_radius)
 
 
-@app.command()
+@move_app.callback()
 def move(
     to: str = typer.Option(
         None,
