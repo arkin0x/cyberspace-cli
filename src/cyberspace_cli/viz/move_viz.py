@@ -494,14 +494,20 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         # Build the --by argument with our virtual offsets
         by_arg = f"{state.virtual_x},{state.virtual_y},{state.virtual_z}"
         
-        typer.echo(f"\n[bold]Executing move:[/] dx={state.virtual_x:+,}, dy={state.virtual_y:+,}, dz={state.virtual_z:+,}")
+        typer.echo(f"\n[bold green]✓ Executing move:[/]\n  dx: [cyan]{state.virtual_x:+,}[/]\n  dy: [cyan]{state.virtual_y:+,}[/]\n  dz: [cyan]{state.virtual_z:+,}[/]\n")
         
         # Call cyberspace move --by as a subprocess
         result = subprocess.run(
             ["cyberspace", "move", "--by", by_arg],
-            capture_output=False,  # Show output directly to user
+            capture_output=True,  # Capture to format output
             text=True
         )
+        
+        # Print stdout/stderr with proper formatting
+        if result.stdout:
+            typer.echo(result.stdout.strip())
+        if result.stderr:
+            typer.echo(result.stderr.strip(), err=True)
         
         if result.returncode != 0:
             typer.echo(f"\n[red]Move failed with exit code {result.returncode}[/]")
