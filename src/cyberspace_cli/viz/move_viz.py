@@ -365,12 +365,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     class JumpInput(Screen):
         """Screen for entering jump offset."""
         
-        # Don't inherit parent app bindings (Enter should submit, not commit movement)
         BINDINGS = [
             Binding("enter", "submit", "Submit offset"),
             Binding("escape", "dismiss", "Cancel"),
         ]
-        INHERIT_BINDINGS = False
         
         CSS = """
         JumpInput {
@@ -394,11 +392,6 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         }
         """
         
-        BINDINGS = [
-            Binding("enter", "submit", "OK"),
-            Binding("escape", "dismiss", "Cancel"),
-        ]
-        
         def compose(self) -> ComposeResult:
             with Container(id="jump-container"):
                 yield Static("Enter offset:", id="jump-label")
@@ -409,18 +402,16 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.query_one("#jump-value", Static).update("0")
         
         def on_key(self, event: events.Key) -> None:
+            # Only handle numeric input and backspace - let bindings handle Enter/Escape
             if event.key.isdigit() or event.key in ('-', '+'):
                 self.value += event.key
                 self.query_one("#jump-value", Static).update(self.value or "0")
-                event.stop()  # Stop bubbling after handling
+                event.stop()
             elif event.key == "backspace":
                 self.value = self.value[:-1]
                 self.query_one("#jump-value", Static).update(self.value or "0")
                 event.stop()
-            elif event.key == "enter":
-                self.action_submit()
-            elif event.key == "escape":
-                self.action_dismiss()
+            # Don't handle enter/escape here - let the bindings do it
         
         def action_submit(self) -> None:
             try:
