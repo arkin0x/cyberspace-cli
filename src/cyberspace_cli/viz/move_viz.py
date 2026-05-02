@@ -267,11 +267,25 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 target_size = target_preview.subtree_size
                 
                 # Estimate time based on target's compute requirements
+                # Simple model: 2^h operations at ~1M ops/sec
                 if target_lca <= 15:
                     t_ms = 0.1 * (2 ** (target_lca - 10))
                 else:
                     t_ms = 0.1 * (2 ** (target_lca - 15))
-                ts = f"{t_ms:.1f}ms" if t_ms < 1000 else f"{t_ms/1000:.1f}s"
+                
+                # Format with appropriate time unit
+                if t_ms < 1:
+                    ts = f"{t_ms * 1000:.0f}μs"
+                elif t_ms < 1000:
+                    ts = f"{t_ms:.1f}ms"
+                elif t_ms < 60000:
+                    ts = f"{t_ms / 1000:.1f}s"
+                elif t_ms < 3600000:
+                    ts = f"{t_ms / 60000:.1f}m"
+                elif t_ms < 86400000:
+                    ts = f"{t_ms / 3600000:.1f}h"
+                else:
+                    ts = f"{t_ms / 86400000:.1f}d"
                 
                 self.data_panel.update(
                     f"Target: {target_preview.offset:+,} | "
