@@ -347,8 +347,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             
             target_str = "".join(tgt)
             if is_z_axis:
-                # Use block character for reliable color rendering (not an emoji)
-                target_str += "[#8613d3]█[/]"
+                # Black sun marker - same character as actual position marker, in purple
+                target_str += "[#8613d3]●[/]"
             
             return [
                 "".join(lca10),
