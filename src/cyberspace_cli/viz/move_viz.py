@@ -488,7 +488,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     
     if state.committed:
         # Execute the actual movement using cyberspace move --by
-        from cyberspace_cli.cli import move
+        import subprocess
         import sys
         
         # Build the --by argument string
@@ -497,12 +497,20 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         typer.echo(f"\n[bold]Executing move:[/] dx={state.virtual_x:+,}, dy={state.virtual_y:+,}, dz={state.virtual_z:+,}")
         
         try:
-            # Call the move command with --by parameter
-            move(by=by_arg)
-            typer.echo("[green]✓ Move executed successfully![/]")
-        except typer.Exit as e:
-            typer.echo(f"[red]Move failed with exit code {e.exit_code}[/]")
-            sys.exit(e.exit_code)
+            # Call cyberspace move --by as a subprocess
+            result = subprocess.run(
+                ["cyberspace", "move", "--by", by_arg],
+                capture_output=False,
+                text=True,
+            )
+            if result.returncode == 0:
+                typer.echo("\n[green]✓ Move executed successfully![/]")
+            else:
+                typer.echo(f"\n[red]Move failed with exit code {result.returncode}[/]")
+                sys.exit(result.returncode)
+        except FileNotFoundError:
+            typer.echo("[red]Error: 'cyberspace' command not found. Make sure it's installed and in PATH.[/]")
+            sys.exit(1)
         except Exception as e:
             typer.echo(f"[red]Move failed: {e}[/]")
             sys.exit(1)
