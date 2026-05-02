@@ -97,10 +97,31 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         }
         
         #summary-panel {
-            height: 8;
+            height: 3;
             background: #0d0d1a;
             padding: 0 1;
             border: solid #444466;
+        }
+        
+        #bottom-row {
+            height: 1fr;
+            layout: horizontal;
+        }
+        
+        #iso-panel {
+            width: 50%;
+            height: 100%;
+            background: #000000;
+            padding: 0 1;
+            border: solid #333344;
+        }
+        
+        #info-panel {
+            width: 50%;
+            height: 100%;
+            background: #0a0a15;
+            padding: 0 1;
+            border: solid #333344;
         }
         """
         
@@ -131,6 +152,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.data_col = None
             self.data_panel = None
             self.summary_panel = None
+            self.iso_panel = None
+            self.info_panel = None
             self.span = 30
             self.modal_open = False
         
@@ -143,6 +166,9 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                     yield Static(id="data-col")
                 yield Static(id="data-panel")
                 yield Static(id="summary-panel")
+                with Container(id="bottom-row"):
+                    yield Static(id="iso-panel")
+                    yield Static(id="info-panel")
             yield Footer()
         
         def on_mount(self) -> None:
@@ -151,6 +177,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.data_col = self.query_one("#data-col", Static)
             self.data_panel = self.query_one("#data-panel", Static)
             self.summary_panel = self.query_one("#summary-panel", Static)
+            self.iso_panel = self.query_one("#iso-panel", Static)
+            self.info_panel = self.query_one("#info-panel", Static)
             self.recalculate_span()
             self.refresh_display()
         
@@ -217,7 +245,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.exit(return_code=0)
         
         def refresh_display(self) -> None:
-            if not all([self.info_bar, self.label_col, self.data_col, self.data_panel, self.summary_panel]):
+            if not all([self.info_bar, self.label_col, self.data_col, self.data_panel, self.summary_panel, self.iso_panel, self.info_panel]):
                 return
             
             voff = (state.virtual_x if state.current_axis == 'x' else
@@ -305,15 +333,17 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                     f"Est: {ts}"
                 )
             
-            # Update summary panel with cumulative virtual movement and isometric visualization
-            # Isometric projection: X goes right-down, Y goes left-down, Z goes vertical
-            iso_viz = self._render_isometric_offset(state.virtual_x, state.virtual_y, state.virtual_z)
+            # Update summary panel with cumulative virtual movement
             self.summary_panel.update(
-                f"{iso_viz}\n"
                 f"X: [cyan]{state.virtual_x:+,}[/]  |  "
                 f"Y: [cyan]{state.virtual_y:+,}[/]  |  "
                 f"Z: [cyan]{state.virtual_z:+,}[/]"
             )
+            
+            # Update isometric visualization panel separately
+            iso_viz = self._render_isometric_offset(state.virtual_x, state.virtual_y, state.virtual_z)
+            if self.iso_panel:
+                self.iso_panel.update(iso_viz)
         
         def _build_data_rows(self, previews, virtual_offset):
             """Build data rows. O = virtual target (center), X = actual position.
