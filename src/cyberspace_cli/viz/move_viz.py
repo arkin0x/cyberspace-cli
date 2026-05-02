@@ -80,6 +80,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         #data-col {
             height: 100%;
             background: #000000;
+            content-align: left top;
         }
         
         #data-panel {
