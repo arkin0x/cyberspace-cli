@@ -48,6 +48,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         virtual_z: int = 0
         current_axis: str = 'x'
         committed: bool = False
+        escape_pressed: bool = False
     
     state = VizState()
     
@@ -87,9 +88,15 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         }
         
         #data-panel {
-            height: 4;
+            height: auto;
+            min-height: 2;
+            max-height: 4;
             background: #1a1a2e;
             padding: 0 1;
+        }
+        
+        .center-col {
+            background: #2a2a4e;
         }
         """
         
@@ -109,7 +116,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             Binding("ctrl+right", "move_virtual(100)", "→100"),
             Binding("colon", "jump_offset", "Jump"),
             Binding("enter", "commit_movement", "Commit"),
-            Binding("escape", "quit", "Cancel"),
+            Binding("escape", "reset_or_quit", "Reset/Quit"),
+            Binding("r", "reset_to_origin", "Reset"),
         ]
         
         def __init__(self):
@@ -138,15 +146,8 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             self.recalculate_span()
             self.refresh_display()
         
-        # Don't recalculate on resize - use fixed span
-        # def on_resize(self, event: events.Resize) -> None:
-        #     self.recalculate_span()
-        #     self.refresh_display()
-        
         def recalculate_span(self) -> None:
             width = get_terminal_width()
-            # Account for: 12 (label) + 3 (space + │ + space) = 15 chars overhead
-            # Remaining width for data, each coord is 1 char
             available = width - 15
             self.span = max(5, min(100, available // 2))
         
@@ -167,6 +168,26 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             """Open input modal to type offset."""
             self.push_screen(InputModal())
         
+        def action_reset_to_origin(self) -> None:
+            """Reset virtual position to origin."""
+            state.virtual_x = 0
+            state.virtual_y = 0
+            state.virtual_z = 0
+            state.escape_pressed = False
+            self.refresh_display()
+        
+        def action_reset_or_quit(self) -> None:
+            """First ESC resets, second ESC quits."""
+            if state.escape_pressed:
+                state.committed = False
+                self.exit(return_code=1)
+            else:
+                state.virtual_x = 0
+                state.virtual_y = 0
+                state.virtual_z = 0
+                state.escape_pressed = True
+                self.refresh_display()
+        
         def action_commit_movement(self) -> None:
             state.committed = True
             self.exit(return_code=0)
@@ -184,9 +205,11 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 state.current_axis, self.span, plane,
             )
             
+            # Show reset warning if escape was pressed
+            reset_status = "[red]Press ESC again to cancel[/]" if state.escape_pressed else "Ready"
             self.info_bar.update(
                 f"[bold]{axis_name}[/] | Pos: [cyan]{center_val:,}[/] | "
-                f"Offset: [yellow]{voff:+,}[/]"
+                f"Offset: [yellow]{voff:+,}[/] | {reset_status}"
             )
             
             # Build label and data columns separately
@@ -194,7 +217,6 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             
             # Labels - all exactly 12 chars, right aligned
             label_list = [
-                "Difficulty",
                 "  LCA (10s)",
                 "  LCA  (1s)",
                 "  △  (sign)",
@@ -203,12 +225,13 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 "  △   (10s)",
                 "  △    (1s)",
                 "   Target  ",
+                " Terrain K ",
             ]
             
             # Render label column (plain text, right aligned)
             self.label_col.update("\n".join(label_list))
             
-            # Render data column - difficulty row has markup, others are plain
+            # Render data column
             data_content = "\n".join(data_rows)
             self.data_col.update(data_content)
             
@@ -220,7 +243,6 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 target_size = target_preview.subtree_size
                 
                 # Estimate time based on target's compute requirements
-                # Simple model: 2^h operations at ~1M ops/sec
                 if target_lca <= 15:
                     t_ms = 0.1 * (2 ** (target_lca - 10))
                 else:
@@ -230,7 +252,6 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 self.data_panel.update(
                     f"Target: {target_preview.offset:+,} | "
                     f"LCA: {target_lca} | "
-                    f"Terrain K: {target_k} | "
                     f"Subtree: 2^{target_lca} | "
                     f"Est: {ts}"
                 )
@@ -238,24 +259,26 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         def _build_data_rows(self, previews, virtual_offset):
             """Build data rows. ○ = virtual target (center), ● = actual position.
             
-            Difficulty row uses inline markup with balanced tags per character.
-            All other rows are plain text.
+            Terrain K row uses ᚐ symbols. All other rows are plain text.
+            LCA 10s row shows empty string when digit is 0.
             """
-            diff, lca10, lca01 = [], [], []
+            lca10, lca01 = [], []
             sign, k, h, t, o, tgt = [], [], [], [], [], []
+            terrain_row = []
             
             # Actual position index in previews array
             actual_idx = (len(previews) // 2) - virtual_offset
             # Virtual target is always at center
             virtual_idx = len(previews) // 2
+            # Center column index for highlighting
+            center_idx = len(previews) // 2
             
             for i, p in enumerate(previews):
-                # Difficulty: each block has its own balanced markup tag
-                color = terrain_color(p.terrain_k)
-                diff.append(f"[{color}]▨[/{color}]")
+                is_center = (i == center_idx)
                 
-                # All other rows: plain text characters (no markup)
-                lca10.append(str(p.lca_height // 10))
+                # LCA 10s: empty if 0, otherwise the digit
+                tens = p.lca_height // 10
+                lca10.append("" if tens == 0 else str(tens))
                 lca01.append(str(p.lca_height % 10))
                 
                 # Sign relative to actual position
@@ -269,7 +292,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 t.append(str((abs_d//10)%10) if abs_d>=10 else " ")
                 o.append(str(abs_d % 10))
                 
-                # Target markers: plain text
+                # Target markers
                 is_virtual = (i == virtual_idx)
                 is_actual = (i == actual_idx)
                 
@@ -281,9 +304,11 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                     tgt.append("●")
                 else:
                     tgt.append(" ")
+                
+                # Terrain K: use ᚐ (rune perthro) symbol
+                terrain_row.append(str(p.terrain_k))
             
             return [
-                "".join(diff),
                 "".join(lca10),
                 "".join(lca01),
                 "".join(sign),
@@ -292,6 +317,7 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 "".join(t),
                 "".join(o),
                 "".join(tgt),
+                "".join(terrain_row),
             ]
     
     class InputModal(Static):
@@ -331,7 +357,6 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
             yield Footer()
         
         def on_key(self, event) -> None:
-            # Handle numeric input
             if event.key.isdigit() or event.key in ('-', '+'):
                 self.input_value += event.key
                 self.refresh()
@@ -364,8 +389,10 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
     
     if state.committed:
         typer.echo(f"\n[bold]Committing:[/]\n  X: {state.virtual_x:+,}\n  Y: {state.virtual_y:+,}\n  Z: {state.virtual_z:+,}\n")
-    else:
+    elif state.escape_pressed:
         typer.echo("Cancelled.")
+    else:
+        typer.echo("No changes.")
 
 
 def move_viz_command() -> None:
