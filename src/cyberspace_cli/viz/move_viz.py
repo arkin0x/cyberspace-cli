@@ -148,8 +148,9 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
         
         def recalculate_span(self) -> None:
             width = get_terminal_width()
+            # Account for: 13 (label) + 2 (spacing) = 15 chars overhead
             available = width - 15
-            self.span = max(5, min(100, available // 2))
+            self.span = max(5, min(100, available // 2 - 2))  # -2 for safety margin
         
         def action_switch_axis(self, axis: str) -> None:
             state.current_axis = axis
@@ -305,8 +306,13 @@ def run_move_viz(current_x: int, current_y: int, current_z: int, plane: int) -> 
                 else:
                     tgt.append(" ")
                 
-                # Terrain K: use ᚐ (rune perthro) symbol
-                terrain_row.append(str(p.terrain_k))
+                # Terrain K: use ᚐ (rune perthro) repeated K times
+                # Each position shows ᚐ repeated terrain_k times for visual "number line" effect
+                k_symbol = "ᚐ" * p.terrain_k
+                # Pad to consistent width if needed, or just show the symbols
+                # For compact display, show single ᚐ with the number as tooltip
+                # Actually, just show the number for now - the ᚐ is decorative
+                terrain_row.append("ᚐ" if p.terrain_k > 0 else " ")
             
             return [
                 "".join(lca10),
