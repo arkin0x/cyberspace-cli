@@ -8,6 +8,7 @@ This repo is intentionally separate from the current research/prototype code und
 - Creates and manages **local movement chains** (multiple labeled chains, status/history, JSON export)
 - Computes and stores **v2 movement proofs** (per-axis Cantor tree) in hop events
 - Supports movement workflows: `move --by`, `move --to`, `move --toward`, plane switching, and target-driven movement
+- **Interactive terminal visualization** (`move viz`) for planning movements with LCA heights, terrain difficulty, and compute time estimates
 - Supports DECK-0001 hyperjump tooling: nearest/show/to/next/prev queries plus hyperjump movement-event creation
 - Includes coordinate and proof tooling: `whereami`, `sector`, `gps` (both directions), `cantor`, `bench`
 - Supports location-encrypted content workflows: `encrypt`, `decrypt`, and `scan`
@@ -77,9 +78,14 @@ cyberspace target set 0x2b50e88 --label mytarget
 cyberspace target use mytarget
 
 # movement (local-only)
-# Tip: keep comma-lists unspaced (or quote them) so negatives don’t get parsed as flags.
+# Tip: keep comma-lists unspaced (or quote them) so negatives don't get parsed as flags.
 cyberspace move --by -1,0,0
 cyberspace move --by "-1, 0, 0"
+
+# interactive terminal visualization for movement planning
+cyberspace move viz
+# Navigate with arrow keys or a/d, switch axes with x/y/z, use : to jump to an offset, press Enter to execute
+# Shows adjacent coordinates, LCA heights, terrain difficulty (K), and estimated compute time
 
 # switch planes (0=dataspace, 1=ideaspace)
 cyberspace move --by 0,0,0,1
