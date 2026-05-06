@@ -11,8 +11,11 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import typer
 from typer.models import OptionInfo
 
+from types import SimpleNamespace
+
 from cyberspace_cli import chains
 from cyberspace_cli import targets
+from cyberspace_cli.cloud_compute import run_cloud_hop_sync
 from cyberspace_cli.config import load_config, save_config
 from cyberspace_cli.paths import hyperjump_cache_path
 from cyberspace_cli.helptext import HELP_TEXT
@@ -2302,30 +2305,54 @@ def move(
                     raise typer.Exit(code=2)
             else:
                 if max(hx, hy, hz) > max_compute_height:
-                    typer.echo(
-                        "Move is too large for a single hop. "
-                        f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
-                        f"limit={max_compute_height}. "
-                        "Use --sidestep for Merkle proof, or raise --max-lca-height for an expensive Cantor hop.",
-                        err=True,
-                    )
-                    raise typer.Exit(code=2)
+                    # Local hardware can't handle this hop. Offer HOSAKA cloud
+                    # compute via the encapsulated /api/v1/hop endpoint, which
+                    # runs the entire §4.7 + §5 pipeline server-side and
+                    # returns proof_hash directly.
+                    if not state.privkey_hex:
+                        typer.echo(
+                            "Move exceeds local LCA limit and no nsec is configured "
+                            "for HOSAKA cloud fallback. "
+                            f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
+                            f"limit={max_compute_height}. "
+                            "Configure an nsec or use --sidestep.",
+                            err=True,
+                        )
+                        raise typer.Exit(code=2)
 
-                try:
-                    proof = compute_hop_proof(
-                        x1,
-                        y1,
-                        z1,
-                        x2,
-                        y2,
-                        z2,
-                        plane=plane2,
-                        previous_event_id_hex=prev_event_id,
-                        max_compute_height=max_compute_height,
+                    typer.echo(
+                        f"\n☁️  hop max LCA height {max(hx, hy, hz)} exceeds local "
+                        f"limit {max_compute_height}; offloading to HOSAKA cloud."
                     )
-                except ValueError as e:
-                    typer.echo(f"Failed to compute movement proof: {e}", err=True)
-                    raise typer.Exit(code=2)
+                    cloud_result = run_cloud_hop_sync(
+                        privkey_hex=state.privkey_hex,
+                        pubkey_hex=state.pubkey_hex,
+                        v1={"x": x1, "y": y1, "z": z1, "plane": plane1},
+                        v2={"x": x2, "y": y2, "z": z2, "plane": plane2},
+                        previous_event_id=prev_event_id,
+                    )
+                    proof = SimpleNamespace(
+                        proof_hash=cloud_result["proof_hash"],
+                        terrain_k=cloud_result.get("K"),
+                        cloud=True,
+                        cloud_job_id=cloud_result.get("job_id"),
+                    )
+                else:
+                    try:
+                        proof = compute_hop_proof(
+                            x1,
+                            y1,
+                            z1,
+                            x2,
+                            y2,
+                            z2,
+                            plane=plane2,
+                            previous_event_id_hex=prev_event_id,
+                            max_compute_height=max_compute_height,
+                        )
+                    except ValueError as e:
+                        typer.echo(f"Failed to compute movement proof: {e}", err=True)
+                        raise typer.Exit(code=2)
 
         created_at = int(time.time())
         if sidestep_proof is not None:

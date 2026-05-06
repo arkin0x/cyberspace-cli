@@ -14,6 +14,13 @@ dependencies = [
   "typer>=0.12",
   "coincurve>=20.0.0",
   "cryptography>=42.0.0",
+  # HOSAKA cloud-compute fallback (cloud_compute.py + nostr_signer.py + nostr_relay.py).
+  # All three are needed at import time even when the user never offloads.
+  "httpx>=0.27.0",
+  "secp256k1>=0.14.0",
+  "nest-asyncio>=1.6.0",
+  "websocket-client>=1.7.0",
+  "hosaka-client>=0.1.0",
 ]
 
 [project.optional-dependencies]
