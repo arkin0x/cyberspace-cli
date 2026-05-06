@@ -200,3 +200,38 @@ def make_sidestep_event(
     ]
     tags.extend(_sector_tags_from_coord_hex(coord_hex))
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content=proof_hash_hex)
+
+
+def create_zap_request(
+    *,
+    payer_pubkey_hex: str,
+    recipient_pubkey_hex: str,
+    amount_msats: int,
+    relays: List[str],
+    callback_url: str,
+    job_id: str = None,
+) -> Dict[str, Any]:
+    """Build an unsigned NIP-57 kind 9734 zap request event.
+
+    Tags: [["p", recipient], ["amount", msats], ["relays", ...], ["callback", url]].
+    Content is empty. The matching receipt (kind 9735) embeds this event JSON
+    in its description tag.
+    """
+    import time
+
+    tags = [
+        ["p", recipient_pubkey_hex],
+        ["amount", str(amount_msats)],
+        ["relays"] + relays,
+        ["callback", callback_url],
+    ]
+    if job_id:
+        tags.append(["job_id", job_id])
+
+    return new_event(
+        pubkey_hex=payer_pubkey_hex,
+        created_at=int(time.time()),
+        kind=9734,
+        tags=tags,
+        content="",
+    )
