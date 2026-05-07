@@ -86,7 +86,10 @@ class HosakaClient:
             headers=auth,
         )
         if resp.status_code == 400:
-            raise CloudHeightExceeded(resp.json().get("detail", {}))
+            detail = resp.json().get("detail", {})
+            if isinstance(detail, dict) and detail.get("error") == "height_exceeds_hosaka_cap":
+                raise CloudHeightExceeded(detail)
+            raise RuntimeError(f"HOSAKA API error: {detail}")
         resp.raise_for_status()
         return resp.json()
 
@@ -255,6 +258,9 @@ async def run_cloud_hop(
                 f"h={d.get('max_hosaka_height')}. {d.get('hint','')}",
                 err=True,
             )
+            raise typer.Exit(code=2)
+        except RuntimeError as exc:
+            typer.echo(f"   ❌ {exc}", err=True)
             raise typer.Exit(code=2)
 
         job_id = job["id"]
