@@ -64,7 +64,7 @@ class HosakaClient:
 
     def __init__(self, api_url: str = HOSAKA_API_URL, timeout: float = 300.0):
         self.api_url = api_url.rstrip("/")
-        self.http = httpx.AsyncClient(base_url=self.api_url, timeout=timeout)
+        self.http = httpx.AsyncClient(base_url=self.api_url, timeout=timeout, follow_redirects=True)
 
     async def __aenter__(self) -> "HosakaClient":
         return self
