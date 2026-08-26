@@ -63,8 +63,13 @@ Commands (high-level)
   While on the hyperjump system, normal hops require --exit-hyperjump.
 - cyberspace hyperjump nearest [--radius 10] [--coord <coord>] [--relay wss://cyberspace.nostr1.com] [--verbose]
   Queries kind=321 block anchor events in nearby sectors and prints direction hints.
-- cyberspace hyperjump show <blockheight> [--relay wss://cyberspace.nostr1.com]
-  Shows coordinate/plane info for a specific hyperjump block height.
+- cyberspace hyperjump show <blockheight> [--relay wss://cyberspace.nostr1.com] [--source relay|mempool] [--from-gps lat,lon | --from <coord>]
+  Shows the DECK-0001 v3 stop for a block height: a port (ideaspace, at the merkle root) or a
+  landfall (dataspace, on Earth's surface at a point chosen by the block hash), with lat/lon
+  and a maps link for landfalls. --from-gps / --from print distances (per-axis Gibsons and km,
+  LCA heights, the s4.1 stop distance d, straight-line km, and WGS84 geodesic km).
+  --source mempool fetches the block header from mempool.space instead of relay anchors;
+  --block-hash H --merkle-root M derives the stop offline with no network access.
 - cyberspace hyperjump to <blockheight> [--view]
   Moves to a specific hyperjump block height, or only previews it with --view.
 - cyberspace hyperjump next [--view]

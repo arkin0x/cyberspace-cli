@@ -139,6 +139,16 @@ cyberspace hyperjump nearest --radius 10 --relay wss://cyberspace.nostr1.com
 cyberspace hyperjump nearest --coord 0x2b50e88
 cyberspace hyperjump nearest --verbose
 cyberspace hyperjump show 940158
+# DECK-0001 v3: a stop is a port (ideaspace, at the merkle root) or a landfall
+# (dataspace, on Earth's surface at a point chosen by the block hash). Landfalls
+# print lat/lon and a maps link. Legacy anchors (no M tag) are derived locally.
+cyberspace hyperjump show 692065
+# distances from a GPS point or a coordinate (Gibsons, km, LCA heights, s4.1 d, geodesic)
+cyberspace hyperjump show 692065 --from-gps 25.7617,-80.1918
+cyberspace hyperjump show 692065 --from 0x<coord256>
+# block source: relay anchors (default), mempool.space, or fully offline
+cyberspace hyperjump show 692065 --source mempool
+cyberspace hyperjump show 398 --block-hash <H> --merkle-root <M>
 cyberspace hyperjump to 940158
 cyberspace hyperjump to 940158 --view
 cyberspace hyperjump next

@@ -1,7 +1,9 @@
 from __future__ import annotations
 import base64
 import json
+import os
 import secrets
+import urllib.request
 import subprocess
 from decimal import Decimal, InvalidOperation
 
@@ -39,7 +41,26 @@ from cyberspace_cli.nostr_keys import (
 )
 from cyberspace_cli.state import CyberspaceState, STATE_VERSION, load_state, save_state
 from cyberspace_core.cantor import int_to_bytes_be_min, int_to_hex_be_min, sha256, sha256_int_hex
-from cyberspace_core.coords import AXIS_MAX, coord_to_xyz, dataspace_coord_to_gps, gps_to_dataspace_coord, xyz_to_coord
+from cyberspace_core.coords import (
+    AXIS_MAX,
+    coord_to_xyz,
+    dataspace_coord_to_gps,
+    gps_to_dataspace_coord,
+    gps_to_dataspace_xyz,
+    xyz_to_coord,
+)
+from cyberspace_core.hyperspace import (
+    DECK_0001_VERSION,
+    Stop,
+    StopError,
+    axis_gibsons_to_km,
+    cube_side_km,
+    geodesic_km,
+    resolve_stop,
+    stop_distance,
+    stop_from_block,
+    straight_line_km,
+)
 from cyberspace_core.geoid import (
     DEFAULT_GEOID_MODEL,
     GeoidError,
@@ -221,6 +242,24 @@ HYPERJUMP_KIND = 321
 SECTOR_BITS = 30
 
 
+def _nak_env() -> Dict[str, str]:
+    """Environment for nak: sign NIP-42 AUTH with the local identity when one exists.
+
+    cyberspace.nostr1.com requires AUTH for reads since 2026-08-23. The key is
+    passed through the environment (never argv) so it does not show up in `ps`.
+    An explicit NOSTR_SECRET_KEY in the caller's environment wins.
+    """
+    env = dict(os.environ)
+    if not env.get("NOSTR_SECRET_KEY"):
+        try:
+            state = load_state()
+        except Exception:
+            state = None
+        if state is not None and getattr(state, "privkey_hex", ""):
+            env["NOSTR_SECRET_KEY"] = state.privkey_hex
+    return env
+
+
 def _nak_req_events(
     *,
     relay: str,
@@ -239,7 +278,7 @@ def _nak_req_events(
     until : only fetch events with created_at <= this unix timestamp
     since : only fetch events with created_at >= this unix timestamp
     """
-    cmd = ["nak", "req", "-q", "-k", str(kind), "-l", str(limit)]
+    cmd = ["nak", "req", "-q", "--auth", "-k", str(kind), "-l", str(limit)]
     if until is not None:
         cmd.extend(["--until", str(until)])
     if since is not None:
@@ -264,6 +303,7 @@ def _nak_req_events(
             text=True,
             check=False,
             timeout=timeout_seconds,
+            env=_nak_env(),
         )
     except FileNotFoundError:
         typer.echo("`nak` is not installed or not available in PATH.", err=True)
@@ -361,13 +401,54 @@ def _require_hyperjump_system_state() -> Tuple[CyberspaceState, int]:
     return state, current_height
 
 
+MEMPOOL_API = "https://mempool.space/api"
+
+
+def _stop_from_anchor(event: dict, *, verify: bool = True) -> Optional[Stop]:
+    """Resolve a kind-321 anchor into a stop per DECK-0001 v3 sections 1 and 2.
+
+    With verify=False an anchor that carries an M tag is taken at face value
+    (used for the local cache, whose entries were verified when written).
+    """
+    c_tag = _get_tag(event, "C")
+    if not c_tag:
+        return None
+    m_tag = _get_tag(event, "M")
+    h_tag = _get_tag(event, "H")
+    try:
+        if m_tag is not None and not verify:
+            c_norm = normalize_hex_32(c_tag)
+            x, y, z, plane = coord_to_xyz(int(c_norm, 16))
+            return Stop(c_norm, x, y, z, plane, normalize_hex_32(m_tag), h_tag, derived=False, legacy=False)
+        return resolve_stop(c_hex=c_tag, m_hex=m_tag, h_hex=h_tag)
+    except (StopError, ValueError, TypeError):
+        return None
+
+
+def _anchor_rank_key(event: dict) -> Tuple[int, int, str]:
+    """Prefer v3 anchors (with M), then the newest, then the highest id."""
+    return (1 if _get_tag(event, "M") else 0, int(event.get("created_at", 0)), str(event.get("id", "")))
+
+
+def _fetch_block_from_mempool(block_height: int, *, timeout_seconds: int = 20) -> Tuple[str, str]:
+    """Return (block_hash_hex, merkle_root_hex) for a height from mempool.space."""
+    def _get(path: str) -> bytes:
+        req = urllib.request.Request(MEMPOOL_API + path, headers={"User-Agent": "cyberspace-cli"})
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:  # noqa: S310
+            return resp.read()
+
+    block_hash = _get(f"/block-height/{block_height}").decode().strip()
+    block = json.loads(_get(f"/block/{block_hash}"))
+    return normalize_hex_32(block["id"]), normalize_hex_32(block["merkle_root"])
+
+
 def _query_hyperjump_anchor_for_height(
     *,
     block_height: int,
     relay: str,
     limit: int,
     verbose: bool = False,
-) -> Optional[Tuple[str, dict, Tuple[int, int, int, int]]]:
+) -> Optional[Tuple[Stop, dict]]:
     if block_height < 0:
         return None
     events = _nak_req_events(
@@ -377,43 +458,100 @@ def _query_hyperjump_anchor_for_height(
         limit=limit,
         verbose=verbose,
     )
-    best: Optional[Tuple[int, str, str, dict]] = None
+    best: Optional[Tuple[Tuple[int, int, str], Stop, dict]] = None
     for ev in events:
         b_tag = _get_tag(ev, "B")
-        c_tag = _get_tag(ev, "C")
-        if not b_tag or not c_tag:
-            continue
         try:
-            b_val = int(str(b_tag), 10)
-            c_norm = normalize_hex_32(c_tag)
+            if b_tag is None or int(str(b_tag), 10) != block_height:
+                continue
         except (ValueError, TypeError):
             continue
-        if b_val != block_height:
+        stop = _stop_from_anchor(ev)
+        if stop is None:
+            if verbose:
+                typer.echo(f"skipping anchor {ev.get('id', '')}: not a valid DECK-0001 v3 stop")
             continue
-        created_at = int(ev.get("created_at", 0))
-        event_id = str(ev.get("id", ""))
-        candidate = (created_at, event_id, c_norm, ev)
-        if best is None or candidate[:2] > best[:2]:
-            best = candidate
+        key = _anchor_rank_key(ev)
+        if best is None or key > best[0]:
+            best = (key, stop, ev)
     if best is None:
         return None
-    coord_hex = best[2]
-    coord_int = int.from_bytes(bytes.fromhex(coord_hex), "big")
-    x, y, z, plane = coord_to_xyz(coord_int)
-    return coord_hex, best[3], (x, y, z, plane)
+    return best[1], best[2]
 
 
-def _print_hyperjump_anchor(*, block_height: int, coord_hex: str, event: dict, xyzp: Tuple[int, int, int, int]) -> None:
-    x, y, z, plane = xyzp
+def _maps_link(lat: float, lon: float) -> str:
+    return f"https://www.google.com/maps?q={lat:.6f},{lon:.6f}"
+
+
+def _print_stop(stop: Stop) -> None:
+    typer.echo(f"stop_kind={stop.kind} ({_plane_label(stop.plane)})")
+    typer.echo(f"coord: 0x{stop.coord_hex}")
+    typer.echo(f"x={stop.x}")
+    typer.echo(f"y={stop.y}")
+    typer.echo(f"z={stop.z}")
+    typer.echo(f"plane={stop.plane} {_plane_label(stop.plane)}")
+    if stop.merkle_root_hex:
+        typer.echo(f"merkle_root={stop.merkle_root_hex}")
+    if stop.block_hash_hex:
+        typer.echo(f"block_hash={stop.block_hash_hex}")
+    gps = stop.gps()
+    if gps is not None:
+        lat, lon, _alt = gps
+        typer.echo(f"lat={lat:.6f}")
+        typer.echo(f"lon={lon:.6f}")
+        typer.echo("alt_m=0 (WGS84 ellipsoid surface)")
+        typer.echo(f"maps={_maps_link(lat, lon)}")
+
+
+def _print_hyperjump_anchor(*, block_height: int, stop: Stop, event: dict) -> None:
     typer.echo(f"hyperjump_block_height={block_height}")
-    typer.echo(f"coord: 0x{coord_hex}")
-    typer.echo(f"x={x}")
-    typer.echo(f"y={y}")
-    typer.echo(f"z={z}")
-    typer.echo(f"plane={plane} {_plane_label(plane)}")
+    _print_stop(stop)
+    if stop.legacy:
+        typer.echo(
+            "anchor_format=legacy (no M tag; C read as merkle root and the stop derived locally per DECK-0001 v3 s2.2)"
+        )
+    else:
+        typer.echo("anchor_format=v3 (C verified against M/H)")
     event_id = str(event.get("id", ""))
     if event_id:
         typer.echo(f"event_id={event_id}")
+
+
+def _print_stop_distance(*, stop: Stop, from_xyz: Tuple[int, int, int], from_label: str, from_gps: Optional[Tuple[float, float]]) -> None:
+    """Distances from a reference point to a stop: protocol metric plus human units."""
+    typer.echo(f"from={from_label}")
+    typer.echo(f"from_x={from_xyz[0]}")
+    typer.echo(f"from_y={from_xyz[1]}")
+    typer.echo(f"from_z={from_xyz[2]}")
+    dx, dy, dz = stop.x - from_xyz[0], stop.y - from_xyz[1], stop.z - from_xyz[2]
+    typer.echo(f"delta_gibsons: X={dx:+d} Y={dy:+d} Z={dz:+d}")
+    typer.echo(
+        "delta_km: "
+        f"X={float(axis_gibsons_to_km(dx)):+.6f} Y={float(axis_gibsons_to_km(dy)):+.6f} Z={float(axis_gibsons_to_km(dz)):+.6f}"
+    )
+    hx, hy, hz = (find_lca_height(a, b) for a, b in zip(from_xyz, (stop.x, stop.y, stop.z)))
+    d = stop_distance(from_xyz, (stop.x, stop.y, stop.z))
+    typer.echo(f"lca_heights: X={hx} Y={hy} Z={hz}")
+    typer.echo(f"stop_distance_d={d} (DECK-0001 v3 s4.1; smallest aligned cube containing both, side {float(cube_side_km(d)):.3f} km)")
+    typer.echo(f"straight_line_km={straight_line_km(from_xyz, (stop.x, stop.y, stop.z)):.3f}")
+    gps = stop.gps()
+    if gps is not None and from_gps is not None:
+        typer.echo(f"geodesic_km={geodesic_km(from_gps[0], from_gps[1], gps[0], gps[1]):.3f} (WGS84 surface distance)")
+    elif gps is None:
+        typer.echo("geodesic_km=n/a (port in ideaspace has no surface position)")
+
+
+def _parse_from_gps(value: str) -> Tuple[float, float]:
+    parts = [p.strip() for p in value.split(",")]
+    if len(parts) != 2:
+        raise typer.BadParameter("--from-gps expects lat,lon")
+    try:
+        lat, lon = float(parts[0]), float(parts[1])
+    except ValueError as e:
+        raise typer.BadParameter("--from-gps expects numeric lat,lon") from e
+    if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
+        raise typer.BadParameter("--from-gps lat must be in [-90, 90] and lon in [-180, 180]")
+    return lat, lon
 
 
 @config_app.command("show")
@@ -1493,19 +1631,98 @@ def hyperjump_show(
         "-v",
         help="Print the Nostr REQ filter and raw nak output for debugging.",
     ),
+    source: str = typer.Option(
+        "relay",
+        "--source",
+        help="Where to get the block: 'relay' (kind=321 anchors) or 'mempool' (mempool.space REST API).",
+    ),
+    block_hash: Optional[str] = typer.Option(
+        None,
+        "--block-hash",
+        help="Offline: the block hash (display hex). With --merkle-root, no network access is needed.",
+    ),
+    merkle_root: Optional[str] = typer.Option(
+        None,
+        "--merkle-root",
+        help="Offline: the block merkle root (display hex). Decides port vs landfall.",
+    ),
+    from_coord: Optional[str] = typer.Option(
+        None,
+        "--from",
+        help="Print distances from this coordinate (x,y,z[,plane] or 0x<coord256>) to the stop.",
+    ),
+    from_gps: Optional[str] = typer.Option(
+        None,
+        "--from-gps",
+        help="Print distances from this WGS84 lat,lon (surface) to the stop.",
+    ),
 ) -> None:
-    """Show a hyperjump anchor for a specific block height."""
-    resolved = _query_hyperjump_anchor_for_height(
-        block_height=blockheight,
-        relay=relay,
-        limit=limit,
-        verbose=verbose,
-    )
-    if resolved is None:
-        typer.echo(f"No hyperjump found for block height {blockheight}.", err=True)
-        raise typer.Exit(code=1)
-    coord_hex, ev, xyzp = resolved
-    _print_hyperjump_anchor(block_height=blockheight, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+    """Show a hyperspace stop (port or landfall) for a block height, per DECK-0001 v3."""
+    if from_coord is not None and from_gps is not None:
+        raise typer.BadParameter("Use only one of --from or --from-gps.")
+    if source not in ("relay", "mempool"):
+        raise typer.BadParameter("--source must be 'relay' or 'mempool'.")
+
+    stop: Optional[Stop] = None
+    ev: Optional[dict] = None
+    if block_hash is not None or merkle_root is not None:
+        if merkle_root is None:
+            raise typer.BadParameter("--block-hash requires --merkle-root (the merkle root decides the plane).")
+        try:
+            stop = stop_from_block(merkle_root_hex=merkle_root, block_hash_hex=block_hash)
+        except StopError as e:
+            typer.echo(f"Cannot derive stop: {e}", err=True)
+            raise typer.Exit(code=2)
+    elif source == "mempool":
+        try:
+            h_hex, m_hex = _fetch_block_from_mempool(blockheight)
+        except Exception as e:  # network / parse errors
+            typer.echo(f"mempool.space lookup failed for height {blockheight}: {e}", err=True)
+            raise typer.Exit(code=1)
+        stop = stop_from_block(merkle_root_hex=m_hex, block_hash_hex=h_hex)
+    else:
+        resolved = _query_hyperjump_anchor_for_height(
+            block_height=blockheight,
+            relay=relay,
+            limit=limit,
+            verbose=verbose,
+        )
+        if resolved is None:
+            typer.echo(
+                f"No hyperjump found for block height {blockheight}. "
+                "Try --source mempool, or --block-hash/--merkle-root for an offline derivation.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        stop, ev = resolved
+
+    typer.echo(f"hyperjump_block_height={blockheight}")
+    typer.echo(f"deck=DECK-0001 {DECK_0001_VERSION}")
+    _print_stop(stop)
+    if ev is not None:
+        typer.echo("anchor_format=" + ("legacy (no M tag; C read as merkle root and the stop derived locally per DECK-0001 v3 s2.2)" if stop.legacy else "v3 (C verified against M/H)"))
+        event_id = str(ev.get("id", ""))
+        if event_id:
+            typer.echo(f"event_id={event_id}")
+    else:
+        typer.echo(f"source={'offline' if block_hash is not None or merkle_root is not None else 'mempool.space'} (derived locally; not an anchor event)")
+
+    if from_gps is not None:
+        lat, lon = _parse_from_gps(from_gps)
+        fx, fy, fz = gps_to_dataspace_xyz(lat, lon)
+        _print_stop_distance(stop=stop, from_xyz=(fx, fy, fz), from_label=f"gps {lat:.6f},{lon:.6f} (WGS84 surface)", from_gps=(lat, lon))
+    elif from_coord is not None:
+        try:
+            parsed = parse_destination_xyz_or_coord(from_coord, default_plane=stop.plane)
+        except ValueError as e:
+            raise typer.BadParameter(str(e)) from e
+        fxyz = (parsed.x, parsed.y, parsed.z)
+        fgps = None
+        if parsed.plane == 0 and stop.plane == 0:
+            flat, flon, _ = dataspace_coord_to_gps(xyz_to_coord(*fxyz, parsed.plane))[:3]
+            fgps = (flat, flon)
+        _print_stop_distance(stop=stop, from_xyz=fxyz, from_label=f"0x{_coord_hex_from_xyz(parsed.x, parsed.y, parsed.z, parsed.plane)}", from_gps=fgps)
+
 
 @hyperjump_app.command("to")
 def hyperjump_to(
@@ -1554,9 +1771,10 @@ def hyperjump_to(
         typer.echo(f"No hyperjump found for block height {blockheight}.", err=True)
         raise typer.Exit(code=1)
 
-    coord_hex, ev, xyzp = resolved
+    stop, ev = resolved
+    coord_hex = stop.coord_hex
     if view:
-        _print_hyperjump_anchor(block_height=blockheight, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+        _print_hyperjump_anchor(block_height=blockheight, stop=stop, event=ev)
         return
 
     # Action-creating commands are restricted to the hyperjump system.
@@ -1571,8 +1789,9 @@ def hyperjump_to(
         hyperjump_relay=relay,
         hyperjump_query_limit=hyperjump_query_limit,
         exit_hyperjump=False,
+        hyperjump_height=blockheight,
     )
-    _print_hyperjump_anchor(block_height=blockheight, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+    _print_hyperjump_anchor(block_height=blockheight, stop=stop, event=ev)
 
 
 @hyperjump_app.command("next")
@@ -1619,9 +1838,10 @@ def hyperjump_next(
         typer.echo(f"No hyperjump found for block height {target_block_height}.", err=True)
         raise typer.Exit(code=1)
 
-    coord_hex, ev, xyzp = resolved
+    stop, ev = resolved
+    coord_hex = stop.coord_hex
     if view:
-        _print_hyperjump_anchor(block_height=target_block_height, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+        _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
         return
 
     move(
@@ -1634,8 +1854,9 @@ def hyperjump_next(
         hyperjump_relay=relay,
         hyperjump_query_limit=hyperjump_query_limit,
         exit_hyperjump=False,
+        hyperjump_height=target_block_height,
     )
-    _print_hyperjump_anchor(block_height=target_block_height, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+    _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
 
 
 @hyperjump_app.command("prev")
@@ -1686,9 +1907,10 @@ def hyperjump_prev(
         typer.echo(f"No hyperjump found for block height {target_block_height}.", err=True)
         raise typer.Exit(code=1)
 
-    coord_hex, ev, xyzp = resolved
+    stop, ev = resolved
+    coord_hex = stop.coord_hex
     if view:
-        _print_hyperjump_anchor(block_height=target_block_height, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+        _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
         return
 
     move(
@@ -1701,8 +1923,9 @@ def hyperjump_prev(
         hyperjump_relay=relay,
         hyperjump_query_limit=hyperjump_query_limit,
         exit_hyperjump=False,
+        hyperjump_height=target_block_height,
     )
-    _print_hyperjump_anchor(block_height=target_block_height, coord_hex=coord_hex, event=ev, xyzp=xyzp)
+    _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
 
 
 # Maximum number of tag values per relay request.  Relays typically reject
@@ -1712,6 +1935,23 @@ MAX_TAG_VALUES = 2000
 
 # Progressive expansion schedule: radii to try in order when --expand is used.
 _EXPAND_RADII = [2, 5, 10, 25, 50, 100, 200, 333]
+
+
+def _normalize_cached_anchor(ev: dict, coord_hex: str) -> dict:
+    """Store legacy anchors in v3 shape (C = stop coord, M = merkle root) so cache reads skip re-derivation.
+
+    The copy is marked so nobody mistakes it for the signed original: its tags no longer hash to `id`.
+    """
+    if _get_tag(ev, "M") is not None:
+        return ev
+    out = dict(ev)
+    tags = [list(t) for t in ev.get("tags", []) if isinstance(t, list)]
+    merkle = next((t[1] for t in tags if len(t) >= 2 and t[0] == "C"), None)
+    out["tags"] = [["C", coord_hex] if (len(t) >= 2 and t[0] == "C") else t for t in tags]
+    if merkle is not None:
+        out["tags"].append(["M", normalize_hex_32(merkle)])
+    out["cyberspace_cli_normalized"] = "legacy anchor rewritten to DECK-0001 v3 shape; id/sig do not cover these tags"
+    return out
 
 
 def _load_hyperjump_cache() -> List[dict]:
@@ -1733,17 +1973,14 @@ def _load_hyperjump_cache() -> List[dict]:
     return events
 
 
-def _dedup_hyperjumps(events: List[dict]) -> Dict[str, dict]:
-    """Deduplicate hyperjump events by coordinate, keeping the most recent."""
+def _dedup_hyperjumps(events: List[dict], *, verify: bool = True) -> Dict[str, dict]:
+    """Deduplicate anchors by resolved stop coordinate (DECK-0001 v3), keeping the most recent."""
     by_coord: Dict[str, dict] = {}
     for ev in events:
-        c = _get_tag(ev, "C")
-        if not c:
+        stop = _stop_from_anchor(ev, verify=verify)
+        if stop is None:
             continue
-        try:
-            c_norm = normalize_hex_32(c)
-        except ValueError:
-            continue
+        c_norm = stop.coord_hex
         prior = by_coord.get(c_norm)
         if prior is None or int(ev.get("created_at", 0)) > int(prior.get("created_at", 0)):
             by_coord[c_norm] = ev
@@ -1795,6 +2032,7 @@ def _print_ranked_hyperjumps(
         dir_hint = " ".join([_direction_hint(cx, x, "x"), _direction_hint(cy, y, "y"), _direction_hint(cz, z, "z")])
         typer.echo(f"{i}. id={event_id}")
         typer.echo(f"coord=0x{coord_hex}")
+        typer.echo(f"stop_kind={'port' if plane == 1 else 'landfall'}")
         typer.echo(f"B={b_tag}")
         typer.echo(f"x={x}")
         typer.echo(f"y={y}")
@@ -1948,8 +2186,8 @@ def hyperjump_sync(
     by_coord = _dedup_hyperjumps(all_events)
 
     with open(cache, "w") as f:
-        for ev in by_coord.values():
-            f.write(json.dumps(ev, separators=(",", ":"), ensure_ascii=False) + "\n")
+        for coord_hex, ev in by_coord.items():
+            f.write(json.dumps(_normalize_cached_anchor(ev, coord_hex), separators=(",", ":"), ensure_ascii=False) + "\n")
 
     # Report block range covered
     if all_events:
@@ -2054,7 +2292,7 @@ def hyperjump_nearest(
                 err=True,
             )
             raise typer.Exit(code=1)
-        by_coord = _dedup_hyperjumps(cached_events)
+        by_coord = _dedup_hyperjumps(cached_events, verify=False)
         ranked = _rank_hyperjumps(by_coord, sx, sy, sz, cx, cy, cz)
         if not ranked:
             typer.echo("No hyperjumps found in cache.")
@@ -2135,7 +2373,7 @@ def hyperjump_nearest(
 
 @move_app.callback()
 def move(
-    ctx: typer.Context,
+    ctx: typer.Context = None,
     to: str = typer.Option(
         None,
         "--to",
@@ -2213,6 +2451,12 @@ def move(
         "--cloud-api",
         help="HOSAKA API base URL (default: config cloud_api_url).",
     ),
+    hyperjump_height: Optional[int] = typer.Option(
+        None,
+        "--hyperjump-height",
+        hidden=True,
+        help="Block height of the hyperjump destination (lets validation query anchors by B instead of C).",
+    ),
 ) -> None:
     """Move locally by appending a hop, sidestep, or hyperjump event to the active chain.
 
@@ -2220,7 +2464,7 @@ def move(
     sats) unless cloud mode is off; see `cyberspace cloud --help`.
     """
     # If a subcommand is being invoked (like 'viz'), skip the callback
-    if ctx.invoked_subcommand is not None:
+    if ctx is not None and ctx.invoked_subcommand is not None:
         return
     
     if isinstance(hyperjump, OptionInfo):
@@ -2243,6 +2487,8 @@ def move(
         cloud_max_sats = None
     if isinstance(cloud_api, OptionInfo):
         cloud_api = None
+    if isinstance(hyperjump_height, OptionInfo):
+        hyperjump_height = None
     if sidestep and hyperjump:
         typer.echo("--sidestep cannot be combined with --hyperjump.", err=True)
         raise typer.Exit(code=2)
@@ -2497,6 +2743,11 @@ def move(
         else:
             typer.echo(f"action: hyperjump")
             typer.echo(f"B: {hyperjump_to_height}")
+            typer.echo(
+                "warning: DECK-0001 v3 ride semantics (enter-hyperspace, station, as_of, per-block ride proof + mp openings) "
+                "are not implemented yet; this event is the pre-v3 hyperjump shape and will not verify under v3.",
+                err=True,
+            )
         if cloud_obj is not None:
             typer.echo(f"source: HOSAKA cloud job {cloud_obj.job_id} ({(cloud_obj.cost_msats + 999) // 1000} sats)")
             if getattr(cloud_obj, "lookup_id", None):
@@ -2509,24 +2760,37 @@ def move(
         if not hyperjump:
             return None
         dest_coord_hex = _coord_hex_from_xyz(x, y, z, plane)
+        # Ports and v3 anchors are indexed by C. Legacy landfall anchors are not
+        # (their C is the merkle root), so a height hint lets us query by B and
+        # compare the derived stop coordinate instead.
+        if hyperjump_height is not None:
+            resolved = _query_hyperjump_anchor_for_height(
+                block_height=int(hyperjump_height),
+                relay=hyperjump_relay,
+                limit=hyperjump_query_limit,
+            )
+            if resolved is not None and resolved[0].coord_hex == dest_coord_hex:
+                return str(hyperjump_height)
         anchors = _nak_req_events(
             relay=hyperjump_relay,
             kind=HYPERJUMP_KIND,
             tags={"C": [dest_coord_hex]},
             limit=hyperjump_query_limit,
         )
-        if not anchors:
-            typer.echo(
-                f"Destination is not a known hyperjump coordinate on relay {hyperjump_relay}: 0x{dest_coord_hex}",
-                err=True,
-            )
-            raise typer.Exit(code=2)
-        anchor = anchors[0]
-        b_tag = _get_tag(anchor, "B")
-        if not b_tag:
-            typer.echo("Matched hyperjump anchor event is missing required B tag.", err=True)
-            raise typer.Exit(code=2)
-        return b_tag
+        for anchor in sorted(anchors, key=_anchor_rank_key, reverse=True):
+            stop = _stop_from_anchor(anchor)
+            if stop is None or stop.coord_hex != dest_coord_hex:
+                continue
+            b_tag = _get_tag(anchor, "B")
+            if not b_tag:
+                typer.echo("Matched hyperjump anchor event is missing required B tag.", err=True)
+                raise typer.Exit(code=2)
+            return b_tag
+        typer.echo(
+            f"Destination is not a known hyperjump coordinate on relay {hyperjump_relay}: 0x{dest_coord_hex}",
+            err=True,
+        )
+        raise typer.Exit(code=2)
 
     if toward is not None:
         try:

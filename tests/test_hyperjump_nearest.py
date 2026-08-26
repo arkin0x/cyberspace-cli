@@ -14,7 +14,7 @@ from cyberspace_cli.cli import app
 runner = CliRunner()
 
 
-def _setup_min_state(coord_hex: str = "0" * 64) -> None:
+def _setup_min_state(coord_hex: str = "0" * 63 + "1") -> None:
     """Write a minimal state.json into the temp CYBERSPACE_HOME."""
     from cyberspace_cli.paths import cyberspace_home
     home = cyberspace_home()
@@ -43,6 +43,7 @@ def _make_hyperjump_event(coord_hex: str, block_height: int = 1, event_id: str =
             ["A", "hyperjump"],
             ["B", str(block_height)],
             ["C", coord_hex],
+            ["M", coord_hex],
             ["X", "0"],
             ["Y", "0"],
             ["Z", "0"],
@@ -59,11 +60,11 @@ class TestHyperjumpNearestExpand(unittest.TestCase):
         # Return empty for first few radii, then return a result.
         call_count = [0]
 
-        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False):
+        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False, **_kw):
             call_count[0] += 1
             if call_count[0] < 3:
                 return []
-            return [_make_hyperjump_event("0" * 64)]
+            return [_make_hyperjump_event("0" * 63 + "1")]
 
         old_home = os.environ.get("CYBERSPACE_HOME")
         try:
@@ -84,7 +85,7 @@ class TestHyperjumpNearestExpand(unittest.TestCase):
 
     def test_expand_no_results(self) -> None:
         """--expand with no hyperjumps anywhere should print guidance."""
-        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False):
+        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False, **_kw):
             return []
 
         old_home = os.environ.get("CYBERSPACE_HOME")
@@ -134,7 +135,7 @@ class TestHyperjumpNearestCache(unittest.TestCase):
                 from cyberspace_cli.paths import hyperjump_cache_path
                 cache = hyperjump_cache_path()
                 cache.parent.mkdir(parents=True, exist_ok=True)
-                ev = _make_hyperjump_event("0" * 64)
+                ev = _make_hyperjump_event("0" * 63 + "1")
                 cache.write_text(json.dumps(ev) + "\n")
 
                 res = runner.invoke(app, ["hyperjump", "nearest", "--cache"])
@@ -153,12 +154,12 @@ class TestHyperjumpNearestCount(unittest.TestCase):
     def test_count_limits_output(self) -> None:
         """--count should limit the number of displayed results."""
         events = [
-            _make_hyperjump_event("0" * 64, event_id="aa" * 32),
-            _make_hyperjump_event("0" * 63 + "1", event_id="bb" * 32),
-            _make_hyperjump_event("0" * 63 + "2", event_id="cc" * 32),
+            _make_hyperjump_event("0" * 63 + "1", event_id="aa" * 32),
+            _make_hyperjump_event("0" * 63 + "3", event_id="bb" * 32),
+            _make_hyperjump_event("0" * 63 + "5", event_id="cc" * 32),
         ]
 
-        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False):
+        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False, **_kw):
             return events
 
         old_home = os.environ.get("CYBERSPACE_HOME")
@@ -184,9 +185,9 @@ class TestHyperjumpSync(unittest.TestCase):
 
     def test_sync_creates_cache(self) -> None:
         """sync should write events to the cache file."""
-        events = [_make_hyperjump_event("0" * 64)]
+        events = [_make_hyperjump_event("0" * 63 + "1")]
 
-        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False):
+        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False, **_kw):
             return events
 
         old_home = os.environ.get("CYBERSPACE_HOME")
@@ -207,7 +208,7 @@ class TestHyperjumpSync(unittest.TestCase):
 
     def test_sync_no_events(self) -> None:
         """sync with empty relay should print message."""
-        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False):
+        def mock_nak_req_events(*, relay, kind, tags, limit, timeout_seconds=20, verbose=False, **_kw):
             return []
 
         old_home = os.environ.get("CYBERSPACE_HOME")
