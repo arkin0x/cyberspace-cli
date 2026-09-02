@@ -6,14 +6,19 @@ import subprocess
 from decimal import Decimal, InvalidOperation
 
 import time
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import typer
 from typer.models import OptionInfo
 
 from cyberspace_cli import chains
 from cyberspace_cli import targets
+from cyberspace_cli import cloud_jobs
+from cyberspace_cli.cloud_cli import cloud_app
+from cyberspace_cli.cloud_move import CloudDeclined, CloudOptions, CloudVerificationFailed, run_cloud_move
+from cyberspace_cli.cloud_verify import CloudSidestep
 from cyberspace_cli.config import load_config, save_config
+from cyberspace_cli.hosaka import CloudError, HosakaClient
 from cyberspace_cli.paths import hyperjump_cache_path
 from cyberspace_cli.helptext import HELP_TEXT
 from cyberspace_cli.nostr_event import (
@@ -79,6 +84,7 @@ app.add_typer(
     help="Inspect hyperjumps from anywhere (show/nearest); creating hyperjump actions (to/next/prev) requires being on the hyperjump system.",
 )
 app.add_typer(move_app, name="move", help="Movement commands including interactive visualization.")
+app.add_typer(cloud_app, name="cloud", help="HOSAKA cloud compute: quotes, jobs, balance, deposits.")
 
 
 def _plane_label(plane: int) -> str:
@@ -416,6 +422,9 @@ def config_show() -> None:
     cfg = load_config()
     typer.echo(f"default_max_lca_height: {cfg.default_max_lca_height}")
     typer.echo(f"gps_geoid_model: {cfg.gps_geoid_model}")
+    typer.echo(f"cloud_mode: {cfg.cloud_mode}")
+    typer.echo(f"cloud_api_url: {cfg.cloud_api_url}")
+    typer.echo(f"cloud_auto_max_sats: {cfg.cloud_auto_max_sats}")
 
 
 @config_app.command("set")
@@ -2178,8 +2187,38 @@ def move(
         "--exit-hyperjump",
         help="Allow a normal hop while on the hyperjump system (explicitly exits the hyperjump flow).",
     ),
+    cloud_auto: bool = typer.Option(
+        False,
+        "--cloud-auto",
+        help="When a hop is taller than this machine computes, submit it to HOSAKA without asking (up to the budget).",
+    ),
+    no_cloud: bool = typer.Option(
+        False,
+        "--no-cloud",
+        help="Never use HOSAKA for this run; refuse hops above --max-lca-height as before.",
+    ),
+    cloud_yes: bool = typer.Option(
+        False,
+        "--cloud-yes",
+        help="Accept the HOSAKA quote without a prompt, whatever the price.",
+    ),
+    cloud_max_sats: Optional[int] = typer.Option(
+        None,
+        "--cloud-max-sats",
+        min=0,
+        help="Refuse any HOSAKA quote above this many sats for this run.",
+    ),
+    cloud_api: Optional[str] = typer.Option(
+        None,
+        "--cloud-api",
+        help="HOSAKA API base URL (default: config cloud_api_url).",
+    ),
 ) -> None:
-    """Move locally by appending a hop, sidestep, or hyperjump event to the active chain."""
+    """Move locally by appending a hop, sidestep, or hyperjump event to the active chain.
+
+    Hops taller than this machine's ceiling go to HOSAKA (cloud compute, paid in
+    sats) unless cloud mode is off; see `cyberspace cloud --help`.
+    """
     # If a subcommand is being invoked (like 'viz'), skip the callback
     if ctx.invoked_subcommand is not None:
         return
@@ -2194,6 +2233,16 @@ def move(
         sidestep = False
     if isinstance(exit_hyperjump, OptionInfo):
         exit_hyperjump = False
+    if isinstance(cloud_auto, OptionInfo):
+        cloud_auto = False
+    if isinstance(no_cloud, OptionInfo):
+        no_cloud = False
+    if isinstance(cloud_yes, OptionInfo):
+        cloud_yes = False
+    if isinstance(cloud_max_sats, OptionInfo):
+        cloud_max_sats = None
+    if isinstance(cloud_api, OptionInfo):
+        cloud_api = None
     if sidestep and hyperjump:
         typer.echo("--sidestep cannot be combined with --hyperjump.", err=True)
         raise typer.Exit(code=2)
@@ -2202,6 +2251,27 @@ def move(
 
     cfg = load_config()
     effective_max_lca_height = int(max_lca_height) if max_lca_height is not None else int(cfg.default_max_lca_height)
+
+    cloud_opts = CloudOptions(
+        mode="off" if no_cloud else ("auto" if cloud_auto else cfg.cloud_mode),
+        api_url=cloud_api or cfg.cloud_api_url,
+        auto_max_sats=int(cfg.cloud_auto_max_sats),
+        yes=bool(cloud_yes),
+        max_sats=cloud_max_sats,
+    )
+    _cloud_limits_cache: Dict[str, Any] = {}
+
+    def _cloud_sidestep_cap() -> int:
+        """The server's sidestep cap, fetched once; 0 when the cloud is off or unreachable."""
+        if not cloud_opts.enabled:
+            return 0
+        if "cap" not in _cloud_limits_cache:
+            try:
+                _cloud_limits_cache["cap"] = HosakaClient(cloud_opts.api_url).limits().max_sidestep_height
+            except CloudError as e:
+                typer.echo(f"HOSAKA unreachable ({e}); continuing without cloud compute.", err=True)
+                _cloud_limits_cache["cap"] = 0
+        return int(_cloud_limits_cache["cap"])
 
     events = chains.read_events(label)
     if not events:
@@ -2300,13 +2370,46 @@ def move(
                 except ValueError as e:
                     typer.echo(f"Failed to compute sidestep proof: {e}", err=True)
                     raise typer.Exit(code=2)
+            elif max(hx, hy, hz) > max_compute_height and cloud_opts.enabled:
+                # Local first, cloud second, sidestep third: HOSAKA computes what
+                # this machine will not, and the result is verified before signing.
+                try:
+                    cloud_result = run_cloud_move(
+                        privkey_hex=state.privkey_hex,
+                        pubkey_hex=state.pubkey_hex,
+                        chain_label=label,
+                        opts=cloud_opts,
+                        x1=x1, y1=y1, z1=z1, x2=x2, y2=y2, z2=z2, plane2=plane2,
+                        previous_event_id=prev_event_id,
+                        local_ceiling=max_compute_height,
+                        echo=typer.echo,
+                        confirm=lambda q: typer.confirm(q, default=False),
+                    )
+                except CloudDeclined as e:
+                    typer.echo(f"Cloud hop not submitted: {e}", err=True)
+                    raise typer.Exit(code=2)
+                except CloudVerificationFailed as e:
+                    typer.echo("HOSAKA result failed verification; nothing was appended:", err=True)
+                    for f in e.failures:
+                        typer.echo(f"  - {f}", err=True)
+                    raise typer.Exit(code=3)
+                except CloudError as e:
+                    typer.echo(f"HOSAKA: {e}", err=True)
+                    raise typer.Exit(code=2)
+                except KeyboardInterrupt:
+                    raise typer.Exit(code=130)
+                if isinstance(cloud_result, CloudSidestep):
+                    sidestep_proof = cloud_result
+                else:
+                    proof = cloud_result
             else:
                 if max(hx, hy, hz) > max_compute_height:
                     typer.echo(
                         "Move is too large for a single hop. "
                         f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
                         f"limit={max_compute_height}. "
-                        "Use --sidestep for Merkle proof, or raise --max-lca-height for an expensive Cantor hop.",
+                        "Use --sidestep for Merkle proof, raise --max-lca-height for an expensive Cantor hop, "
+                        "or enable HOSAKA cloud compute (`cyberspace cloud config --mode auto`).",
                         err=True,
                     )
                     raise typer.Exit(code=2)
@@ -2377,6 +2480,10 @@ def move(
         prev_event_id = movement_event["id"]
         x1, y1, z1, plane1 = x2, y2, z2, plane2
 
+        cloud_obj = next((o for o in (sidestep_proof, proof) if getattr(o, "source", "") == "cloud"), None)
+        if cloud_obj is not None:
+            cloud_jobs.update(cloud_obj.job_id, state="appended", event_id=movement_event["id"])
+
         typer.echo(f"Moved. chain={label} len={chains.chain_length(label)}")
         typer.echo(f"coord: 0x{coord_hex}")
         if sidestep_proof is not None:
@@ -2390,6 +2497,11 @@ def move(
         else:
             typer.echo(f"action: hyperjump")
             typer.echo(f"B: {hyperjump_to_height}")
+        if cloud_obj is not None:
+            typer.echo(f"source: HOSAKA cloud job {cloud_obj.job_id} ({(cloud_obj.cost_msats + 999) // 1000} sats)")
+            if getattr(cloud_obj, "lookup_id", None):
+                typer.echo(f"lookup_id: {cloud_obj.lookup_id}")
+                typer.echo("location_decryption_key: kept in the cloud job record (cyberspace cloud status " + cloud_obj.job_id + ")")
 
         return sidestep_proof or proof
 
@@ -2499,10 +2611,10 @@ def move(
                                     f"{msg} (boundary crossing would require LCA height={needed}, "
                                     f"exceeds sidestep ceiling={SIDESTEP_BOUNDARY_CEILING})"
                                 )
-                        elif needed != effective_max_lca_height + 1:
+                        elif needed != effective_max_lca_height + 1 and needed > _cloud_sidestep_cap():
                             raise ValueError(
                                 f"{msg} (boundary crossing would require max_lca_height={needed}; "
-                                f"rerun with --max-lca-height {needed})"
+                                f"rerun with --max-lca-height {needed}, or enable HOSAKA cloud compute)"
                             )
                         return nxt, needed, True
 
@@ -2520,6 +2632,10 @@ def move(
                     # Use the actual max LCA needed across all boundary axes.
                     boundary_heights = [h for h, used in ((hx, bx), (hy, by_), (hz, bz)) if used]
                     hop_limit = max(boundary_heights) if boundary_heights else effective_max_lca_height + 1
+                    if cloud_opts.enabled and not sidestep:
+                        # One height above the ceiling is still computed here; anything
+                        # taller goes to HOSAKA from inside _do_single_hop.
+                        hop_limit = min(hop_limit, effective_max_lca_height + 1)
                     typer.echo(
                         "LCA boundary encountered on axis "
                         + ",".join(boundary_axes)

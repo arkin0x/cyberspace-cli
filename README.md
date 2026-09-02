@@ -13,6 +13,7 @@ This repo is intentionally separate from the current research/prototype code und
 - Includes coordinate and proof tooling: `whereami`, `sector`, `gps` (both directions), `cantor`, `bench`
 - Supports location-encrypted content workflows: `encrypt`, `decrypt`, and `scan`
 - Supports persisted local config and target management (`config`, `target` commands)
+- Offloads hops taller than this machine's ceiling to **HOSAKA cloud compute**, paid in sats over Lightning, and verifies every result before signing (`cloud` commands)
 - Includes optional visual tools (`3d`, `lcaplot`) with extra dependencies
 
 ## What this CLI does NOT do (yet)
@@ -181,6 +182,51 @@ cyberspace scan --min-height 1 --max-height 12
 cyberspace scan --events-file ./events.jsonl
 ```
 
+## Cloud compute (HOSAKA)
+
+A hop's cost is O(2^h) in the tallest per-axis LCA height. Above the local
+ceiling (`--max-lca-height`, default 16) the move command asks HOSAKA, the
+cloud compute service, to compute the proof. Local first, cloud second,
+sidestep third: if the height is within HOSAKA's hop cap you buy a hop; if it
+is taller than that but within the sidestep cap you buy a sidestep, which
+lands exactly 1 gibson past the wall (so use `--toward`, which walks boundary
+by boundary). The CLI never trusts the result blindly: terrain K, the temporal
+root, trivial axes, any axis within the local ceiling and every envelope hash
+are recomputed here for hops, and sidesteps get full Level 1 verification
+(inclusion paths for the destination leaf, region_m, proof hash). A result
+that fails any check is never appended.
+
+Payment: the server quotes a price; on approval it issues a Lightning invoice
+from the operator's node. Pay it with any wallet (the bolt11 and a
+`lightning:` URI are printed; a QR code too when `pip install
+'cyberspace-cli[cloud]'` is present). The job starts when the node reports
+settlement and the result is polled with a per-job token. A prepaid balance
+(`cloud deposit`) skips the invoice step on later moves. Auto mode never means
+auto-pay: the CLI has no wallet.
+
+```bash
+cyberspace cloud config --mode auto --auto-max-sats 50   # submit without asking up to 50 sats
+cyberspace cloud limits                                   # server caps and minimums
+cyberspace cloud quote --to 100000,200,300                # price a move without submitting
+cyberspace move --to 100000,200,300                       # taller than the ceiling: quoted, paid, verified, appended
+cyberspace move --toward 0x... --cloud-yes                # accept every quote this run
+cyberspace move --to ... --no-cloud                       # refuse tall hops as before
+cyberspace cloud deposit 500                              # prepay 500 sats
+cyberspace cloud balance
+cyberspace cloud jobs                                     # local record of cloud jobs
+cyberspace cloud status <job_id>                          # server status, and the region key of a completed hop
+cyberspace cloud resume <job_id>                          # finish an interrupted job (refused if the chain moved on)
+```
+
+Flags on `move`: `--cloud-auto`, `--cloud-yes`, `--cloud-max-sats N`,
+`--cloud-api URL`, `--no-cloud`. Config keys: `cloud_mode` (auto | ask | off),
+`cloud_api_url`, `cloud_auto_max_sats`.
+
+A cloud hop hands over the region's location decryption key (`region_n.secret_key`),
+which the operator therefore also holds. Every paid job is recorded in
+`~/.cyberspace/cloud_jobs.jsonl` before the invoice is shown, so Ctrl+C or a
+crash after paying loses nothing: `cyberspace cloud resume <job_id>`.
+
 ## Optional GUI dependencies
 The `cyberspace 3d` and `cyberspace lcaplot` commands require extra dependencies:
 ```bash
@@ -194,6 +240,8 @@ On Linux you may also need `python3-tk` for Tkinter.
   - Includes the current coordinate and which chain is active.
 - Chains: `~/.cyberspace/chains/<label>.jsonl`
   - One JSON event per line.
+- Cloud jobs: `~/.cyberspace/cloud_jobs.jsonl`
+  - One HOSAKA job per line: id, poll token, the move, the chain head it was bound to, state.
 
 ## Environment variables
 - `CYBERSPACE_HOME`: override `~/.cyberspace`
