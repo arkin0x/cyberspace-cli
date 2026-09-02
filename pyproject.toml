@@ -27,6 +27,10 @@ visualizer = [
 viz = [
   "textual>=0.50.0",
 ]
+# Optional terminal QR codes for HOSAKA invoices (`cyberspace move` beyond the local ceiling).
+cloud = [
+  "qrcode>=7.4",
+]
 
 [project.scripts]
 cyberspace = "cyberspace_cli.cli:app"

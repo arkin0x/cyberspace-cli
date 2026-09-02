@@ -12,12 +12,22 @@ CONFIG_VERSION = "2026-03-18-cli-config-v2"
 
 DEFAULT_MAX_LCA_HEIGHT = 16
 
+# HOSAKA cloud compute. "auto" submits without asking up to cloud_auto_max_sats
+# (0 means always ask), "ask" always asks, "off" restores the plain refusal.
+DEFAULT_CLOUD_MODE = "auto"
+DEFAULT_CLOUD_API_URL = "https://arkin0x--hosaka-api-api-server.modal.run"
+DEFAULT_CLOUD_AUTO_MAX_SATS = 0
+CLOUD_MODES = ("auto", "ask", "off")
+
 
 @dataclass
 class CyberspaceConfig:
     version: str
     default_max_lca_height: int
     gps_geoid_model: str
+    cloud_mode: str = DEFAULT_CLOUD_MODE
+    cloud_api_url: str = DEFAULT_CLOUD_API_URL
+    cloud_auto_max_sats: int = DEFAULT_CLOUD_AUTO_MAX_SATS
 
     @staticmethod
     def default() -> "CyberspaceConfig":
@@ -37,10 +47,20 @@ class CyberspaceConfig:
             geoid_model = normalize_geoid_model(str(d.get("gps_geoid_model", DEFAULT_GEOID_MODEL)))
         except Exception:
             geoid_model = DEFAULT_GEOID_MODEL
+        cloud_mode = str(d.get("cloud_mode", DEFAULT_CLOUD_MODE)).lower()
+        if cloud_mode not in CLOUD_MODES:
+            cloud_mode = DEFAULT_CLOUD_MODE
+        try:
+            auto_max = max(0, int(d.get("cloud_auto_max_sats", DEFAULT_CLOUD_AUTO_MAX_SATS)))
+        except Exception:
+            auto_max = DEFAULT_CLOUD_AUTO_MAX_SATS
         return CyberspaceConfig(
             version=str(d.get("version", "")) or CONFIG_VERSION,
             default_max_lca_height=v,
             gps_geoid_model=geoid_model,
+            cloud_mode=cloud_mode,
+            cloud_api_url=str(d.get("cloud_api_url") or DEFAULT_CLOUD_API_URL),
+            cloud_auto_max_sats=auto_max,
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -48,6 +68,9 @@ class CyberspaceConfig:
             "version": self.version,
             "default_max_lca_height": int(self.default_max_lca_height),
             "gps_geoid_model": self.gps_geoid_model,
+            "cloud_mode": self.cloud_mode,
+            "cloud_api_url": self.cloud_api_url,
+            "cloud_auto_max_sats": int(self.cloud_auto_max_sats),
         }
 
 
