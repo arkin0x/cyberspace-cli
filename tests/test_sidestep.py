@@ -271,16 +271,25 @@ class TestSidestepProof:
             plane=0,
             previous_event_id_hex=self.PREV_ID,
         )
-        # Verify X axis inclusion proof for the source leaf
+        # The path is for the destination leaf (CYBERSPACE_V2 6.10), on every axis.
         hx, hy, hz = proof.lca_heights
-        base_x = (0 >> hx) << hx
-        assert verify_merkle_inclusion(
-            leaf_value=base_x,  # leaf 0 = base
-            siblings=proof.inclusion_proofs["x"],
-            expected_root=proof.merkle_x,
-            height=hx,
-            base=base_x,
-        )
+        for axis, v1, v2, h, root in (("x", 0, 4, hx, proof.merkle_x), ("y", 0, 2, hy, proof.merkle_y), ("z", 0, 1, hz, proof.merkle_z)):
+            base = (v1 >> h) << h
+            assert verify_merkle_inclusion(
+                leaf_value=v2,
+                siblings=proof.inclusion_proofs[axis],
+                expected_root=root,
+                height=h,
+                base=base,
+            ), axis
+            # and it is not a proof for the source leaf
+            assert not verify_merkle_inclusion(
+                leaf_value=v1,
+                siblings=proof.inclusion_proofs[axis],
+                expected_root=root,
+                height=h,
+                base=base,
+            ), axis
 
     def test_double_sha256_proof_hash(self):
         """Verify proof_hash is double SHA256 of sidestep_n."""

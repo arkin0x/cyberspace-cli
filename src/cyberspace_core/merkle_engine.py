@@ -133,6 +133,19 @@ def compute_subtree_root_with_proof(
     return _py_compute_subtree_root_with_proof(base, height)
 
 
+def _subtree_root_with_proof_for(
+    base: int, height: int, target_index: int
+) -> Tuple[bytes, List[bytes]]:
+    """Root and inclusion proof for any leaf of a subtree. Leaf 0 keeps the
+    accelerated path; other leaves use the streaming reference, which is
+    exact and only ever runs on one subtree."""
+    if target_index == 0:
+        return compute_subtree_root_with_proof(base, height)
+    from cyberspace_core.movement import compute_axis_merkle_root_streaming
+
+    return compute_axis_merkle_root_streaming(base, height, target_index=target_index)
+
+
 # ---------------------------------------------------------------------------
 # Worker function for multiprocessing (must be top-level / picklable)
 # ---------------------------------------------------------------------------
@@ -222,12 +235,14 @@ def parallel_merkle_root_with_proof(
     base: int,
     height: int,
     workers: Optional[int] = None,
+    target_index: int = 0,
 ) -> Tuple[bytes, List[bytes]]:
-    """Compute Merkle root and inclusion proof for leaf 0, using parallelism.
+    """Compute Merkle root and the inclusion proof for one leaf, using parallelism.
 
-    The proof is collected as:
-    1. The inner proof from the leftmost subtree (leaf 0 to subtree root).
-    2. The sibling subtree roots at the upper merge levels.
+    CYBERSPACE_V2 6.10 wants the destination leaf's path, so callers pass
+    target_index = v2 - base. The proof is collected as:
+    1. The inner proof inside the subtree that holds the target leaf.
+    2. The sibling subtree roots along the target's path at the upper levels.
 
     Parameters
     ----------
@@ -246,9 +261,12 @@ def parallel_merkle_root_with_proof(
     if workers is None:
         workers = os.cpu_count() or 4
 
+    if not 0 <= target_index < (1 << height):
+        raise ValueError(f"target_index {target_index} outside subtree of {1 << height} leaves")
+
     # For small trees, compute directly
     if height <= 12:
-        return compute_subtree_root_with_proof(base, height)
+        return _subtree_root_with_proof_for(base, height, target_index)
 
     split_depth = min(8, height)
     while (1 << split_depth) < workers and split_depth < height:
@@ -264,30 +282,30 @@ def parallel_merkle_root_with_proof(
         sub_base = base + (i << sub_height) if sub_height > 0 else base + i
         tasks.append((sub_base, sub_height))
 
-    # Compute subtree 0 with proof (for inner proof of leaf 0)
-    inner_root, inner_proof = compute_subtree_root_with_proof(
-        tasks[0][0], tasks[0][1]
+    # The subtree holding the target leaf is computed with its inner proof.
+    sub_index = target_index >> sub_height
+    inner_target = target_index & ((1 << sub_height) - 1)
+    inner_root, inner_proof = _subtree_root_with_proof_for(
+        tasks[sub_index][0], tasks[sub_index][1], inner_target
     )
 
-    # Compute remaining subtrees in parallel
-    remaining_tasks = tasks[1:]
+    # Compute the other subtrees in parallel
+    remaining_tasks = [t for k, t in enumerate(tasks) if k != sub_index]
     if remaining_tasks:
         with multiprocessing.Pool(processes=workers) as pool:
             remaining_roots = pool.map(_worker_compute_root, remaining_tasks)
-        all_roots = [inner_root] + remaining_roots
+        all_roots = remaining_roots[:sub_index] + [inner_root] + remaining_roots[sub_index:]
     else:
         all_roots = [inner_root]
 
-    # Now merge upper tree and collect proof for subtree 0 (index 0 in upper tree)
-    # Leaf 0 of the full tree is in subtree 0.
-    # In the upper tree, subtree 0's root is at index 0 — always on leftmost path.
-    # So inclusion proof = inner_proof + upper_proof
+    # Merge the upper tree, collecting the sibling of the target's ancestor
+    # at every level; the ancestor's index halves per level.
     upper_proof: list[bytes] = []
     current_level = all_roots
+    idx = sub_index
     for _ in range(split_depth):
-        # Leaf 0 path is always index 0, which is always left child
-        # Its sibling is index 1
-        upper_proof.append(current_level[1])
+        upper_proof.append(current_level[idx ^ 1])
+        idx >>= 1
         next_level = []
         for j in range(0, len(current_level), 2):
             next_level.append(_merkle_parent(current_level[j], current_level[j + 1]))

@@ -198,81 +198,64 @@ def merkle_parent(left: bytes, right: bytes) -> bytes:
 def compute_axis_merkle_root_streaming(
     base: int,
     height: int,
+    target_index: int = 0,
 ) -> Tuple[bytes, List[bytes]]:
     """Compute the Merkle root for an aligned subtree using streaming computation.
 
-    This uses O(h × 32 bytes) working memory instead of O(2^h) by processing
+    This uses O(h x 32 bytes) working memory instead of O(2^h) by processing
     leaves in ascending order and maintaining a stack of pending hashes.
 
     Returns (merkle_root, inclusion_proof_siblings) where inclusion_proof_siblings
-    is the list of sibling hashes from the *first* leaf (base) to the root.
+    is the list of sibling hashes from the leaf at target_index up to the root.
+    CYBERSPACE_V2 6.10 requires the path for the destination leaf, so the axis
+    wrapper passes target_index = v2 - base. The default 0 is the first leaf.
 
     Parameters
     ----------
     base : aligned subtree base value
     height : LCA height (tree has 2^height leaves)
+    target_index : index of the leaf whose path is collected
 
     Returns
     -------
     (root: bytes, inclusion_proof: list[bytes])
-        root is the 32-byte Merkle root.
-        inclusion_proof contains the sibling hashes for the leaf at index 0
-        (which is always the source side leaf in a sidestep).
     """
     if height == 0:
         root = merkle_leaf(base)
         return root, []
 
     leaf_count = 1 << height
+    if not 0 <= target_index < leaf_count:
+        raise ValueError(f"target_index {target_index} outside subtree of {leaf_count} leaves")
 
     # Stack-based streaming Merkle tree computation.
     # Each entry is (hash, level) where level 0 = leaf.
     stack: List[Tuple[bytes, int]] = []
 
-    # Track sibling hashes for inclusion proof of leaf at index 0.
-    # We collect siblings at each level as we build the tree.
-    inclusion_siblings: List[bytes] = []
+    # Sibling hashes along the target leaf's path, indexed by level. When two
+    # nodes at `level` merge, the merged node covers the leaves whose index
+    # agrees with i above bit `level`; if the target is among them, the node
+    # on the other side of the target's ancestor is its sibling at that level.
+    inclusion_siblings: List[bytes] = [b""] * height
 
     for i in range(leaf_count):
         current_hash = merkle_leaf(base + i)
         current_level = 0
 
         while stack and stack[-1][1] == current_level:
-            sibling_hash, _ = stack.pop()
-
-            # If we're building the path for leaf 0, track siblings.
-            # At level L, the sibling for leaf 0's path is the right child
-            # when leaf 0's ancestor at that level is the left child.
-            # Leaf 0 is always on the leftmost path, so its ancestor at level L
-            # has index 0 — always a left child. The sibling is always right.
-            if len(inclusion_siblings) == current_level:
-                # sibling_hash was the left child (popped from stack),
-                # current_hash is the right child being combined.
-                # For leaf 0: at level 0, the first pair is leaf[0] and leaf[1].
-                # leaf[0] was pushed to stack, leaf[1] arrives as current_hash.
-                # So sibling of leaf[0] at level 0 is current_hash (leaf[1]).
-                # Wait — let me reconsider. The stack pops sibling_hash (left)
-                # and we combine with current_hash (right).
-                # For leaf 0 path: we need the *sibling* at each level.
-                # At level 0: leaf 0 is left, its sibling is leaf 1 (= current_hash).
-                # At level 1: hash(leaf0,leaf1) is left, sibling is hash(leaf2,leaf3).
-                # The sibling is always the one NOT on leaf 0's path.
-                # Since leaf 0 is always on the leftmost path:
-                # - left child = sibling_hash (from stack) — this IS on leaf 0's path
-                # - right child = current_hash — this is the SIBLING
-                inclusion_siblings.append(current_hash)
-
+            left_hash, _ = stack.pop()
+            if (target_index >> (current_level + 1)) == (i >> (current_level + 1)):
+                on_right = (target_index >> current_level) & 1
+                inclusion_siblings[current_level] = left_hash if on_right else current_hash
             # Parent = SHA256(left || right). Stack entry was left, current is right.
-            current_hash = merkle_parent(sibling_hash, current_hash)
+            current_hash = merkle_parent(left_hash, current_hash)
             current_level += 1
 
         stack.append((current_hash, current_level))
 
     assert len(stack) == 1, f"Expected single root on stack, got {len(stack)}"
     root = stack[0][0]
-    assert len(inclusion_siblings) == height, (
-        f"Expected {height} siblings for inclusion proof, got {len(inclusion_siblings)}"
-    )
+    assert all(inclusion_siblings), "every level of the target path must have a sibling"
     return root, inclusion_siblings
 
 
@@ -292,17 +275,19 @@ def compute_axis_merkle_root(v1: int, v2: int) -> Tuple[bytes, List[bytes], int]
         root = merkle_leaf(v1)
         return root, [], 0
     base = (v1 >> h) << h
+    # CYBERSPACE_V2 6.10: the inclusion path is for the destination leaf.
+    target = v2 - base
 
     # Use parallel engine for large trees
     if h >= 20:
         try:
             from cyberspace_core.merkle_engine import parallel_merkle_root_with_proof
-            root, siblings = parallel_merkle_root_with_proof(base, h)
+            root, siblings = parallel_merkle_root_with_proof(base, h, target_index=target)
             return root, siblings, h
         except ImportError:
             pass
 
-    root, siblings = compute_axis_merkle_root_streaming(base, h)
+    root, siblings = compute_axis_merkle_root_streaming(base, h, target_index=target)
     return root, siblings, h
 
 
