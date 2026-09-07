@@ -21,7 +21,7 @@ import math
 from typing import Any, Dict, List, Optional, Sequence, Union
 
 AVATAR_FLOOR_BITS = 16
-AVATAR_SIZE_BITS = 6
+AVATAR_SIZE_BITS = 3
 AVATAR_DETAIL_BITS = 3
 AVATAR_DETAIL_FREE = 32
 AVATAR_KIND = 33331
