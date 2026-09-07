@@ -184,7 +184,7 @@
       ]
     },
     "reach": 2.0,
-    "required": 19
+    "required": 18
   },
   {
     "name": "four gibsons",
@@ -296,7 +296,7 @@
       ]
     },
     "reach": 4.0,
-    "required": 22
+    "required": 20
   },
   {
     "name": "sixteen gibsons via unit",
@@ -408,7 +408,7 @@
       ]
     },
     "reach": 16.0,
-    "required": 28
+    "required": 24
   },
   {
     "name": "a thousand and twenty-four gibsons",
@@ -520,7 +520,7 @@
       ]
     },
     "reach": 1024.0,
-    "required": 46
+    "required": 36
   },
   {
     "name": "detailed but small",
@@ -3116,6 +3116,6 @@
       "faces": []
     },
     "reach": 3.0,
-    "required": 21
+    "required": 20
   }
 ]
