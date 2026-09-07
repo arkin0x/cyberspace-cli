@@ -41,14 +41,14 @@ class TestHyperjumpCLI(unittest.TestCase):
         pubkey_hex = "11" * 32
         privkey_hex = "22" * 32
 
-        c0 = xyz_to_coord(start_xyz[0], start_xyz[1], start_xyz[2], plane=0).to_bytes(32, "big").hex()
+        c0 = xyz_to_coord(start_xyz[0], start_xyz[1], start_xyz[2], plane=1).to_bytes(32, "big").hex()
         genesis = make_spawn_event(pubkey_hex=pubkey_hex, created_at=1700000000, coord_hex=c0)
         chains.create_new_chain(label, genesis, overwrite=False)
 
         coord_hex = c0
         if in_hyperjump_system:
             hj_xyz = hyperjump_xyz if hyperjump_xyz is not None else start_xyz
-            coord_hex = xyz_to_coord(hj_xyz[0], hj_xyz[1], hj_xyz[2], plane=0).to_bytes(32, "big").hex()
+            coord_hex = xyz_to_coord(hj_xyz[0], hj_xyz[1], hj_xyz[2], plane=1).to_bytes(32, "big").hex()
             hj_event = make_hyperjump_event(
                 pubkey_hex=pubkey_hex,
                 created_at=1700000001,
@@ -84,7 +84,7 @@ class TestHyperjumpCLI(unittest.TestCase):
                 anchor_json = (
                     '{"kind":321,"id":"aa","tags":[["C","'
                     + c1
-                    + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + c1 + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(anchor_json)):
                     buf = io.StringIO()
@@ -151,12 +151,12 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 label, _c0, _coord_hex = self._setup_chain(in_hyperjump_system=False, start_xyz=(15, 0, 0))
-                c_target = xyz_to_coord(31, 0, 0, plane=0).to_bytes(32, "big").hex()
+                c_target = xyz_to_coord(31, 0, 0, plane=1).to_bytes(32, "big").hex()
 
                 anchor_json = (
                     '{"kind":321,"id":"aa","tags":[["C","'
                     + c_target
-                    + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(anchor_json)):
                     move(
@@ -193,7 +193,7 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 label, _c0, _coord_hex = self._setup_chain(in_hyperjump_system=False)
-                c_target = xyz_to_coord(101, 200, 300, plane=0).to_bytes(32, "big").hex()
+                c_target = xyz_to_coord(101, 200, 300, plane=1).to_bytes(32, "big").hex()
 
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc("")):
                     with self.assertRaises(typer.Exit) as ex:
@@ -223,13 +223,13 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 self._setup_chain(in_hyperjump_system=False)
-                c_target = xyz_to_coord(101, 199, 300, plane=0).to_bytes(32, "big").hex()
+                c_target = xyz_to_coord(101, 199, 300, plane=1).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
                     + ("ab" * 32)
                     + '","created_at":1773171779,"tags":[["C","'
                     + c_target
-                    + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(out)):
                     res = runner.invoke(app, ["hyperjump", "to", "940158"])
@@ -247,20 +247,20 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 self._setup_chain(in_hyperjump_system=False)
-                c_target = xyz_to_coord(101, 199, 300, plane=0).to_bytes(32, "big").hex()
+                c_target = xyz_to_coord(101, 199, 300, plane=1).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
                     + ("ab" * 32)
                     + '","created_at":1773171779,"tags":[["C","'
                     + c_target
-                    + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(out)):
                     res = runner.invoke(app, ["hyperjump", "show", "940158"])
                 self.assertEqual(res.exit_code, 0, msg=res.output)
                 self.assertIn("hyperjump_block_height=940158", res.output)
                 self.assertIn(f"coord: 0x{c_target}", res.output)
-                self.assertIn("plane=0 dataspace", res.output)
+                self.assertIn("plane=1 ideaspace", res.output)
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)
@@ -274,13 +274,13 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 label, _c0, _coord = self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
-                c_target = xyz_to_coord(102, 200, 300, plane=0).to_bytes(32, "big").hex()
+                c_target = xyz_to_coord(102, 200, 300, plane=1).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
                     + ("ab" * 32)
                     + '","created_at":1773171779,"tags":[["C","'
                     + c_target
-                    + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(out)):
                     res = runner.invoke(app, ["hyperjump", "next", "--view"])
@@ -300,13 +300,13 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 label, _c0, _coord = self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
-                c_target = xyz_to_coord(102, 200, 300, plane=0).to_bytes(32, "big").hex()
+                c_target = xyz_to_coord(102, 200, 300, plane=1).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
                     + ("ab" * 32)
                     + '","created_at":1773171779,"tags":[["C","'
                     + c_target
-                    + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch(
                     "cyberspace_cli.cli.subprocess.run",
@@ -334,13 +334,13 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 self._setup_chain(in_hyperjump_system=True, hyperjump_height="940158")
-                c_prev = xyz_to_coord(99, 200, 300, plane=0).to_bytes(32, "big").hex()
+                c_prev = xyz_to_coord(99, 200, 300, plane=1).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
                     + ("cd" * 32)
                     + '","created_at":1773171778,"tags":[["C","'
                     + c_prev
-                    + '"],["B","940157"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + c_prev + '\"],[\"B\",\"940157"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(out)):
                     res = runner.invoke(app, ["hyperjump", "prev", "--view"])
@@ -360,13 +360,13 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 self._setup_chain(in_hyperjump_system=False)
-                c_target = xyz_to_coord(101, 199, 300, plane=0).to_bytes(32, "big").hex()
+                c_target = xyz_to_coord(101, 199, 300, plane=1).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
                     + ("ab" * 32)
                     + '","created_at":1773171779,"tags":[["C","'
                     + c_target
-                    + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(out)):
                     res = runner.invoke(app, ["hyperjump", "to", "940158", "--view"])
@@ -386,13 +386,13 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 label, _c0, _coord = self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
-                c_target = xyz_to_coord(105, 200, 300, plane=0).to_bytes(32, "big").hex()
+                c_target = xyz_to_coord(105, 200, 300, plane=1).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
                     + ("ab" * 32)
                     + '","created_at":1773171779,"tags":[["C","'
                     + c_target
-                    + '"],["B","940160"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940160"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch(
                     "cyberspace_cli.cli.subprocess.run",
@@ -420,20 +420,20 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 self._setup_chain(in_hyperjump_system=False)
-                dest = xyz_to_coord(101, 199, 300, plane=0).to_bytes(32, "big").hex()
+                dest = xyz_to_coord(101, 199, 300, plane=1).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
                     + ("ab" * 32)
                     + '","created_at":1773171779,"tags":[["C","'
                     + dest
-                    + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + dest + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(out)):
                     res = runner.invoke(app, ["hyperjump", "nearest", "--radius", "10"])
                 self.assertEqual(res.exit_code, 0, msg=res.output)
                 self.assertIn("nearby_hyperjumps: 1", res.output)
                 self.assertIn("direction=x+ (1) y- (1) z= (0)", res.output)
-                self.assertIn("suggested_move=cyberspace move --to 101,199,300,0", res.output)
+                self.assertIn("suggested_move=cyberspace move --to 101,199,300,1", res.output)
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)
@@ -447,14 +447,14 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
-                override = xyz_to_coord(150, 200, 300, plane=0).to_bytes(32, "big").hex()
-                dest = xyz_to_coord(151, 200, 300, plane=0).to_bytes(32, "big").hex()
+                override = xyz_to_coord(150, 200, 300, plane=1).to_bytes(32, "big").hex()
+                dest = xyz_to_coord(151, 200, 300, plane=1).to_bytes(32, "big").hex()
                 out = (
                     '{"kind":321,"id":"'
                     + ("ef" * 32)
                     + '","created_at":1773171779,"tags":[["C","'
                     + dest
-                    + '"],["B","940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
+                    + '\"],[\"M\",\"' + dest + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
                 )
                 with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(out)):
                     res = runner.invoke(app, ["hyperjump", "nearest", "--coord", f"0x{override}", "--radius", "10"])
@@ -473,7 +473,7 @@ class TestHyperjumpCLI(unittest.TestCase):
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
                 self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
-                dest = xyz_to_coord(101, 199, 300, plane=0).to_bytes(32, "big").hex()
+                dest = xyz_to_coord(101, 199, 300, plane=1).to_bytes(32, "big").hex()
                 out = (
                     "debug-line\n"
                     + "{\"kind\":321,\"id\":\""
@@ -557,7 +557,7 @@ class TestHyperjumpCLI(unittest.TestCase):
 
                 st = load_state()
                 assert st is not None
-                expected = xyz_to_coord(101, 200, 300, plane=0).to_bytes(32, "big").hex()
+                expected = xyz_to_coord(101, 200, 300, plane=1).to_bytes(32, "big").hex()
                 self.assertEqual(st.coord_hex, expected)
                 self.assertEqual(chains.chain_length(label), 3)
                 last = chains.read_events(label)[-1]
