@@ -178,22 +178,24 @@ class TestVerifierAgainstOracles(unittest.TestCase):
         res = {
             "proof_hash": proof.proof_hash,
             "merkle_x": proof.merkle_x.hex(), "merkle_y": proof.merkle_y.hex(), "merkle_z": proof.merkle_z.hex(),
-            "inclusion_proofs": {a: [s.hex() for s in proof.inclusion_proofs[a]] for a in ("x", "y", "z")},
+            "openings": {a: [[s.hex() for s in path] for path in proof.openings[a]] for a in ("x", "y", "z")},
             "lca_heights": list(proof.lca_heights), "bases": [(x1 >> 6) << 6, 44, 44],
             "terrain_k": proof.terrain_k, "region_m_hex": format(proof.region_m, "x"),
         }
         self.assertEqual(verify_cloud_sidestep(res, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV), [])
-        bad = json.loads(json.dumps(res)); bad["inclusion_proofs"]["x"][0] = "ff" * 32
+        bad = json.loads(json.dumps(res)); bad["openings"]["x"][3][0] = "ff" * 32
         self.assertTrue(any("merkle_x" in f for f in verify_cloud_sidestep(bad, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV)))
         bad = json.loads(json.dumps(res)); bad["merkle_y"] = "ee" * 32
         self.assertTrue(any("merkle_y" in f for f in verify_cloud_sidestep(bad, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV)))
         bad = json.loads(json.dumps(res)); bad["proof_hash"] = "dd" * 32
         self.assertTrue(any("proof_hash" in f for f in verify_cloud_sidestep(bad, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV)))
-        # a leaf-0 path (the old server behaviour) is rejected for an upward crossing
-        from cyberspace_core.movement import compute_axis_merkle_root_streaming
-        _, leaf0 = compute_axis_merkle_root_streaming((x1 >> 6) << 6, 6, target_index=0)
-        bad = json.loads(json.dumps(res)); bad["inclusion_proofs"]["x"] = [s.hex() for s in leaf0]
-        self.assertTrue(any("destination" in f for f in verify_cloud_sidestep(bad, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV)))
+        # a v1 result, the destination path alone, is rejected (6.15)
+        bad = json.loads(json.dumps(res)); bad["openings"]["x"] = res["openings"]["x"][:1]
+        self.assertTrue(any("merkle_x" in f for f in verify_cloud_sidestep(bad, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV)))
+        # a tree built under another chain position is rejected under ours (6.4)
+        theirs = compute_sidestep_proof(x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex="cd" * 32)
+        bad = json.loads(json.dumps(res)); bad["merkle_x"] = theirs.merkle_x.hex(); bad["openings"]["x"] = [[s.hex() for s in p] for p in theirs.openings["x"]]
+        self.assertTrue(any("merkle_x" in f for f in verify_cloud_sidestep(bad, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV)))
 
 
 class TestCloudJobs(unittest.TestCase):

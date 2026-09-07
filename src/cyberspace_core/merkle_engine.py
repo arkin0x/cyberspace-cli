@@ -1,14 +1,17 @@
-"""
-High-level Merkle tree computation with optional C acceleration and parallelism.
+"""Parallel Merkle engine for version 2 sidesteps (CYBERSPACE_V2 section 6).
 
-Provides:
-    compute_subtree_root(base, height) -> bytes
-    compute_subtree_root_with_proof(base, height) -> (bytes, list[bytes])
-    parallel_merkle_root(base, height, workers=None) -> bytes
-    parallel_merkle_root_with_proof(base, height, workers=None) -> (bytes, list[bytes])
+Splits a tall tree into 2^split_depth subtrees, builds them across worker
+processes, and merges their roots. Every leaf is hashed under the seed
+prefix of section 6.4, so each worker resumes from the prefix's SHA-256
+state and a leaf costs one compression (6.5).
 
-The C extension (_merkle_engine) is used when available; otherwise falls back
-to a pure-Python implementation.
+The openings (6.10) are assembled after the root is known: for each of the
+nine opened leaves, the inner path comes from a single-target streaming
+pass over its own subtree, and the upper siblings from the merged levels.
+
+The C extension that predates this revision hashes leaves under the v1
+domain with no seed, so it is not used; it can return once it takes the
+prefix.
 """
 
 from __future__ import annotations
@@ -16,307 +19,147 @@ from __future__ import annotations
 import hashlib
 import multiprocessing
 import os
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
-# ---------------------------------------------------------------------------
-# Domain separation constant
-# ---------------------------------------------------------------------------
+from cyberspace_core.cantor import int_to_bytes_be_min
 
-SIDESTEP_DOMAIN = b"CYBERSPACE_SIDESTEP_V1"
-
-# ---------------------------------------------------------------------------
-# Try to import the C extension
-# ---------------------------------------------------------------------------
-
-_USE_C = False
 HAS_C_EXTENSION = False
-
-try:
-    from cyberspace_core._merkle_engine import (
-        compute_subtree_root as _c_compute_subtree_root,
-        compute_subtree_root_with_proof as _c_compute_subtree_root_with_proof,
-    )
-    _USE_C = True
-    HAS_C_EXTENSION = True
-except ImportError:
-    pass
-
-# ---------------------------------------------------------------------------
-# Pure Python fallback
-# ---------------------------------------------------------------------------
-
-
-def _int_to_bytes_be_min(n: int) -> bytes:
-    if n == 0:
-        return b"\x00"
-    return n.to_bytes((n.bit_length() + 7) // 8, "big")
 
 
 def _sha256(data: bytes) -> bytes:
     return hashlib.sha256(data).digest()
 
 
-def _merkle_leaf(value: int) -> bytes:
-    return _sha256(SIDESTEP_DOMAIN + _int_to_bytes_be_min(value))
+def _leaf_hasher(prefix: bytes) -> Callable[[int], bytes]:
+    if len(prefix) != 64:
+        raise ValueError("seed prefix must be exactly one SHA-256 block")
+    mid = hashlib.sha256(prefix)
+
+    def leaf(value: int) -> bytes:
+        h = mid.copy()
+        h.update(int_to_bytes_be_min(value))
+        return h.digest()
+
+    return leaf
 
 
 def _merkle_parent(left: bytes, right: bytes) -> bytes:
     return _sha256(left + right)
 
 
-def _py_compute_subtree_root(base: int, height: int) -> bytes:
-    """Pure Python streaming Merkle root computation."""
+def compute_subtree_root(prefix: bytes, base: int, height: int) -> bytes:
+    """Streaming root of the subtree [base, base + 2^height) under the seed."""
+    leaf = _leaf_hasher(prefix)
     if height == 0:
-        return _merkle_leaf(base)
-
-    leaf_count = 1 << height
-    # Stack-based streaming: stack[level] = hash or None
-    stack: list[bytes | None] = [None] * (height + 1)
-
-    for i in range(leaf_count):
-        current = _merkle_leaf(base + i)
+        return leaf(base)
+    stack: list = [None] * (height + 1)
+    for i in range(1 << height):
+        current = leaf(base + i)
         level = 0
         while stack[level] is not None:
             current = _merkle_parent(stack[level], current)
             stack[level] = None
             level += 1
         stack[level] = current
+    return stack[height]
 
-    return stack[height]  # type: ignore[return-value]
 
-
-def _py_compute_subtree_root_with_proof(
-    base: int, height: int
-) -> Tuple[bytes, List[bytes]]:
-    """Pure Python streaming Merkle root + inclusion proof for leaf 0."""
+def _stream_with_path(prefix: bytes, base: int, height: int, target: int) -> Tuple[bytes, List[bytes]]:
+    """Root of the subtree at `base` and the path of its leaf at `target`."""
+    leaf = _leaf_hasher(prefix)
     if height == 0:
-        return _merkle_leaf(base), []
-
-    leaf_count = 1 << height
-    stack: list[bytes | None] = [None] * (height + 1)
-    proof: list[bytes] = []
-
-    for i in range(leaf_count):
-        current = _merkle_leaf(base + i)
-        level = 0
-        while stack[level] is not None:
-            # For leaf 0 inclusion proof: leaf 0 is always on leftmost path.
-            # At each level, its ancestor is the left child; sibling is right (current).
-            if len(proof) == level:
-                proof.append(current)
-            current = _merkle_parent(stack[level], current)
-            stack[level] = None
+        return leaf(base), []
+    stack: List[Tuple[bytes, int]] = []
+    siblings: List[Optional[bytes]] = [None] * height
+    for i in range(1 << height):
+        current, level = leaf(base + i), 0
+        while stack and stack[-1][1] == level:
+            left, _ = stack.pop()
+            if (target >> (level + 1)) == (i >> (level + 1)):
+                siblings[level] = left if (target >> level) & 1 else current
+            current = _merkle_parent(left, current)
             level += 1
-        stack[level] = current
-
-    return stack[height], proof  # type: ignore[return-value]
-
-
-# ---------------------------------------------------------------------------
-# Public API — dispatch to C or Python
-# ---------------------------------------------------------------------------
+        stack.append((current, level))
+    assert len(stack) == 1 and all(s is not None for s in siblings)
+    return stack[0][0], siblings  # type: ignore[return-value]
 
 
-def compute_subtree_root(base: int, height: int) -> bytes:
-    """Compute the Merkle root for an aligned subtree [base, base + 2^height)."""
-    if _USE_C:
-        return _c_compute_subtree_root(base, height)
-    return _py_compute_subtree_root(base, height)
+def _worker_compute_root(args: Tuple[bytes, int, int]) -> bytes:
+    prefix, base, height = args
+    return compute_subtree_root(prefix, base, height)
 
 
-def compute_subtree_root_with_proof(
-    base: int, height: int
-) -> Tuple[bytes, List[bytes]]:
-    """Compute Merkle root and inclusion proof for leaf 0."""
-    if _USE_C:
-        return _c_compute_subtree_root_with_proof(base, height)
-    return _py_compute_subtree_root_with_proof(base, height)
+def _split_depth(height: int, workers: int) -> int:
+    depth = min(8, height)
+    while (1 << depth) < workers and depth < height:
+        depth += 1
+    return min(depth, height)
 
 
-def _subtree_root_with_proof_for(
-    base: int, height: int, target_index: int
-) -> Tuple[bytes, List[bytes]]:
-    """Root and inclusion proof for any leaf of a subtree. Leaf 0 keeps the
-    accelerated path; other leaves use the streaming reference, which is
-    exact and only ever runs on one subtree."""
-    if target_index == 0:
-        return compute_subtree_root_with_proof(base, height)
-    from cyberspace_core.movement import compute_axis_merkle_root_streaming
-
-    return compute_axis_merkle_root_streaming(base, height, target_index=target_index)
-
-
-# ---------------------------------------------------------------------------
-# Worker function for multiprocessing (must be top-level / picklable)
-# ---------------------------------------------------------------------------
-
-
-def _worker_compute_root(args: Tuple[int, int]) -> bytes:
-    """Worker: compute subtree root for (base, height)."""
-    base, height = args
-    return compute_subtree_root(base, height)
-
-
-# ---------------------------------------------------------------------------
-# Parallel Merkle computation
-# ---------------------------------------------------------------------------
-
-
-def _merge_roots_serial(roots: List[bytes], levels: int) -> bytes:
-    """Merge a list of 2^levels subtree roots into a single root."""
+def _merge_levels(roots: List[bytes]) -> List[List[bytes]]:
+    """Every level of the tree over `roots`, the roots first, the top last."""
+    levels = [roots]
     current = roots
-    for _ in range(levels):
-        next_level = []
-        for j in range(0, len(current), 2):
-            next_level.append(_merkle_parent(current[j], current[j + 1]))
-        current = next_level
-    assert len(current) == 1
-    return current[0]
+    while len(current) > 1:
+        current = [_merkle_parent(current[j], current[j + 1]) for j in range(0, len(current), 2)]
+        levels.append(current)
+    return levels
 
 
-def parallel_merkle_root(
-    base: int,
-    height: int,
-    workers: Optional[int] = None,
-) -> bytes:
-    """Compute Merkle root using multiple processes.
-
-    Splits the tree of height h into 2^split_depth subtrees of height
-    (h - split_depth), computes each in parallel, then merges serially.
-
-    Parameters
-    ----------
-    base : int
-        Aligned subtree base value.
-    height : int
-        Tree height (2^height leaves).
-    workers : int, optional
-        Number of worker processes. Defaults to CPU count.
-
-    Returns
-    -------
-    bytes
-        32-byte Merkle root.
-    """
+def parallel_merkle_root(prefix: bytes, base: int, height: int, workers: Optional[int] = None) -> bytes:
+    """The root alone, across processes."""
     if workers is None:
         workers = os.cpu_count() or 4
-
-    # For small trees, just compute directly
     if height <= 12:
-        return compute_subtree_root(base, height)
-
-    # Choose split depth: enough subtrees to keep workers busy
-    # but not so many that overhead dominates.
-    # At least workers tasks, at most 256.
-    split_depth = min(8, height)
-    # Ensure we have at least `workers` subtrees
-    while (1 << split_depth) < workers and split_depth < height:
-        split_depth += 1
-    split_depth = min(split_depth, height)
-
-    sub_height = height - split_depth
-    num_subtrees = 1 << split_depth
-
-    # Build task list
-    tasks = []
-    for i in range(num_subtrees):
-        sub_base = base + (i << sub_height) if sub_height > 0 else base + i
-        tasks.append((sub_base, sub_height))
-
-    # Parallel computation
+        return compute_subtree_root(prefix, base, height)
+    split = _split_depth(height, workers)
+    sub = height - split
+    tasks = [(prefix, base + (i << sub), sub) for i in range(1 << split)]
     with multiprocessing.Pool(processes=workers) as pool:
         roots = pool.map(_worker_compute_root, tasks)
-
-    # Merge subtree roots serially (small: 2^split_depth nodes)
-    return _merge_roots_serial(roots, split_depth)
+    return _merge_levels(roots)[-1][0]
 
 
 def parallel_merkle_root_with_proof(
+    prefix: bytes,
     base: int,
     height: int,
     workers: Optional[int] = None,
     target_index: int = 0,
-) -> Tuple[bytes, List[bytes]]:
-    """Compute Merkle root and the inclusion proof for one leaf, using parallelism.
-
-    CYBERSPACE_V2 6.10 wants the destination leaf's path, so callers pass
-    target_index = v2 - base. The proof is collected as:
-    1. The inner proof inside the subtree that holds the target leaf.
-    2. The sibling subtree roots along the target's path at the upper levels.
-
-    Parameters
-    ----------
-    base : int
-        Aligned subtree base value.
-    height : int
-        Tree height (2^height leaves).
-    workers : int, optional
-        Number of worker processes.
-
-    Returns
-    -------
-    (bytes, list[bytes])
-        (root, inclusion_proof) where inclusion_proof has `height` entries.
-    """
-    if workers is None:
-        workers = os.cpu_count() or 4
+    axis_byte: Optional[int] = None,
+) -> Tuple[bytes, List[List[bytes]]]:
+    """Root and openings (6.10) for the subtree at `base`: the path of the
+    leaf at target_index (the destination), then the eight sampled paths at
+    positions drawn from the root."""
+    from cyberspace_core.movement import compute_axis_merkle_root_streaming, sample_indices
 
     if not 0 <= target_index < (1 << height):
         raise ValueError(f"target_index {target_index} outside subtree of {1 << height} leaves")
-
-    # For small trees, compute directly
+    if axis_byte is None:
+        raise ValueError("axis_byte is needed to draw the sampled openings")
+    if workers is None:
+        workers = os.cpu_count() or 4
     if height <= 12:
-        return _subtree_root_with_proof_for(base, height, target_index)
+        return compute_axis_merkle_root_streaming(prefix, base, height, target_index=target_index, axis_byte=axis_byte)
 
-    split_depth = min(8, height)
-    while (1 << split_depth) < workers and split_depth < height:
-        split_depth += 1
-    split_depth = min(split_depth, height)
+    split = _split_depth(height, workers)
+    sub = height - split
+    tasks = [(prefix, base + (i << sub), sub) for i in range(1 << split)]
+    with multiprocessing.Pool(processes=workers) as pool:
+        roots = pool.map(_worker_compute_root, tasks)
+    levels = _merge_levels(roots)
+    root = levels[-1][0]
 
-    sub_height = height - split_depth
-    num_subtrees = 1 << split_depth
+    def path_for(index: int) -> List[bytes]:
+        sub_index = index >> sub
+        inner_root, inner = _stream_with_path(prefix, base + (sub_index << sub), sub, index & ((1 << sub) - 1))
+        assert inner_root == roots[sub_index]
+        upper = []
+        idx = sub_index
+        for level in range(split):
+            upper.append(levels[level][idx ^ 1])
+            idx >>= 1
+        return inner + upper
 
-    # Build task list
-    tasks = []
-    for i in range(num_subtrees):
-        sub_base = base + (i << sub_height) if sub_height > 0 else base + i
-        tasks.append((sub_base, sub_height))
-
-    # The subtree holding the target leaf is computed with its inner proof.
-    sub_index = target_index >> sub_height
-    inner_target = target_index & ((1 << sub_height) - 1)
-    inner_root, inner_proof = _subtree_root_with_proof_for(
-        tasks[sub_index][0], tasks[sub_index][1], inner_target
-    )
-
-    # Compute the other subtrees in parallel
-    remaining_tasks = [t for k, t in enumerate(tasks) if k != sub_index]
-    if remaining_tasks:
-        with multiprocessing.Pool(processes=workers) as pool:
-            remaining_roots = pool.map(_worker_compute_root, remaining_tasks)
-        all_roots = remaining_roots[:sub_index] + [inner_root] + remaining_roots[sub_index:]
-    else:
-        all_roots = [inner_root]
-
-    # Merge the upper tree, collecting the sibling of the target's ancestor
-    # at every level; the ancestor's index halves per level.
-    upper_proof: list[bytes] = []
-    current_level = all_roots
-    idx = sub_index
-    for _ in range(split_depth):
-        upper_proof.append(current_level[idx ^ 1])
-        idx >>= 1
-        next_level = []
-        for j in range(0, len(current_level), 2):
-            next_level.append(_merkle_parent(current_level[j], current_level[j + 1]))
-        current_level = next_level
-
-    assert len(current_level) == 1
-    root = current_level[0]
-
-    full_proof = inner_proof + upper_proof
-    assert len(full_proof) == height, (
-        f"Expected {height} proof entries, got {len(full_proof)}"
-    )
-
-    return root, full_proof
+    openings = [path_for(target_index)] + [path_for(i) for i in sample_indices(root, axis_byte, height)]
+    return root, openings

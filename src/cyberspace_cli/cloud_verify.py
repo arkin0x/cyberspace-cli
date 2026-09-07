@@ -16,11 +16,14 @@ from typing import Any, Dict, List, Tuple
 from cyberspace_core.cantor import cantor_pair, int_to_bytes_be_min, sha256
 from cyberspace_core.movement import (
     AXIS_BITS,
+    AXIS_BYTE,
     TEMPORAL_MAX_COMPUTE_HEIGHT,
     compute_axis_cantor,
     compute_subtree_cantor,
     find_lca_height,
     merkle_leaf,
+    seed_prefix,
+    verify_axis_openings,
     verify_merkle_inclusion,
 )
 from cyberspace_core.terrain import terrain_k
@@ -48,7 +51,7 @@ class CloudSidestep:
     merkle_x: bytes
     merkle_y: bytes
     merkle_z: bytes
-    inclusion_proofs: Dict[str, List[bytes]]
+    openings: Dict[str, List[List[bytes]]]
     lca_heights: Tuple[int, int, int]
     proof_hash: str
     terrain_k: int
@@ -155,15 +158,17 @@ def verify_cloud_sidestep(
             failures.append(f"bases[{axis}]: server {bases[i]} but aligned base is {base}")
         try:
             root = bytes.fromhex(result[f"merkle_{axis}"])
-            siblings = [bytes.fromhex(s) for s in result["inclusion_proofs"][axis]]
+            openings = [[bytes.fromhex(s) for s in path] for path in result["openings"][axis]]
         except (KeyError, ValueError, TypeError):
-            failures.append(f"merkle_{axis}: root or inclusion path missing")
+            failures.append(f"merkle_{axis}: root or openings missing")
             continue
-        if h == 0:
-            if siblings or root != merkle_leaf(v2):
-                failures.append(f"merkle_{axis}: trivial axis root is not the leaf hash")
-        elif not verify_merkle_inclusion(v2, siblings, root, h, base):
-            failures.append(f"merkle_{axis}: inclusion path does not prove the destination leaf")
+        # 6.11: the destination's path and the eight sampled paths, each
+        # sampled leaf recomputed under OUR seed, the previous event id and
+        # the axis; a tree built for anyone else fails here, as does a v1
+        # result with a single path (6.15).
+        prefix = seed_prefix(bytes.fromhex(previous_event_id_hex), AXIS_BYTE[axis])
+        if not verify_axis_openings(prefix, AXIS_BYTE[axis], v1, v2, root, openings):
+            failures.append(f"merkle_{axis}: openings do not prove the seeded tree")
         roots.append(int.from_bytes(root, "big"))
     if failures:
         return failures
@@ -190,7 +195,7 @@ def cloud_sidestep_from_result(job: Dict[str, Any], x1, y1, z1, x2, y2, z2, *, p
         merkle_x=roots[0],
         merkle_y=roots[1],
         merkle_z=roots[2],
-        inclusion_proofs={a: [bytes.fromhex(s) for s in result["inclusion_proofs"][a]] for a in ("x", "y", "z")},
+        openings={a: [[bytes.fromhex(s) for s in path] for path in result["openings"][a]] for a in ("x", "y", "z")},
         lca_heights=heights,
         proof_hash=result["proof_hash"],
         terrain_k=k,

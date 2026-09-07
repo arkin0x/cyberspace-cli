@@ -222,7 +222,7 @@ class TestMoveCloud(unittest.TestCase):
         local = compute_sidestep_proof(x, y, z, 1 << 13, y, z, plane=0, previous_event_id_hex=genesis["id"])
         self.assertEqual(tags["proof"][0], local.proof_hash)
         self.assertEqual(tags["mr"][0].split(":")[0], local.merkle_x.hex())
-        self.assertEqual(tags["mp"][0].split(":")[0], "".join(s.hex() for s in local.inclusion_proofs["x"]))
+        self.assertEqual(tags["mp"][0].split(":")[0], "".join(s.hex() for path in local.openings["x"] for s in path))
 
     def test_no_cloud_keeps_the_refusal(self):
         self.api = LocalHosaka(self._td.name)

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import hashlib
 import sys
 from dataclasses import dataclass
 
-from typing import Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from cyberspace_core.cantor import cantor_pair, int_to_bytes_be_min, sha256, sha256_int_hex
 from cyberspace_core.coords import AXIS_BITS, AXIS_MAX
@@ -12,7 +13,6 @@ from cyberspace_core.terrain import terrain_k
 DEFAULT_MAX_COMPUTE_HEIGHT = 20
 
 # Domain separation constant for sidestep Merkle leaf hashes (spec §4.1).
-SIDESTEP_DOMAIN = b"CYBERSPACE_SIDESTEP_V1"
 
 # Temporal axis: the maximum terrain-derived K is 16 (popcount of 16 bits).
 TEMPORAL_MAX_COMPUTE_HEIGHT = 17
@@ -182,156 +182,219 @@ def compute_hop_proof(
 # ---------------------------------------------------------------------------
 
 
-def merkle_leaf(value: int) -> bytes:
-    """Compute a Merkle leaf hash with domain separation.
+# ============================================================================
+# Sidestep version 2 (CYBERSPACE_V2 section 6, revised 2026-09-07)
+#
+# The sidestep is a toll. Every leaf is hashed under a 64-byte seed prefix:
+# the V2 domain, the mover's previous event id, an axis byte and nine zero
+# bytes, so a tree is unique to one chain position and one axis. The prefix
+# fills exactly one SHA-256 block, so its state is taken once per axis and
+# each leaf costs one compression (6.5). With no canonical root to compare
+# against, the prover publishes openings (6.10): the destination leaf's path
+# and eight sampled paths at positions drawn from the root, which a verifier
+# recomputes from the seed. Checked against the spec's sidestep-reference.py.
+# ============================================================================
 
-    H_i = SHA256(SIDESTEP_DOMAIN || int_to_bytes_be_min(value))
-    """
-    return sha256(SIDESTEP_DOMAIN + int_to_bytes_be_min(value))
+SIDESTEP_DOMAIN = b"CYBERSPACE_SIDESTEP_V2"
+SEED_PAD = b"\x00" * 9
+SIDESTEP_SAMPLE_DOMAIN = b"CYBERSPACE_SIDESTEP_SAMPLE_V1"
+SIDESTEP_SAMPLES = 8
+AXIS_BYTE = {"x": 0, "y": 1, "z": 2}
+# Nodes from this many levels below the root are kept from the main pass, so
+# the openings can be assembled afterwards by rebuilding only the small
+# subtree under each opened leaf: at most 2^17 hashes kept, whatever the height.
+KEPT_LEVELS = 16
+
+
+def seed_prefix(previous_event_id: bytes, axis_byte: int) -> bytes:
+    """The per-axis seed prefix (6.4): exactly one SHA-256 block."""
+    if len(previous_event_id) != 32:
+        raise ValueError("previous_event_id must be 32 raw bytes")
+    if axis_byte not in (0, 1, 2):
+        raise ValueError("axis byte must be 0, 1 or 2")
+    prefix = SIDESTEP_DOMAIN + previous_event_id + bytes([axis_byte]) + SEED_PAD
+    assert len(prefix) == 64
+    return prefix
+
+
+def leaf_hasher(prefix: bytes) -> Callable[[int], bytes]:
+    """A leaf hasher for one seed prefix, resuming from the prefix's state (6.5)."""
+    if len(prefix) != 64:
+        raise ValueError("seed prefix must be exactly one SHA-256 block")
+    mid = hashlib.sha256(prefix)
+
+    def leaf(value: int) -> bytes:
+        h = mid.copy()
+        h.update(int_to_bytes_be_min(value))
+        return h.digest()
+
+    return leaf
+
+
+def merkle_leaf(prefix: bytes, value: int) -> bytes:
+    """H = SHA256(seed_prefix || int_to_bytes_be_min(value))."""
+    return sha256(prefix + int_to_bytes_be_min(value))
 
 
 def merkle_parent(left: bytes, right: bytes) -> bytes:
-    """Compute a Merkle internal node: SHA256(left || right)."""
+    """Merkle internal node: SHA256(left || right)."""
     return sha256(left + right)
 
 
+def sample_indices(root: bytes, axis_byte: int, height: int) -> List[int]:
+    """The sampled positions for an axis (6.10), within the aligned subtree."""
+    if height == 0:
+        return []
+    return [
+        int.from_bytes(sha256(SIDESTEP_SAMPLE_DOMAIN + root + bytes([axis_byte]) + i.to_bytes(4, "big")), "big") % (1 << height)
+        for i in range(SIDESTEP_SAMPLES)
+    ]
+
+
+def _fold(leaf: Callable[[int], bytes], base: int, first: int, height: int, keep_from: int, keep: Callable[[int, int, bytes], None]) -> bytes:
+    """A streaming fold over the leaves first .. first + 2^height - 1 (6.5), in
+    O(height) memory. `keep` receives every node at or above level keep_from,
+    by level and by its index within the level (absolute, from the tree's base)."""
+    stack: List[Tuple[bytes, int, int]] = []
+    for i in range(1 << height):
+        at = first + i
+        current, level, start = leaf(base + at), 0, at
+        if keep_from == 0:
+            keep(0, at, current)
+        while stack and stack[-1][1] == level:
+            left_hash, _, left_start = stack.pop()
+            current = merkle_parent(left_hash, current)
+            level += 1
+            start = left_start
+            if level >= keep_from:
+                keep(level, start >> level, current)
+        stack.append((current, level, start))
+    assert len(stack) == 1, f"expected a single root, got {len(stack)}"
+    return stack[0][0]
+
+
 def compute_axis_merkle_root_streaming(
+    prefix: bytes,
     base: int,
     height: int,
     target_index: int = 0,
-) -> Tuple[bytes, List[bytes]]:
-    """Compute the Merkle root for an aligned subtree using streaming computation.
-
-    This uses O(h x 32 bytes) working memory instead of O(2^h) by processing
-    leaves in ascending order and maintaining a stack of pending hashes.
-
-    Returns (merkle_root, inclusion_proof_siblings) where inclusion_proof_siblings
-    is the list of sibling hashes from the leaf at target_index up to the root.
-    CYBERSPACE_V2 6.10 requires the path for the destination leaf, so the axis
-    wrapper passes target_index = v2 - base. The default 0 is the first leaf.
-
-    Parameters
-    ----------
-    base : aligned subtree base value
-    height : LCA height (tree has 2^height leaves)
-    target_index : index of the leaf whose path is collected
-
-    Returns
-    -------
-    (root: bytes, inclusion_proof: list[bytes])
-    """
+    axis_byte: Optional[int] = None,
+) -> Tuple[bytes, List[List[bytes]]]:
+    """Root of the aligned subtree at `base` of `height`, and its openings
+    (6.10): the path of the leaf at target_index (the destination), then the
+    eight sampled paths. The sampled positions depend on the root, so the top
+    KEPT_LEVELS levels of nodes are kept from the single pass and each
+    opening's lower siblings come from rebuilding the small subtree under its
+    leaf. Returns (root, openings); openings are empty at height 0."""
+    leaf = leaf_hasher(prefix)
     if height == 0:
-        root = merkle_leaf(base)
-        return root, []
+        return leaf(base), []
+    if axis_byte is None:
+        raise ValueError("axis_byte is needed to draw the sampled openings")
+    count = 1 << height
+    if not 0 <= target_index < count:
+        raise ValueError(f"target_index {target_index} outside subtree of {count} leaves")
+    keep_from = max(0, height - KEPT_LEVELS)
+    kept: Dict[Tuple[int, int], bytes] = {}
+    root = _fold(leaf, base, 0, height, keep_from, lambda lvl, idx, h: kept.__setitem__((lvl, idx), h))
 
-    leaf_count = 1 << height
-    if not 0 <= target_index < leaf_count:
-        raise ValueError(f"target_index {target_index} outside subtree of {leaf_count} leaves")
+    def path_for(index: int) -> List[bytes]:
+        siblings: List[Optional[bytes]] = [None] * height
+        if keep_from > 0:
+            size = 1 << keep_from
+            first = (index // size) * size
+            local: Dict[Tuple[int, int], bytes] = {}
+            _fold(leaf, base, first, keep_from, 0, lambda lvl, idx, h: local.__setitem__((lvl, idx), h))
+            for level in range(keep_from):
+                siblings[level] = local[(level, (index >> level) ^ 1)]
+        for level in range(keep_from, height):
+            siblings[level] = kept[(level, (index >> level) ^ 1)]
+        assert all(s is not None for s in siblings)
+        return siblings  # type: ignore[return-value]
 
-    # Stack-based streaming Merkle tree computation.
-    # Each entry is (hash, level) where level 0 = leaf.
-    stack: List[Tuple[bytes, int]] = []
-
-    # Sibling hashes along the target leaf's path, indexed by level. When two
-    # nodes at `level` merge, the merged node covers the leaves whose index
-    # agrees with i above bit `level`; if the target is among them, the node
-    # on the other side of the target's ancestor is its sibling at that level.
-    inclusion_siblings: List[bytes] = [b""] * height
-
-    for i in range(leaf_count):
-        current_hash = merkle_leaf(base + i)
-        current_level = 0
-
-        while stack and stack[-1][1] == current_level:
-            left_hash, _ = stack.pop()
-            if (target_index >> (current_level + 1)) == (i >> (current_level + 1)):
-                on_right = (target_index >> current_level) & 1
-                inclusion_siblings[current_level] = left_hash if on_right else current_hash
-            # Parent = SHA256(left || right). Stack entry was left, current is right.
-            current_hash = merkle_parent(left_hash, current_hash)
-            current_level += 1
-
-        stack.append((current_hash, current_level))
-
-    assert len(stack) == 1, f"Expected single root on stack, got {len(stack)}"
-    root = stack[0][0]
-    assert all(inclusion_siblings), "every level of the target path must have a sibling"
-    return root, inclusion_siblings
+    openings = [path_for(target_index)] + [path_for(i) for i in sample_indices(root, axis_byte, height)]
+    return root, openings
 
 
-def compute_axis_merkle_root(v1: int, v2: int) -> Tuple[bytes, List[bytes], int]:
-    """Compute the Merkle root for the LCA subtree between two axis values.
-
-    Returns (merkle_root, inclusion_proof_siblings, lca_height).
-
-    For trivial axes where v1 == v2, returns the single leaf hash with empty
-    inclusion proof and height 0.
-
-    For heights >= 20, uses the parallel C-accelerated Merkle engine if
-    available, which can be 10-30x faster on multi-core systems.
-    """
-    h = find_lca_height(v1, v2)
+def compute_axis_merkle_root(prefix: bytes, axis_byte: int, v1: int, v2: int) -> Tuple[bytes, List[List[bytes]], int]:
+    """Root, openings and LCA height for one axis of a crossing from v1 to v2.
+    From h20 the parallel engine builds the tree across cores."""
+    h = 0 if v1 == v2 else (v1 ^ v2).bit_length()
     if h == 0:
-        root = merkle_leaf(v1)
-        return root, [], 0
+        return merkle_leaf(prefix, v1), [], 0
     base = (v1 >> h) << h
-    # CYBERSPACE_V2 6.10: the inclusion path is for the destination leaf.
     target = v2 - base
-
-    # Use parallel engine for large trees
     if h >= 20:
         try:
             from cyberspace_core.merkle_engine import parallel_merkle_root_with_proof
-            root, siblings = parallel_merkle_root_with_proof(base, h, target_index=target)
-            return root, siblings, h
+            root, openings = parallel_merkle_root_with_proof(prefix, base, h, target_index=target, axis_byte=axis_byte)
+            return root, openings, h
         except ImportError:
             pass
+    root, openings = compute_axis_merkle_root_streaming(prefix, base, h, target_index=target, axis_byte=axis_byte)
+    return root, openings, h
 
-    root, siblings = compute_axis_merkle_root_streaming(base, h, target_index=target)
-    return root, siblings, h
 
-
-def verify_merkle_inclusion(
-    leaf_value: int,
-    siblings: List[bytes],
-    expected_root: bytes,
-    height: int,
-    base: int,
-) -> bool:
-    """Verify a Merkle inclusion proof for a given leaf value.
-
-    Parameters
-    ----------
-    leaf_value : the coordinate value of the leaf to verify
-    siblings : sibling hashes from leaf level to root
-    expected_root : the claimed Merkle root
-    height : LCA height of the subtree
-    base : aligned subtree base value
-
-    Returns True if the inclusion proof is valid.
-    """
+def verify_merkle_inclusion(prefix: bytes, leaf_value: int, siblings: List[bytes], root: bytes, height: int = 0, base: int = 0) -> bool:
+    """Whether `siblings` carry the seeded leaf at leaf_value up to `root`."""
     if height == 0:
-        return merkle_leaf(leaf_value) == expected_root and len(siblings) == 0
-
+        return merkle_leaf(prefix, leaf_value) == root and len(siblings) == 0
     if len(siblings) != height:
         return False
-
-    # Determine leaf index within the subtree
     leaf_index = leaf_value - base
-    current = merkle_leaf(leaf_value)
-
+    if not 0 <= leaf_index < (1 << height):
+        return False
+    current = merkle_leaf(prefix, leaf_value)
     for level in range(height):
-        sibling = siblings[level]
-        # At each level, determine if current node is left or right child
-        # based on the bit at this level of the leaf index.
         if (leaf_index >> level) & 1 == 0:
-            # Current is left child, sibling is right
-            current = merkle_parent(current, sibling)
+            current = merkle_parent(current, siblings[level])
         else:
-            # Current is right child, sibling is left
-            current = merkle_parent(sibling, current)
+            current = merkle_parent(siblings[level], current)
+    return current == root
 
-    return current == expected_root
+
+def verify_axis_openings(prefix: bytes, axis_byte: int, v1: int, v2: int, root: bytes, openings: List[List[bytes]]) -> bool:
+    """Level 1 for one axis (6.11): the destination's path, then each sampled
+    leaf recomputed from the seed and carried to the root."""
+    h = 0 if v1 == v2 else (v1 ^ v2).bit_length()
+    if h == 0:
+        return not openings and merkle_leaf(prefix, v1) == root
+    if len(openings) != SIDESTEP_SAMPLES + 1 or any(len(p) != h for p in openings):
+        return False
+    base = (v1 >> h) << h
+    if not verify_merkle_inclusion(prefix, v2, openings[0], root, h, base):
+        return False
+    for path, idx in zip(openings[1:], sample_indices(root, axis_byte, h)):
+        if not verify_merkle_inclusion(prefix, base + idx, path, root, h, base):
+            return False
+    return True
+
+
+def encode_openings(openings: List[List[bytes]]) -> str:
+    """The mp segment for one axis (8.5): every opening's siblings, leaf first, as hex."""
+    return "".join(s.hex() for path in openings for s in path)
+
+
+def decode_openings(segment: str, height: int) -> Optional[List[List[bytes]]]:
+    """The openings from an mp segment for an axis of LCA height `height`
+    (8.5). None when malformed, and None for a v1 segment (one path rather
+    than nine), which 6.15 says must be rejected."""
+    if height == 0:
+        return [] if segment == "" else None
+    per = 64 * height
+    if len(segment) != per * (SIDESTEP_SAMPLES + 1):
+        return None
+    try:
+        raw = bytes.fromhex(segment)
+    except ValueError:
+        return None
+    if segment != raw.hex():
+        return None
+    out = []
+    for p in range(SIDESTEP_SAMPLES + 1):
+        path = [raw[(p * height + level) * 32:(p * height + level + 1) * 32] for level in range(height)]
+        out.append(path)
+    return out
 
 
 @dataclass(frozen=True)
@@ -347,7 +410,7 @@ class SidestepProof:
     sidestep_n: int          # π(region_m, cantor_t)
     proof_hash: str          # double_SHA256(sidestep_n).hex()
     lca_heights: Tuple[int, int, int]    # (hx, hy, hz)
-    inclusion_proofs: Dict[str, List[bytes]]  # {"x": [...], "y": [...], "z": [...]}
+    openings: Dict[str, List[List[bytes]]]  # per axis: destination path, then 8 sampled paths (6.10)
 
 
 def compute_sidestep_proof(
@@ -370,10 +433,17 @@ def compute_sidestep_proof(
     plane       : destination plane bit (0 or 1)
     previous_event_id_hex : 64-char lowercase hex string
     """
-    # --- spatial component: per-axis Merkle roots ---
-    mx, siblings_x, hx = compute_axis_merkle_root(x1, x2)
-    my, siblings_y, hy = compute_axis_merkle_root(y1, y2)
-    mz, siblings_z, hz = compute_axis_merkle_root(z1, z2)
+    if len(previous_event_id_hex) != 64 or previous_event_id_hex != previous_event_id_hex.lower():
+        raise ValueError("previous_event_id_hex must be exactly 64 lowercase hex chars (32 bytes)")
+    try:
+        prev_bytes = bytes.fromhex(previous_event_id_hex)
+    except ValueError as e:
+        raise ValueError("previous_event_id_hex must be valid lowercase hex") from e
+
+    # --- spatial component: per-axis seeded Merkle roots and openings (6.4, 6.10) ---
+    mx, openings_x, hx = compute_axis_merkle_root(seed_prefix(prev_bytes, AXIS_BYTE["x"]), AXIS_BYTE["x"], x1, x2)
+    my, openings_y, hy = compute_axis_merkle_root(seed_prefix(prev_bytes, AXIS_BYTE["y"]), AXIS_BYTE["y"], y1, y2)
+    mz, openings_z, hz = compute_axis_merkle_root(seed_prefix(prev_bytes, AXIS_BYTE["z"]), AXIS_BYTE["z"], z1, z2)
 
     # Combine via Cantor pairing (same structure as hop)
     mx_int = int.from_bytes(mx, "big")
@@ -419,7 +489,7 @@ def compute_sidestep_proof(
         sidestep_n=sidestep_n,
         proof_hash=proof_hash,
         lca_heights=(hx, hy, hz),
-        inclusion_proofs={"x": siblings_x, "y": siblings_y, "z": siblings_z},
+        openings={"x": openings_x, "y": openings_y, "z": openings_z},
     )
 
 

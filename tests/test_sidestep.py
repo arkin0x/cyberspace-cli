@@ -1,341 +1,172 @@
-"""Tests for sidestep proof computation (Merkle spatial + Cantor temporal)."""
+"""Sidestep version 2 (CYBERSPACE_V2 section 6): seeded trees, openings,
+Level 1 verification, against the spec's reference vectors."""
 
 from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
 
 import pytest
 
 from cyberspace_core.cantor import cantor_pair, int_to_bytes_be_min, sha256
+from cyberspace_core.merkle_engine import parallel_merkle_root, parallel_merkle_root_with_proof
 from cyberspace_core.movement import (
+    AXIS_BYTE,
     SIDESTEP_DOMAIN,
+    SIDESTEP_SAMPLES,
     SidestepProof,
     compute_axis_merkle_root,
     compute_axis_merkle_root_streaming,
     compute_sidestep_proof,
+    decode_openings,
+    encode_openings,
     find_lca_height,
+    leaf_hasher,
     merkle_leaf,
     merkle_parent,
+    sample_indices,
+    seed_prefix,
+    verify_axis_openings,
     verify_merkle_inclusion,
 )
 
-
-class TestMerkleLeaf:
-    """Test the domain-separated leaf hash."""
-
-    def test_leaf_deterministic(self):
-        h1 = merkle_leaf(42)
-        h2 = merkle_leaf(42)
-        assert h1 == h2
-
-    def test_leaf_different_values(self):
-        assert merkle_leaf(0) != merkle_leaf(1)
-
-    def test_leaf_domain_separation(self):
-        """Leaf hash differs from plain SHA256 of the same value."""
-        val = 100
-        plain = sha256(int_to_bytes_be_min(val))
-        domained = merkle_leaf(val)
-        assert plain != domained
-
-    def test_leaf_is_32_bytes(self):
-        assert len(merkle_leaf(999)) == 32
+VECTORS = json.loads((Path(__file__).parent / "fixtures" / "sidestep_v2.json").read_text())
+ZERO = bytes(32)
+RANGE = bytes(range(32))
+PREFIX = seed_prefix(RANGE, 2)
 
 
-class TestMerkleParent:
-    def test_parent_deterministic(self):
-        a = merkle_leaf(0)
-        b = merkle_leaf(1)
-        assert merkle_parent(a, b) == merkle_parent(a, b)
+class TestSeedAndLeaf:
+    def test_prefix_layout(self):
+        assert SIDESTEP_DOMAIN == b"CYBERSPACE_SIDESTEP_V2" and len(SIDESTEP_DOMAIN) == 22
+        for v in VECTORS:
+            assert seed_prefix(bytes.fromhex(v["prev"]), v["axis"]).hex() == v["prefix"]
+        with pytest.raises(ValueError):
+            seed_prefix(bytes(31), 0)
 
-    def test_parent_order_matters(self):
-        a = merkle_leaf(0)
-        b = merkle_leaf(1)
-        assert merkle_parent(a, b) != merkle_parent(b, a)
+    def test_leaf_is_the_seeded_hash_and_resumes_from_the_midstate(self):
+        leaf = leaf_hasher(PREFIX)
+        for value in (0, 1, 255, 256, 1 << 84):
+            assert leaf(value) == merkle_leaf(PREFIX, value) == sha256(PREFIX + int_to_bytes_be_min(value))
 
-
-class TestStreamingMerkleRoot:
-    """Test the streaming Merkle root computation."""
-
-    def test_height_0(self):
-        root, siblings = compute_axis_merkle_root_streaming(base=100, height=0)
-        assert root == merkle_leaf(100)
-        assert siblings == []
-
-    def test_height_1(self):
-        """Height 1: two leaves, one parent."""
-        root, siblings = compute_axis_merkle_root_streaming(base=0, height=1)
-        expected = merkle_parent(merkle_leaf(0), merkle_leaf(1))
-        assert root == expected
-        # Inclusion proof for leaf 0: sibling is leaf 1
-        assert len(siblings) == 1
-        assert siblings[0] == merkle_leaf(1)
-
-    def test_height_2(self):
-        """Height 2: four leaves."""
-        root, siblings = compute_axis_merkle_root_streaming(base=0, height=2)
-        # Manual computation
-        h0 = merkle_leaf(0)
-        h1 = merkle_leaf(1)
-        h2 = merkle_leaf(2)
-        h3 = merkle_leaf(3)
-        p01 = merkle_parent(h0, h1)
-        p23 = merkle_parent(h2, h3)
-        expected_root = merkle_parent(p01, p23)
-        assert root == expected_root
-        # Inclusion proof for leaf 0: [sibling at level 0 = h1, sibling at level 1 = p23]
-        assert len(siblings) == 2
-        assert siblings[0] == h1
-        assert siblings[1] == p23
-
-    def test_height_3(self):
-        """Height 3: eight leaves."""
-        root, siblings = compute_axis_merkle_root_streaming(base=0, height=3)
-        assert len(siblings) == 3
-        assert len(root) == 32
-
-    def test_large_height(self):
-        """Height 10 should work with streaming (1024 leaves)."""
-        root, siblings = compute_axis_merkle_root_streaming(base=0, height=10)
-        assert len(root) == 32
-        assert len(siblings) == 10
-
-    def test_nonzero_base(self):
-        """Non-zero base should produce different root."""
-        r1, _ = compute_axis_merkle_root_streaming(base=0, height=3)
-        r2, _ = compute_axis_merkle_root_streaming(base=8, height=3)
-        assert r1 != r2
+    def test_leaf_depends_on_seed_and_axis(self):
+        assert merkle_leaf(PREFIX, 5) != merkle_leaf(seed_prefix(ZERO, 2), 5)
+        assert merkle_leaf(PREFIX, 5) != merkle_leaf(seed_prefix(RANGE, 0), 5)
 
 
-class TestComputeAxisMerkleRoot:
-    def test_trivial_axis(self):
-        """v1 == v2 should return single leaf hash."""
-        root, siblings, h = compute_axis_merkle_root(100, 100)
-        assert h == 0
-        assert siblings == []
-        assert root == merkle_leaf(100)
-
-    def test_adjacent_values(self):
-        """Two adjacent values differing in bit 0 → height 1."""
-        root, siblings, h = compute_axis_merkle_root(4, 5)
-        assert h == 1
-        assert len(siblings) == 1
-
-    def test_lca_height_matches(self):
-        root, siblings, h = compute_axis_merkle_root(0, 8)
-        assert h == find_lca_height(0, 8)
-        assert h == 4
+class TestReferenceVectors:
+    @pytest.mark.parametrize("v", VECTORS, ids=[v["name"] for v in VECTORS])
+    def test_root_samples_openings(self, v):
+        prefix = seed_prefix(bytes.fromhex(v["prev"]), v["axis"])
+        root, openings, h = compute_axis_merkle_root(prefix, v["axis"], int(v["v1"]), int(v["v2"]))
+        assert h == v["height"] and root.hex() == v["root"]
+        assert sample_indices(root, v["axis"], h) == v["samples"]
+        assert [[s.hex() for s in p] for p in openings] == v["openings"]
+        assert verify_axis_openings(prefix, v["axis"], int(v["v1"]), int(v["v2"]), root, openings)
 
 
-class TestVerifyMerkleInclusion:
-    def test_verify_leaf_0_height_1(self):
-        root, siblings = compute_axis_merkle_root_streaming(base=0, height=1)
-        assert verify_merkle_inclusion(
-            leaf_value=0, siblings=siblings, expected_root=root, height=1, base=0
-        )
+class TestStreaming:
+    def _levels(self, base, height):
+        level = [merkle_leaf(PREFIX, base + i) for i in range(1 << height)]
+        out = [level]
+        while len(level) > 1:
+            level = [merkle_parent(level[i], level[i + 1]) for i in range(0, len(level), 2)]
+            out.append(level)
+        return out
 
-    def test_verify_leaf_1_height_1(self):
-        """Verify the other leaf (index 1) in a height-1 tree."""
-        root, _ = compute_axis_merkle_root_streaming(base=0, height=1)
-        # For leaf 1, sibling is leaf 0
-        leaf1_siblings = [merkle_leaf(0)]
-        assert verify_merkle_inclusion(
-            leaf_value=1, siblings=leaf1_siblings, expected_root=root, height=1, base=0
-        )
+    def _path(self, levels, index):
+        siblings = []
+        for depth in range(len(levels) - 1):
+            siblings.append(levels[depth][index ^ 1])
+            index >>= 1
+        return siblings
 
-    def test_verify_height_2(self):
-        root, siblings = compute_axis_merkle_root_streaming(base=0, height=2)
-        # Verify leaf 0 with its inclusion proof
-        assert verify_merkle_inclusion(
-            leaf_value=0, siblings=siblings, expected_root=root, height=2, base=0
-        )
+    @pytest.mark.parametrize("height", [1, 2, 3, 5])
+    def test_every_opening_is_its_leafs_path(self, height):
+        base = 9 << height
+        levels = self._levels(base, height)
+        for target in range(1 << height):
+            root, openings = compute_axis_merkle_root_streaming(PREFIX, base, height, target_index=target, axis_byte=2)
+            assert root == levels[-1][0] and openings[0] == self._path(levels, target)
+            for idx, path in zip(sample_indices(root, 2, height), openings[1:]):
+                assert path == self._path(levels, idx)
 
-    def test_verify_wrong_root_fails(self):
-        root, siblings = compute_axis_merkle_root_streaming(base=0, height=2)
-        fake_root = b"\x00" * 32
-        assert not verify_merkle_inclusion(
-            leaf_value=0, siblings=siblings, expected_root=fake_root, height=2, base=0
-        )
+    def test_height_zero_and_bad_targets(self):
+        root, openings = compute_axis_merkle_root_streaming(PREFIX, 42, 0)
+        assert root == merkle_leaf(PREFIX, 42) and openings == []
+        with pytest.raises(ValueError):
+            compute_axis_merkle_root_streaming(PREFIX, 0, 3, target_index=8, axis_byte=2)
 
-    def test_verify_wrong_siblings_fails(self):
-        root, _ = compute_axis_merkle_root_streaming(base=0, height=2)
-        bad_siblings = [b"\x00" * 32, b"\x00" * 32]
-        assert not verify_merkle_inclusion(
-            leaf_value=0, siblings=bad_siblings, expected_root=root, height=2, base=0
-        )
+    def test_kept_levels_at_h18(self):
+        base = 5 << 18
+        v1, v2 = base + (1 << 17) - 1, base + (1 << 17)
+        root, openings = compute_axis_merkle_root_streaming(PREFIX, base, 18, target_index=v2 - base, axis_byte=2)
+        assert verify_axis_openings(PREFIX, 2, v1, v2, root, openings)
 
-    def test_verify_trivial(self):
-        root = merkle_leaf(42)
-        assert verify_merkle_inclusion(
-            leaf_value=42, siblings=[], expected_root=root, height=0, base=42
-        )
 
-    def test_verify_height_3_leaf_0(self):
-        """Verify leaf 0 inclusion in a height-3 tree."""
-        root, siblings = compute_axis_merkle_root_streaming(base=100, height=3)
-        assert verify_merkle_inclusion(
-            leaf_value=100, siblings=siblings, expected_root=root, height=3, base=100
-        )
+class TestParallelEngine:
+    def test_parallel_root_and_openings_match_streaming(self):
+        # Forced past the direct path so the split, the merge and the inner
+        # paths are all exercised, with a small tree.
+        height, base = 14, 3 << 14
+        target = (1 << 13)
+        root_s, openings_s = compute_axis_merkle_root_streaming(PREFIX, base, height, target_index=target, axis_byte=2)
+        root_p, openings_p = parallel_merkle_root_with_proof(PREFIX, base, height, workers=2, target_index=target, axis_byte=2)
+        assert root_p == root_s and openings_p == openings_s
+        assert parallel_merkle_root(PREFIX, base, height, workers=2) == root_s
+
+
+class TestToll:
+    H, AXIS = 12, 2
+    base = (0x1234567 >> 12) << 12
+    v1, v2 = base + (1 << 11) - 1, base + (1 << 11)
+
+    def test_movers_differ_copies_fail_axes_separate(self):
+        alice, bob = seed_prefix(ZERO, self.AXIS), seed_prefix(RANGE, self.AXIS)
+        ra, oa, _ = compute_axis_merkle_root(alice, self.AXIS, self.v1, self.v2)
+        rb, _, _ = compute_axis_merkle_root(bob, self.AXIS, self.v1, self.v2)
+        assert ra != rb
+        assert verify_axis_openings(alice, self.AXIS, self.v1, self.v2, ra, oa)
+        assert not verify_axis_openings(bob, self.AXIS, self.v1, self.v2, ra, oa)
+        assert compute_axis_merkle_root(seed_prefix(ZERO, 0), 0, self.v1, self.v2)[0] != ra
+
+    def test_fabricated_tree_fails_the_samples(self):
+        alice = seed_prefix(ZERO, self.AXIS)
+        fake = [hashlib.sha256(b"forge" + bytes([i])).digest() for i in range(self.H)]
+        cur, i = merkle_leaf(alice, self.v2), self.v2 - self.base
+        for s in fake:
+            cur = merkle_parent(cur, s) if i % 2 == 0 else merkle_parent(s, cur)
+            i //= 2
+        assert verify_merkle_inclusion(alice, self.v2, fake, cur, self.H, self.base)
+        assert not verify_axis_openings(alice, self.AXIS, self.v1, self.v2, cur, [fake] * (SIDESTEP_SAMPLES + 1))
+
+
+class TestEncoding:
+    def test_round_trip_and_v1_rejection(self):
+        v = next(x for x in VECTORS if x["name"] == "zero-z-h5")
+        openings = [[bytes.fromhex(s) for s in p] for p in v["openings"]]
+        seg = encode_openings(openings)
+        assert decode_openings(seg, v["height"]) == openings
+        assert decode_openings(encode_openings(openings[:1]), v["height"]) is None
+        assert decode_openings("", 0) == [] and decode_openings("zz", 0) is None
 
 
 class TestSidestepProof:
-    """Test the full sidestep proof computation."""
-
-    # Use a deterministic previous_event_id for tests
-    PREV_ID = "a" * 64
-
-    def test_basic_sidestep(self):
-        """Simple sidestep where coordinates differ on one axis."""
-        proof = compute_sidestep_proof(
-            x1=0, y1=0, z1=0,
-            x2=1, y2=0, z2=0,
-            plane=0,
-            previous_event_id_hex=self.PREV_ID,
-        )
+    def test_full_proof_shape_and_hash(self):
+        prev = RANGE.hex()
+        proof = compute_sidestep_proof(1023, 100, 479, 1024, 100, 480, plane=0, previous_event_id_hex=prev)
         assert isinstance(proof, SidestepProof)
-        assert len(proof.merkle_x) == 32
-        assert len(proof.merkle_y) == 32
-        assert len(proof.merkle_z) == 32
-        assert len(proof.proof_hash) == 64  # hex string of SHA256
-        assert proof.lca_heights == (1, 0, 0)
+        assert proof.lca_heights == (11, 0, 6)
+        assert len(proof.openings["x"]) == 9 and proof.openings["y"] == [] and len(proof.openings["z"]) == 9
+        for axis, v1, v2 in (("x", 1023, 1024), ("z", 479, 480)):
+            root = getattr(proof, f"merkle_{axis}")
+            assert verify_axis_openings(seed_prefix(RANGE, AXIS_BYTE[axis]), AXIS_BYTE[axis], v1, v2, root, proof.openings[axis])
+        mx, my, mz = (int.from_bytes(getattr(proof, f"merkle_{a}"), "big") for a in "xyz")
+        assert proof.region_m == cantor_pair(cantor_pair(mx, my), mz)
+        assert proof.proof_hash == sha256(sha256(int_to_bytes_be_min(proof.sidestep_n))).hex()
+        assert find_lca_height(1023, 1024) == 11
 
-    def test_multi_axis_sidestep(self):
-        """Sidestep where coordinates differ on multiple axes."""
-        proof = compute_sidestep_proof(
-            x1=0, y1=0, z1=0,
-            x2=4, y2=2, z2=1,
-            plane=0,
-            previous_event_id_hex=self.PREV_ID,
-        )
-        assert proof.lca_heights[0] == find_lca_height(0, 4)  # 3
-        assert proof.lca_heights[1] == find_lca_height(0, 2)  # 2
-        assert proof.lca_heights[2] == find_lca_height(0, 1)  # 1
-
-    def test_proof_deterministic(self):
-        """Same inputs produce same proof."""
-        p1 = compute_sidestep_proof(
-            x1=10, y1=20, z1=30,
-            x2=11, y2=20, z2=30,
-            plane=0,
-            previous_event_id_hex=self.PREV_ID,
-        )
-        p2 = compute_sidestep_proof(
-            x1=10, y1=20, z1=30,
-            x2=11, y2=20, z2=30,
-            plane=0,
-            previous_event_id_hex=self.PREV_ID,
-        )
-        assert p1.proof_hash == p2.proof_hash
-        assert p1.region_m == p2.region_m
-
-    def test_different_prev_id_different_proof(self):
-        """Different previous_event_id produces different proof (temporal binding)."""
-        p1 = compute_sidestep_proof(
-            x1=0, y1=0, z1=0,
-            x2=1, y2=0, z2=0,
-            plane=0,
-            previous_event_id_hex="a" * 64,
-        )
-        p2 = compute_sidestep_proof(
-            x1=0, y1=0, z1=0,
-            x2=1, y2=0, z2=0,
-            plane=0,
-            previous_event_id_hex="b" * 64,
-        )
-        assert p1.proof_hash != p2.proof_hash
-        # Spatial component should be the same (same coordinates)
-        assert p1.merkle_x == p2.merkle_x
-        assert p1.region_m == p2.region_m
-        # Temporal component differs
-        assert p1.cantor_t != p2.cantor_t
-
-    def test_sidestep_differs_from_hop(self):
-        """Sidestep proof hash differs from hop proof hash (different spatial construction)."""
-        from cyberspace_core.movement import compute_hop_proof
-        sid = compute_sidestep_proof(
-            x1=0, y1=0, z1=0,
-            x2=1, y2=0, z2=0,
-            plane=0,
-            previous_event_id_hex=self.PREV_ID,
-        )
-        hop = compute_hop_proof(
-            0, 0, 0, 1, 0, 0,
-            plane=0,
-            previous_event_id_hex=self.PREV_ID,
-        )
-        assert sid.proof_hash != hop.proof_hash
-
-    def test_inclusion_proofs_verify(self):
-        """The inclusion proofs in the sidestep proof should verify against roots."""
-        proof = compute_sidestep_proof(
-            x1=0, y1=0, z1=0,
-            x2=4, y2=2, z2=1,
-            plane=0,
-            previous_event_id_hex=self.PREV_ID,
-        )
-        # The path is for the destination leaf (CYBERSPACE_V2 6.10), on every axis.
-        hx, hy, hz = proof.lca_heights
-        for axis, v1, v2, h, root in (("x", 0, 4, hx, proof.merkle_x), ("y", 0, 2, hy, proof.merkle_y), ("z", 0, 1, hz, proof.merkle_z)):
-            base = (v1 >> h) << h
-            assert verify_merkle_inclusion(
-                leaf_value=v2,
-                siblings=proof.inclusion_proofs[axis],
-                expected_root=root,
-                height=h,
-                base=base,
-            ), axis
-            # and it is not a proof for the source leaf
-            assert not verify_merkle_inclusion(
-                leaf_value=v1,
-                siblings=proof.inclusion_proofs[axis],
-                expected_root=root,
-                height=h,
-                base=base,
-            ), axis
-
-    def test_double_sha256_proof_hash(self):
-        """Verify proof_hash is double SHA256 of sidestep_n."""
-        proof = compute_sidestep_proof(
-            x1=0, y1=0, z1=0,
-            x2=1, y2=0, z2=0,
-            plane=0,
-            previous_event_id_hex=self.PREV_ID,
-        )
-        expected = sha256(sha256(int_to_bytes_be_min(proof.sidestep_n))).hex()
-        assert proof.proof_hash == expected
-
-    def test_region_m_structure(self):
-        """Verify region_m = π(π(mx, my), mz) structure."""
-        proof = compute_sidestep_proof(
-            x1=0, y1=0, z1=0,
-            x2=1, y2=0, z2=0,
-            plane=0,
-            previous_event_id_hex=self.PREV_ID,
-        )
-        mx = int.from_bytes(proof.merkle_x, "big")
-        my = int.from_bytes(proof.merkle_y, "big")
-        mz = int.from_bytes(proof.merkle_z, "big")
-        expected = cantor_pair(cantor_pair(mx, my), mz)
-        assert proof.region_m == expected
-
-    def test_invalid_prev_id(self):
-        """Invalid previous event ID should raise ValueError."""
-        with pytest.raises(ValueError, match="64 hex chars"):
-            compute_sidestep_proof(
-                x1=0, y1=0, z1=0,
-                x2=1, y2=0, z2=0,
-                plane=0,
-                previous_event_id_hex="short",
-            )
-
-    def test_higher_lca_heights(self):
-        """Test with heights that would be too expensive for Cantor but fine for Merkle."""
-        # Height ~15 on one axis — streaming Merkle handles this easily
-        # v1=0, v2=16384 gives h=15 (since 16384 = 2^14, XOR = 2^14, bit_length = 15)
-        proof = compute_sidestep_proof(
-            x1=0, y1=0, z1=0,
-            x2=16384, y2=0, z2=0,
-            plane=0,
-            previous_event_id_hex=self.PREV_ID,
-        )
-        assert proof.lca_heights[0] == 15
-        assert len(proof.inclusion_proofs["x"]) == 15
-        assert len(proof.proof_hash) == 64
+    def test_rejects_bad_previous_id(self):
+        with pytest.raises(ValueError):
+            compute_sidestep_proof(7, 0, 0, 8, 0, 0, plane=0, previous_event_id_hex="ab" * 31)
