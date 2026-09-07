@@ -84,6 +84,7 @@ from cyberspace_core.movement import (
     compute_hop_proof,
     compute_movement_proof_xyz,
     compute_sidestep_proof,
+    encode_openings,
     find_lca_height,
 )
 from cyberspace_core.movement_debug import axis_cantor_debug
@@ -2678,12 +2679,12 @@ def move(
 
         created_at = int(time.time())
         if sidestep_proof is not None:
-            # Encode Merkle roots and inclusion proofs as colon-separated hex
+            # Merkle roots and the openings (6.10) as colon-separated hex (8.5)
             merkle_roots_hex = ":".join(
                 root.hex() for root in (sidestep_proof.merkle_x, sidestep_proof.merkle_y, sidestep_proof.merkle_z)
             )
             merkle_proofs_hex = ":".join(
-                "".join(s.hex() for s in sidestep_proof.inclusion_proofs[axis])
+                encode_openings(sidestep_proof.openings[axis])
                 for axis in ("x", "y", "z")
             )
             movement_event = make_sidestep_event(
