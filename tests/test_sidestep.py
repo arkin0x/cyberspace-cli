@@ -397,7 +397,7 @@ def _load_generator():
 
 class TestGrandfathered:
     def test_the_embedded_list(self):
-        assert SPEC_COMMIT == "7f724d581f0ebd4631b716264a25802dbd650b52"
+        assert SPEC_COMMIT == "787cda3bd7c76fbe618b9b72e30ecafa19f05434"
         assert len(GRANDFATHERED_V2_SIDESTEPS) == 36
         assert all(len(i) == 64 and all(c in "0123456789abcdef" for c in i) for i in GRANDFATHERED_V2_SIDESTEPS)
         assert "393b58f707d94d31b3aa11a1326b46e54f9b14ae2864989bbcbe2a210aa76458" in GRANDFATHERED_V2_SIDESTEPS
