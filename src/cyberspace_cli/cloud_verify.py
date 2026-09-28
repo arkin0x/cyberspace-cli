@@ -3,7 +3,9 @@
 Hops: the cloud root itself is operator trust (it is the work we paid not to
 do), but everything around it is cheap to recompute: terrain K, the temporal
 root, trivial axes, any axis within the local ceiling, and the envelope
-hashes. Sidesteps: full Level 1 verification per CYBERSPACE_V2 6.11, all O(h).
+hashes. Sidesteps: full Level 1 verification per CYBERSPACE_V2 6.11, all O(h),
+with the re-roll nonce read from the result's mn field (16 lowercase hex
+characters, exactly as the event's mn tag).
 
 Every function returns the list of failed checks. Empty means append.
 """
@@ -16,15 +18,12 @@ from typing import Any, Dict, List, Tuple
 from cyberspace_core.cantor import cantor_pair, int_to_bytes_be_min, sha256
 from cyberspace_core.movement import (
     AXIS_BITS,
-    AXIS_BYTE,
     TEMPORAL_MAX_COMPUTE_HEIGHT,
     compute_axis_cantor,
     compute_subtree_cantor,
+    decode_nonce,
     find_lca_height,
-    merkle_leaf,
-    seed_prefix,
-    verify_axis_openings,
-    verify_merkle_inclusion,
+    verify_sidestep_openings,
 )
 from cyberspace_core.terrain import terrain_k
 
@@ -60,6 +59,7 @@ class CloudSidestep:
     source: str = "cloud"
     region_m: int = 0
     sidestep_n: int = field(default=0, repr=False)
+    nonce: int = 0
 
 
 def _dsha_hex(n: int) -> str:
@@ -149,7 +149,13 @@ def verify_cloud_sidestep(
         failures.append(f"lca_heights: server {result.get('lca_heights')} but axes give {list(heights)}")
         return failures
 
-    roots: List[int] = []
+    # 6.16: a result without a nonce is a version 2 proof. The exemption list
+    # names published events; a cloud result is a new proof, so nothing excuses it.
+    nonce = decode_nonce(result.get("mn"))
+    if nonce is None:
+        failures.append(f"mn: {result.get('mn')!r} is not a nonce of 16 lowercase hex characters (a version 2 result is refused, 6.16)")
+    roots: List[bytes] = []
+    openings: Dict[str, List[List[bytes]]] = {}
     for i, (axis, v1, v2) in enumerate((("x", x1, x2), ("y", y1, y2), ("z", z1, z2))):
         h = heights[i]
         base = (min(v1, v2) >> h) << h
@@ -158,22 +164,28 @@ def verify_cloud_sidestep(
             failures.append(f"bases[{axis}]: server {bases[i]} but aligned base is {base}")
         try:
             root = bytes.fromhex(result[f"merkle_{axis}"])
-            openings = [[bytes.fromhex(s) for s in path] for path in result["openings"][axis]]
+            openings[axis] = [[bytes.fromhex(s) for s in path] for path in result["openings"][axis]]
         except (KeyError, ValueError, TypeError):
             failures.append(f"merkle_{axis}: root or openings missing")
             continue
-        # 6.11: the destination's path and the eight sampled paths, each
-        # sampled leaf recomputed under OUR seed, the previous event id and
-        # the axis; a tree built for anyone else fails here, as does a v1
-        # result with a single path (6.15).
-        prefix = seed_prefix(bytes.fromhex(previous_event_id_hex), AXIS_BYTE[axis])
-        if not verify_axis_openings(prefix, AXIS_BYTE[axis], v1, v2, root, openings):
-            failures.append(f"merkle_{axis}: openings do not prove the seeded tree")
-        roots.append(int.from_bytes(root, "big"))
+        if len(root) != 32:
+            failures.append(f"merkle_{axis}: root is not 32 bytes")
+            continue
+        roots.append(root)
     if failures:
         return failures
 
-    region_m = cantor_pair(cantor_pair(roots[0], roots[1]), roots[2])
+    # 6.10, 6.11: G from the nonce and all three roots must meet the price;
+    # then on every axis the destination's path and the eight paths at the
+    # positions drawn from G, each sampled leaf recomputed under OUR seed, the
+    # previous event id and the axis. A tree built for anyone else fails here,
+    # as does a v1 result with a single path (6.15).
+    assert nonce is not None
+    failures += verify_sidestep_openings(bytes.fromhex(previous_event_id_hex), (x1, y1, z1), (x2, y2, z2), roots, nonce, openings)
+    if failures:
+        return failures
+
+    region_m = cantor_pair(cantor_pair(int.from_bytes(roots[0], "big"), int.from_bytes(roots[1], "big")), int.from_bytes(roots[2], "big"))
     if result.get("region_m_hex") and int(result["region_m_hex"], 16) != region_m:
         failures.append("region_m: does not match the pairing of the three roots")
     k = terrain_k(x=x2, y=y2, z=z2, plane=plane)
@@ -203,4 +215,5 @@ def cloud_sidestep_from_result(job: Dict[str, Any], x1, y1, z1, x2, y2, z2, *, p
         cost_msats=int(job.get("cost_msats") or 0),
         region_m=region_m,
         sidestep_n=cantor_pair(region_m, _temporal(previous_event_id_hex, k)),
+        nonce=int(result["mn"], 16),
     )

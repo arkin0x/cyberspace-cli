@@ -13,7 +13,7 @@ from coincurve import PrivateKey, PublicKeyXOnly
 
 from cyberspace_cli import cloud_jobs
 from cyberspace_cli.cloud_move import decide_action, spec_sidestep_landings
-from cyberspace_cli.cloud_verify import verify_cloud_hop, verify_cloud_sidestep
+from cyberspace_cli.cloud_verify import cloud_sidestep_from_result, verify_cloud_hop, verify_cloud_sidestep
 from cyberspace_cli.hosaka import (
     CloudBusy,
     CloudHeightExceeded,
@@ -23,7 +23,7 @@ from cyberspace_cli.hosaka import (
 )
 from cyberspace_cli.nip98 import nip98_authorization, nip98_event
 from cyberspace_core.cantor import int_to_bytes_be_min, sha256
-from cyberspace_core.movement import compute_hop_proof, compute_sidestep_proof, find_lca_height
+from cyberspace_core.movement import compute_hop_proof, compute_sidestep_proof, encode_nonce, find_lca_height, grind_hash, meets_price, reroll_attempts
 
 SK = PrivateKey(bytes.fromhex("7f" * 32))
 SK_HEX = SK.secret.hex()
@@ -179,10 +179,23 @@ class TestVerifierAgainstOracles(unittest.TestCase):
             "proof_hash": proof.proof_hash,
             "merkle_x": proof.merkle_x.hex(), "merkle_y": proof.merkle_y.hex(), "merkle_z": proof.merkle_z.hex(),
             "openings": {a: [[s.hex() for s in path] for path in proof.openings[a]] for a in ("x", "y", "z")},
+            "mn": encode_nonce(proof.nonce),
             "lca_heights": list(proof.lca_heights), "bases": [(x1 >> 6) << 6, 44, 44],
             "terrain_k": proof.terrain_k, "region_m_hex": format(proof.region_m, "x"),
         }
         self.assertEqual(verify_cloud_sidestep(res, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV), [])
+        # the nonce reaches the event built from the result (move, and cloud resume)
+        self.assertEqual(cloud_sidestep_from_result({"id": "j", "result": res}, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV).nonce, proof.nonce)
+        # a version 2 result, with no nonce, is refused: the exemption list names published events (6.16)
+        bad = json.loads(json.dumps(res)); del bad["mn"]
+        self.assertTrue(any(f.startswith("mn:") for f in verify_cloud_sidestep(bad, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV)))
+        bad = json.loads(json.dumps(res)); bad["mn"] = bad["mn"].upper() if proof.nonce > 9 else "0" * 15
+        self.assertTrue(any(f.startswith("mn:") for f in verify_cloud_sidestep(bad, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV)))
+        # a nonce that misses the re-roll price (6.10)
+        roots = [proof.merkle_x, proof.merkle_y, proof.merkle_z]
+        miss = next(n for n in range(1000) if not meets_price(grind_hash(bytes.fromhex(PREV), roots, n), reroll_attempts(proof.lca_heights)))
+        bad = json.loads(json.dumps(res)); bad["mn"] = encode_nonce(miss)
+        self.assertTrue(any("re-roll price" in f for f in verify_cloud_sidestep(bad, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV)))
         bad = json.loads(json.dumps(res)); bad["openings"]["x"][3][0] = "ff" * 32
         self.assertTrue(any("merkle_x" in f for f in verify_cloud_sidestep(bad, x1, y1, z1, x2, y1, z1, plane=0, previous_event_id_hex=PREV)))
         bad = json.loads(json.dumps(res)); bad["merkle_y"] = "ee" * 32

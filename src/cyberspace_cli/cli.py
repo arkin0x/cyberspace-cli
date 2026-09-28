@@ -84,6 +84,7 @@ from cyberspace_core.movement import (
     compute_hop_proof,
     compute_movement_proof_xyz,
     compute_sidestep_proof,
+    encode_nonce,
     encode_openings,
     find_lca_height,
 )
@@ -2679,7 +2680,7 @@ def move(
 
         created_at = int(time.time())
         if sidestep_proof is not None:
-            # Merkle roots and the openings (6.10) as colon-separated hex (8.5)
+            # Merkle roots, the openings and the re-roll nonce (6.10) as hex (8.5)
             merkle_roots_hex = ":".join(
                 root.hex() for root in (sidestep_proof.merkle_x, sidestep_proof.merkle_y, sidestep_proof.merkle_z)
             )
@@ -2697,6 +2698,7 @@ def move(
                 proof_hash_hex=sidestep_proof.proof_hash,
                 merkle_roots_hex=merkle_roots_hex,
                 merkle_proofs_hex=merkle_proofs_hex,
+                nonce_hex=encode_nonce(sidestep_proof.nonce),
                 lca_heights=sidestep_proof.lca_heights,
             )
         elif hyperjump_to_height is None:

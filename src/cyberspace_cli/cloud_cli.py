@@ -21,7 +21,7 @@ from cyberspace_cli.nostr_event import make_hop_event, make_sidestep_event
 from cyberspace_cli.parsing import parse_destination_xyz_or_coord
 from cyberspace_cli.state import load_state, save_state
 from cyberspace_core.coords import coord_to_xyz, xyz_to_coord
-from cyberspace_core.movement import find_lca_height, encode_openings
+from cyberspace_core.movement import find_lca_height, encode_nonce, encode_openings
 
 cloud_app = typer.Typer(no_args_is_help=True)
 
@@ -270,6 +270,7 @@ def cloud_resume(job_id: str, api_url: Optional[str] = typer.Option(None, "--api
             proof_hash_hex=obj.proof_hash,
             merkle_roots_hex=":".join(r.hex() for r in (obj.merkle_x, obj.merkle_y, obj.merkle_z)),
             merkle_proofs_hex=":".join(encode_openings(obj.openings[a]) for a in ("x", "y", "z")),
+            nonce_hex=encode_nonce(obj.nonce),
             lca_heights=obj.lca_heights,
         )
     else:

@@ -5,6 +5,7 @@ import json
 from typing import Any, Dict, List, Sequence
 
 from cyberspace_core.coords import coord_to_xyz
+from cyberspace_core.movement import decode_nonce
 
 
 def _sha256_hex(b: bytes) -> str:
@@ -171,19 +172,24 @@ def make_sidestep_event(
     proof_hash_hex: str,
     merkle_roots_hex: str,
     merkle_proofs_hex: str,
+    nonce_hex: str,
     lca_heights: tuple,
     kind: int = 3333,
 ) -> Dict[str, Any]:
-    """Create a sidestep movement event (kind 3333, A=sidestep).
+    """Create a sidestep movement event (kind 3333, A=sidestep), version 3.
 
     Parameters
     ----------
     merkle_roots_hex : colon-separated hex string "M_x:M_y:M_z" (each 64 hex chars)
     merkle_proofs_hex : colon-separated hex string "proof_x:proof_y:proof_z"
-        Each per-axis proof is concatenated sibling hashes (64*h hex chars per axis).
-        Empty string for trivial axes (h=0).
+        Each per-axis segment is the nine openings of CYBERSPACE_V2 6.10 (the
+        destination's path, then the eight sampled paths), each h sibling
+        hashes, so 64*h*9 hex chars per axis. Empty string for trivial axes (h=0).
+    nonce_hex : the re-roll nonce of 6.10 as exactly 16 lowercase hex chars (the mn tag, 8.5)
     lca_heights : (hx, hy, hz) tuple of per-axis LCA heights
     """
+    if decode_nonce(nonce_hex) is None:
+        raise ValueError("nonce_hex must be exactly 16 lowercase hex characters (CYBERSPACE_V2 8.5)")
     hx, hy, hz = lca_heights
     tags: List[List[str]] = [
         ["A", "sidestep"],
@@ -194,6 +200,7 @@ def make_sidestep_event(
         ["proof", proof_hash_hex],
         ["mr", merkle_roots_hex],
         ["mp", merkle_proofs_hex],
+        ["mn", nonce_hex],
         ["hx", str(hx)],
         ["hy", str(hy)],
         ["hz", str(hz)],

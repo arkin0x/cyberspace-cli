@@ -203,8 +203,9 @@ lands exactly 1 gibson past the wall (so use `--toward`, which walks boundary
 by boundary). The CLI never trusts the result blindly: terrain K, the temporal
 root, trivial axes, any axis within the local ceiling and every envelope hash
 are recomputed here for hops, and sidesteps get full Level 1 verification
-(inclusion paths for the destination leaf, region_m, proof hash). A result
-that fails any check is never appended.
+(the re-roll price from the result's `mn` nonce, the destination's path and
+the eight sampled paths drawn from G, region_m, proof hash). A result that
+fails any check is never appended.
 
 Payment: the server quotes a price; on approval it issues a Lightning invoice
 from the operator's node. Pay it with any wallet (the bolt11 and a
