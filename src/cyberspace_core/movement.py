@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import partial
 
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from cyberspace_core.cantor import cantor_pair, int_to_bytes_be_min, sha256, sha256_int_hex
-from cyberspace_core.coords import AXIS_BITS, AXIS_MAX
+from cyberspace_core.coords import AXIS_BITS, AXIS_MAX, coord_to_xyz
 from cyberspace_core.terrain import terrain_k
 
 DEFAULT_MAX_COMPUTE_HEIGHT = 20
@@ -183,7 +184,7 @@ def compute_hop_proof(
 
 
 # ============================================================================
-# Sidestep version 2 (CYBERSPACE_V2 section 6, revised 2026-09-07)
+# Sidestep version 3 (CYBERSPACE_V2 section 6, revised 2026-09-28)
 #
 # The sidestep is a toll. Every leaf is hashed under a 64-byte seed prefix:
 # the V2 domain, the mover's previous event id, an axis byte and nine zero
@@ -191,19 +192,35 @@ def compute_hop_proof(
 # fills exactly one SHA-256 block, so its state is taken once per axis and
 # each leaf costs one compression (6.5). With no canonical root to compare
 # against, the prover publishes openings (6.10): the destination leaf's path
-# and eight sampled paths at positions drawn from the root, which a verifier
-# recomputes from the seed. Checked against the spec's sidestep-reference.py.
+# and eight sampled paths, which a verifier recomputes from the seed.
+#
+# Version 3 puts a price on the samples (6.10, 6.16). They are drawn from G,
+# a hash of a nonce, the previous event id and all three axis roots, and the
+# prover publishes (in the mn tag) a nonce whose G, read as an integer, times
+# A = ceil(leaves / 8) is below 2^256. A fresh set of samples therefore costs
+# about one eighth of the tree, which is what makes building part of the tree
+# and retrying until the samples miss the rest cost more than building all of
+# it (6.11). The tree, its leaves and its roots are unchanged from version 2.
+# A prover works in order: every axis root (one streaming pass), then the
+# nonce, then the openings at the destination and at the positions drawn from
+# G. Checked against the spec's sidestep-reference.py.
 # ============================================================================
 
 SIDESTEP_DOMAIN = b"CYBERSPACE_SIDESTEP_V2"
 SEED_PAD = b"\x00" * 9
-SIDESTEP_SAMPLE_DOMAIN = b"CYBERSPACE_SIDESTEP_SAMPLE_V1"
+SIDESTEP_GRIND_DOMAIN = b"CYBERSPACE_SIDESTEP_GRIND_V1"
+SIDESTEP_SAMPLE_DOMAIN = b"CYBERSPACE_SIDESTEP_SAMPLE_V2"
 SIDESTEP_SAMPLES = 8
 AXIS_BYTE = {"x": 0, "y": 1, "z": 2}
 # Nodes from this many levels below the root are kept from the main pass, so
 # the openings can be assembled afterwards by rebuilding only the small
 # subtree under each opened leaf: at most 2^17 hashes kept, whatever the height.
 KEPT_LEVELS = 16
+# A nonce search that expects at least this many attempts runs across
+# processes, NONCE_CHUNK nonces per task; below it a pool costs more than it
+# saves, since one attempt is a single SHA-256 of 164 bytes.
+PARALLEL_NONCE_ATTEMPTS = 1 << 18
+NONCE_CHUNK = 1 << 16
 
 
 def seed_prefix(previous_event_id: bytes, axis_byte: int) -> bytes:
@@ -241,14 +258,97 @@ def merkle_parent(left: bytes, right: bytes) -> bytes:
     return sha256(left + right)
 
 
-def sample_indices(root: bytes, axis_byte: int, height: int) -> List[int]:
-    """The sampled positions for an axis (6.10), within the aligned subtree."""
+# ---------------------------------------------------------------- the re-roll price (6.10)
+
+def reroll_attempts(heights: Sequence[int]) -> int:
+    """A = max(1, ceil(L / SIDESTEP_SAMPLES)), with L the leaves over every axis
+    that moves (6.10). An attempt costs one leaf's share of the tree, so A
+    attempts, the expected price of one set of samples, are one eighth of it."""
+    leaves = sum(1 << h for h in heights if h > 0)
+    return max(1, -(-leaves // SIDESTEP_SAMPLES))
+
+
+def grind_hash(previous_event_id: bytes, roots: Sequence[bytes], nonce: int) -> bytes:
+    """G = SHA256(GRIND_DOMAIN || be64(nonce) || previous_event_id || M_x || M_y || M_z)
+    (6.10). For a trivial axis M is its single seeded leaf. 164 bytes, three
+    SHA-256 blocks with the nonce in the first, so no state carries from one
+    attempt to the next."""
+    if not 0 <= nonce < 1 << 64:
+        raise ValueError("nonce must be an unsigned 64-bit integer")
+    if len(previous_event_id) != 32 or len(roots) != 3 or any(len(r) != 32 for r in roots):
+        raise ValueError("G takes a 32-byte previous event id and three 32-byte roots")
+    return sha256(SIDESTEP_GRIND_DOMAIN + nonce.to_bytes(8, "big") + previous_event_id + b"".join(roots))
+
+
+def meets_price(G: bytes, attempts: int) -> bool:
+    """G, read as a 256-bit big-endian integer, times A is below 2^256: a
+    nonce succeeds with probability 1/A."""
+    return int.from_bytes(G, "big") * attempts < (1 << 256)
+
+
+def _nonce_meets_price(previous_event_id: bytes, roots: Tuple[bytes, ...], attempts: int, nonce: int) -> bool:
+    return meets_price(grind_hash(previous_event_id, roots, nonce), attempts)
+
+
+def find_nonce(previous_event_id: bytes, roots: Sequence[bytes], attempts: int, *, workers: Optional[int] = None) -> int:
+    """The smallest nonce that meets the price. Any valid nonce verifies; the
+    smallest is what the spec's golden vectors publish, and it is the same
+    however the search is split. A search that expects many attempts runs
+    across processes over consecutive chunks of nonces (workers=1 keeps it in
+    this process)."""
+    check = partial(_nonce_meets_price, previous_event_id, tuple(roots), attempts)
+    if attempts >= PARALLEL_NONCE_ATTEMPTS and workers != 1:
+        from cyberspace_core.merkle_engine import parallel_first
+
+        return parallel_first(check, chunk=NONCE_CHUNK, workers=workers)
+    nonce = 0
+    while not check(nonce):
+        nonce += 1
+    return nonce
+
+
+def encode_nonce(nonce: int) -> str:
+    """The mn tag value (8.5): exactly 16 lowercase hex characters, big-endian."""
+    return nonce.to_bytes(8, "big").hex()
+
+
+def decode_nonce(value: object) -> Optional[int]:
+    """The nonce in an mn value, or None unless it is exactly 16 lowercase hex characters."""
+    if not isinstance(value, str) or len(value) != 16 or any(c not in "0123456789abcdef" for c in value):
+        return None
+    return int(value, 16)
+
+
+def sample_indices(G: bytes, axis_byte: int, height: int) -> List[int]:
+    """The sampled positions for an axis (6.10), within the aligned subtree:
+    SHA256(SAMPLE_DOMAIN || G || axis_byte || be32(i)) mod 2^h for i in 0..7.
+    Not deduplicated, so the number of openings stays fixed."""
     if height == 0:
         return []
     return [
-        int.from_bytes(sha256(SIDESTEP_SAMPLE_DOMAIN + root + bytes([axis_byte]) + i.to_bytes(4, "big")), "big") % (1 << height)
+        int.from_bytes(sha256(SIDESTEP_SAMPLE_DOMAIN + G + bytes([axis_byte]) + i.to_bytes(4, "big")), "big") % (1 << height)
         for i in range(SIDESTEP_SAMPLES)
     ]
+
+
+# ---------------------------------------------------------------- the tree, root first (6.5)
+
+@dataclass(frozen=True)
+class AxisTree:
+    """One axis's seeded tree after the root pass: its root, and the paths of
+    any leaves once G has said which ones to open. `paths` takes a list of
+    indices within the aligned subtree and returns each leaf's siblings, leaf
+    level first."""
+    root: bytes
+    base: int
+    height: int
+    paths: Callable[[Sequence[int]], List[List[bytes]]] = field(repr=False, compare=False)
+
+    def openings(self, target_index: int, G: bytes, axis_byte: int) -> List[List[bytes]]:
+        """The destination's path, then the eight sampled paths (6.10); none at height 0."""
+        if self.height == 0:
+            return []
+        return self.paths([target_index] + sample_indices(G, axis_byte, self.height))
 
 
 def _fold(leaf: Callable[[int], bytes], base: int, first: int, height: int, keep_from: int, keep: Callable[[int, int, bytes], None]) -> bytes:
@@ -273,32 +373,21 @@ def _fold(leaf: Callable[[int], bytes], base: int, first: int, height: int, keep
     return stack[0][0]
 
 
-def compute_axis_merkle_root_streaming(
-    prefix: bytes,
-    base: int,
-    height: int,
-    target_index: int = 0,
-    axis_byte: Optional[int] = None,
-) -> Tuple[bytes, List[List[bytes]]]:
-    """Root of the aligned subtree at `base` of `height`, and its openings
-    (6.10): the path of the leaf at target_index (the destination), then the
-    eight sampled paths. The sampled positions depend on the root, so the top
-    KEPT_LEVELS levels of nodes are kept from the single pass and each
-    opening's lower siblings come from rebuilding the small subtree under its
-    leaf. Returns (root, openings); openings are empty at height 0."""
+def compute_axis_merkle_root_streaming(prefix: bytes, base: int, height: int) -> AxisTree:
+    """The root pass over the aligned subtree at `base` of `height` (6.5), in
+    one process. The top KEPT_LEVELS levels of nodes are kept, and a path's
+    lower siblings come from rebuilding the small subtree under its leaf, so
+    the paths can be fetched after the nonce is found."""
     leaf = leaf_hasher(prefix)
     if height == 0:
-        return leaf(base), []
-    if axis_byte is None:
-        raise ValueError("axis_byte is needed to draw the sampled openings")
-    count = 1 << height
-    if not 0 <= target_index < count:
-        raise ValueError(f"target_index {target_index} outside subtree of {count} leaves")
+        return AxisTree(leaf(base), base, 0, lambda indices: [[] for _ in indices])
     keep_from = max(0, height - KEPT_LEVELS)
     kept: Dict[Tuple[int, int], bytes] = {}
     root = _fold(leaf, base, 0, height, keep_from, lambda lvl, idx, h: kept.__setitem__((lvl, idx), h))
 
     def path_for(index: int) -> List[bytes]:
+        if not 0 <= index < (1 << height):
+            raise ValueError(f"index {index} outside subtree of {1 << height} leaves")
         siblings: List[Optional[bytes]] = [None] * height
         if keep_from > 0:
             size = 1 << keep_from
@@ -312,28 +401,26 @@ def compute_axis_merkle_root_streaming(
         assert all(s is not None for s in siblings)
         return siblings  # type: ignore[return-value]
 
-    openings = [path_for(target_index)] + [path_for(i) for i in sample_indices(root, axis_byte, height)]
-    return root, openings
+    return AxisTree(root, base, height, lambda indices: [path_for(i) for i in indices])
 
 
-def compute_axis_merkle_root(prefix: bytes, axis_byte: int, v1: int, v2: int) -> Tuple[bytes, List[List[bytes]], int]:
-    """Root, openings and LCA height for one axis of a crossing from v1 to v2.
-    From h20 the parallel engine builds the tree across cores."""
-    h = 0 if v1 == v2 else (v1 ^ v2).bit_length()
-    if h == 0:
-        return merkle_leaf(prefix, v1), [], 0
+def compute_axis_merkle_root(prefix: bytes, v1: int, v2: int) -> AxisTree:
+    """The root pass for one axis of a crossing from v1 to v2 (the whole
+    aligned subtree of their LCA). From h20 the parallel engine builds the
+    tree across cores."""
+    h = find_lca_height(v1, v2)
     base = (v1 >> h) << h
-    target = v2 - base
     if h >= 20:
         try:
-            from cyberspace_core.merkle_engine import parallel_merkle_root_with_proof
-            root, openings = parallel_merkle_root_with_proof(prefix, base, h, target_index=target, axis_byte=axis_byte)
-            return root, openings, h
+            from cyberspace_core.merkle_engine import parallel_merkle_tree
+
+            return parallel_merkle_tree(prefix, base, h)
         except ImportError:
             pass
-    root, openings = compute_axis_merkle_root_streaming(prefix, base, h, target_index=target, axis_byte=axis_byte)
-    return root, openings, h
+    return compute_axis_merkle_root_streaming(prefix, base, h)
 
+
+# ---------------------------------------------------------------- Level 1 (6.11)
 
 def verify_merkle_inclusion(prefix: bytes, leaf_value: int, siblings: List[bytes], root: bytes, height: int = 0, base: int = 0) -> bool:
     """Whether `siblings` carry the seeded leaf at leaf_value up to `root`."""
@@ -353,10 +440,11 @@ def verify_merkle_inclusion(prefix: bytes, leaf_value: int, siblings: List[bytes
     return current == root
 
 
-def verify_axis_openings(prefix: bytes, axis_byte: int, v1: int, v2: int, root: bytes, openings: List[List[bytes]]) -> bool:
-    """Level 1 for one axis (6.11): the destination's path, then each sampled
-    leaf recomputed from the seed and carried to the root."""
-    h = 0 if v1 == v2 else (v1 ^ v2).bit_length()
+def verify_axis_openings(prefix: bytes, axis_byte: int, v1: int, v2: int, root: bytes, openings: List[List[bytes]], G: bytes) -> bool:
+    """Level 1 for one axis (6.11 steps 5 and 6): the destination's path, then
+    each leaf at a position drawn from G recomputed from the seed and carried
+    to the root. G must already have been checked against the price."""
+    h = find_lca_height(v1, v2)
     if h == 0:
         return not openings and merkle_leaf(prefix, v1) == root
     if len(openings) != SIDESTEP_SAMPLES + 1 or any(len(p) != h for p in openings):
@@ -364,10 +452,37 @@ def verify_axis_openings(prefix: bytes, axis_byte: int, v1: int, v2: int, root: 
     base = (v1 >> h) << h
     if not verify_merkle_inclusion(prefix, v2, openings[0], root, h, base):
         return False
-    for path, idx in zip(openings[1:], sample_indices(root, axis_byte, h)):
+    for path, idx in zip(openings[1:], sample_indices(G, axis_byte, h)):
         if not verify_merkle_inclusion(prefix, base + idx, path, root, h, base):
             return False
     return True
+
+
+def verify_sidestep_openings(
+    previous_event_id: bytes,
+    src: Sequence[int],
+    dst: Sequence[int],
+    roots: Sequence[bytes],
+    nonce: int,
+    openings: Dict[str, List[List[bytes]]],
+) -> List[str]:
+    """Level 1 over a whole crossing (6.11 steps 4 to 6): G from the nonce,
+    the previous event id and the three claimed roots must meet the price,
+    then every axis's openings must prove its seeded tree at the positions
+    drawn from G. Returns the failed checks; empty means the openings hold.
+    A G that misses the price fails the crossing whatever its samples say; the
+    axes are still checked so that the report names every fault."""
+    heights = [find_lca_height(a, b) for a, b in zip(src, dst)]
+    attempts = reroll_attempts(heights)
+    G = grind_hash(previous_event_id, roots, nonce)
+    failures: List[str] = []
+    if not meets_price(G, attempts):
+        failures.append(f"mn: nonce {encode_nonce(nonce)} does not meet the re-roll price, A={attempts} (6.10)")
+    for axis, v1, v2, root in zip("xyz", src, dst, roots):
+        prefix = seed_prefix(previous_event_id, AXIS_BYTE[axis])
+        if not verify_axis_openings(prefix, AXIS_BYTE[axis], v1, v2, root, openings.get(axis) or [], G):
+            failures.append(f"merkle_{axis}: openings do not prove the seeded tree")
+    return failures
 
 
 def encode_openings(openings: List[List[bytes]]) -> str:
@@ -397,6 +512,14 @@ def decode_openings(segment: str, height: int) -> Optional[List[List[bytes]]]:
     return out
 
 
+def sidestep_geometry_ok(v1: int, v2: int) -> bool:
+    """6.3 for one axis: no movement, or a crossing whose source touches the
+    wall and whose destination is the leaf on the other side. Two values one
+    Gibson apart always straddle the wall of their LCA subtree with the source
+    touching it, so this is |v2 - v1| <= 1; every longer move is a hop."""
+    return abs(v2 - v1) <= 1
+
+
 @dataclass(frozen=True)
 class SidestepProof:
     """Full sidestep proof (spatial Merkle + temporal Cantor) per formal spec."""
@@ -411,6 +534,29 @@ class SidestepProof:
     proof_hash: str          # double_SHA256(sidestep_n).hex()
     lca_heights: Tuple[int, int, int]    # (hx, hy, hz)
     openings: Dict[str, List[List[bytes]]]  # per axis: destination path, then 8 sampled paths (6.10)
+    nonce: int               # the re-roll nonce (6.10), published as the mn tag via encode_nonce
+
+
+def _previous_event_id_bytes(previous_event_id_hex: str) -> bytes:
+    if not isinstance(previous_event_id_hex, str) or len(previous_event_id_hex) != 64 or previous_event_id_hex != previous_event_id_hex.lower():
+        raise ValueError("previous_event_id_hex must be exactly 64 lowercase hex chars (32 bytes)")
+    try:
+        return bytes.fromhex(previous_event_id_hex)
+    except ValueError as e:
+        raise ValueError("previous_event_id_hex must be valid lowercase hex") from e
+
+
+def _sidestep_binding(roots: Sequence[bytes], x2: int, y2: int, z2: int, plane: int, previous_event_id: bytes) -> Tuple[int, int, int, int, int, str]:
+    """region_m (6.6), the temporal axis at the destination (6.7), and
+    sidestep_n with its proof hash (6.8): (region_m, K, t, cantor_t, sidestep_n, proof_hash)."""
+    mx, my, mz = (int.from_bytes(r, "big") for r in roots)
+    region_m = cantor_pair(cantor_pair(mx, my), mz)
+    k = terrain_k(x=x2, y=y2, z=z2, plane=plane)
+    t = int.from_bytes(previous_event_id, "big") % (1 << AXIS_BITS)
+    t_base = (t >> k) << k if k > 0 else t
+    cantor_t = compute_subtree_cantor(t_base, k, max_compute_height=TEMPORAL_MAX_COMPUTE_HEIGHT)
+    sidestep_n = cantor_pair(region_m, cantor_t)
+    return region_m, k, t, cantor_t, sidestep_n, sha256(sha256(int_to_bytes_be_min(sidestep_n))).hex()
 
 
 def compute_sidestep_proof(
@@ -433,64 +579,121 @@ def compute_sidestep_proof(
     plane       : destination plane bit (0 or 1)
     previous_event_id_hex : 64-char lowercase hex string
     """
-    if len(previous_event_id_hex) != 64 or previous_event_id_hex != previous_event_id_hex.lower():
-        raise ValueError("previous_event_id_hex must be exactly 64 lowercase hex chars (32 bytes)")
-    try:
-        prev_bytes = bytes.fromhex(previous_event_id_hex)
-    except ValueError as e:
-        raise ValueError("previous_event_id_hex must be valid lowercase hex") from e
+    prev_bytes = _previous_event_id_bytes(previous_event_id_hex)
 
-    # --- spatial component: per-axis seeded Merkle roots and openings (6.4, 6.10) ---
-    mx, openings_x, hx = compute_axis_merkle_root(seed_prefix(prev_bytes, AXIS_BYTE["x"]), AXIS_BYTE["x"], x1, x2)
-    my, openings_y, hy = compute_axis_merkle_root(seed_prefix(prev_bytes, AXIS_BYTE["y"]), AXIS_BYTE["y"], y1, y2)
-    mz, openings_z, hz = compute_axis_merkle_root(seed_prefix(prev_bytes, AXIS_BYTE["z"]), AXIS_BYTE["z"], z1, z2)
+    # --- every axis root first: the seeded trees (6.4, 6.5) ---
+    src, dst = (x1, y1, z1), (x2, y2, z2)
+    trees = {axis: compute_axis_merkle_root(seed_prefix(prev_bytes, AXIS_BYTE[axis]), v1, v2) for axis, v1, v2 in zip("xyz", src, dst)}
+    roots = [trees[axis].root for axis in "xyz"]
+    heights = (trees["x"].height, trees["y"].height, trees["z"].height)
 
-    # Combine via Cantor pairing (same structure as hop)
-    mx_int = int.from_bytes(mx, "big")
-    my_int = int.from_bytes(my, "big")
-    mz_int = int.from_bytes(mz, "big")
-    region_m = cantor_pair(cantor_pair(mx_int, my_int), mz_int)
+    # --- then the nonce, which prices the samples (6.10) ---
+    nonce = find_nonce(prev_bytes, roots, reroll_attempts(heights))
+    G = grind_hash(prev_bytes, roots, nonce)
 
-    # --- temporal component (identical to hop proof) ---
-    terrain_k_val = terrain_k(x=x2, y=y2, z=z2, plane=plane)
+    # --- then the openings at the destination and at the positions drawn from G ---
+    openings = {
+        axis: trees[axis].openings(v2 - trees[axis].base, G, AXIS_BYTE[axis]) for axis, v2 in zip("xyz", dst)
+    }
 
-    if len(previous_event_id_hex) != 64:
-        raise ValueError("previous_event_id_hex must be exactly 64 hex chars (32 bytes)")
-    if previous_event_id_hex != previous_event_id_hex.lower():
-        raise ValueError("previous_event_id_hex must be lowercase hex")
-    try:
-        previous_event_id_bytes = bytes.fromhex(previous_event_id_hex)
-    except ValueError as e:
-        raise ValueError("previous_event_id_hex must be valid lowercase hex") from e
-    prev_id_int = int.from_bytes(previous_event_id_bytes, "big")
-    t = prev_id_int % (1 << AXIS_BITS)
-
-    t_base = (t >> terrain_k_val) << terrain_k_val if terrain_k_val > 0 else t
-    cantor_t_val = compute_subtree_cantor(
-        t_base, terrain_k_val, max_compute_height=TEMPORAL_MAX_COMPUTE_HEIGHT,
-    )
-
-    # --- 4D combination ---
-    sidestep_n = cantor_pair(region_m, cantor_t_val)
-
-    # --- proof hash: double SHA256 ---
-    sidestep_bytes = int_to_bytes_be_min(sidestep_n)
-    proof_key = sha256(sidestep_bytes)
-    proof_hash = sha256(proof_key).hex()
+    # --- region_m, the temporal axis (identical to a hop's) and the proof hash ---
+    region_m, k, t, cantor_t_val, sidestep_n, proof_hash = _sidestep_binding(roots, x2, y2, z2, plane, prev_bytes)
 
     return SidestepProof(
-        merkle_x=mx,
-        merkle_y=my,
-        merkle_z=mz,
+        merkle_x=roots[0],
+        merkle_y=roots[1],
+        merkle_z=roots[2],
         region_m=region_m,
-        terrain_k=terrain_k_val,
+        terrain_k=k,
         temporal_seed=t,
         cantor_t=cantor_t_val,
         sidestep_n=sidestep_n,
         proof_hash=proof_hash,
-        lca_heights=(hx, hy, hz),
-        openings={"x": openings_x, "y": openings_y, "z": openings_z},
+        lca_heights=heights,
+        openings=openings,
+        nonce=nonce,
     )
+
+
+def _hex_bytes(value: object, size: int) -> Optional[bytes]:
+    """`size` bytes from exactly 2 * size lowercase hex characters, else None."""
+    if not isinstance(value, str) or len(value) != 2 * size or any(c not in "0123456789abcdef" for c in value):
+        return None
+    return bytes.fromhex(value)
+
+
+def verify_sidestep_event(event: Dict[str, Any]) -> List[str]:
+    """Level 1 verification of a published sidestep event (8.7.2). Returns the
+    failed checks; empty means valid.
+
+    Chain linkage (the c tag is the previous event's C, and e previous names
+    that event) needs the chain and stays with the caller, as does the NIP-01
+    signature. An event without an mn tag is a version 2 proof and is invalid
+    unless its id is listed in grandfathered-v2-sidesteps.txt (6.16). A listed
+    event's roots and openings are taken as audited, and its geometry, height
+    tags and proof hash are checked exactly as for any other sidestep."""
+    from cyberspace_core.grandfathered import GRANDFATHERED_V2_SIDESTEPS, is_grandfathered
+
+    tags = [t for t in (event.get("tags") or []) if isinstance(t, list) and len(t) >= 2]
+
+    def value(name: str) -> Optional[str]:
+        return next((t[1] for t in tags if t[0] == name), None)
+
+    if value("A") != "sidestep":
+        return ["A: not a sidestep"]
+    failures: List[str] = []
+    prev = _hex_bytes(next((t[1] for t in tags if t[0] == "e" and len(t) >= 4 and t[3] == "previous"), None), 32)
+    if prev is None:
+        failures.append("e previous: missing or not 32 bytes of lowercase hex")
+    points = []
+    for name in ("c", "C"):
+        raw = _hex_bytes(value(name), 32)
+        if raw is None:
+            failures.append(f"{name}: missing or not a 32-byte lowercase hex coordinate")
+        else:
+            points.append(coord_to_xyz(int.from_bytes(raw, "big")))
+    roots = [_hex_bytes(r, 32) for r in (value("mr") or "").split(":")]
+    if len(roots) != 3 or any(r is None for r in roots):
+        failures.append("mr: not three colon-separated 32-byte lowercase hex roots")
+    if failures:
+        return failures
+    assert prev is not None
+    (x1, y1, z1, _), (x2, y2, z2, plane) = points
+    src, dst = (x1, y1, z1), (x2, y2, z2)
+    heights = [find_lca_height(a, b) for a, b in zip(src, dst)]
+
+    # 6.3: each axis that moves crosses exactly one wall, by exactly one Gibson
+    for axis, v1, v2 in zip("xyz", src, dst):
+        if not sidestep_geometry_ok(v1, v2):
+            failures.append(f"geometry: axis {axis} moves {v2 - v1:+d} gibsons; a sidestep crosses one wall by one gibson (6.3)")
+    for axis, h in zip("xyz", heights):
+        if value(f"h{axis}") != str(h):
+            failures.append(f"h{axis}: tag {value(f'h{axis}')!r} but the coordinates give {h}")
+
+    # 6.10, 6.11: the price and the openings, unless listed under 6.16
+    mn = value("mn")
+    if mn is None:
+        if not is_grandfathered(event, GRANDFATHERED_V2_SIDESTEPS):
+            failures.append("mn: missing; a version 2 sidestep not listed in grandfathered-v2-sidesteps.txt (6.16)")
+    else:
+        nonce = decode_nonce(mn)
+        segments = (value("mp") or "").split(":")
+        if nonce is None:
+            failures.append("mn: not exactly 16 lowercase hex characters")
+        elif len(segments) != 3:
+            failures.append("mp: not three colon-separated axis segments")
+        else:
+            openings = {axis: decode_openings(seg, h) for axis, seg, h in zip("xyz", segments, heights)}
+            bad = [axis for axis, o in openings.items() if o is None]
+            for axis in bad:
+                failures.append(f"mp: axis {axis} segment is malformed, or a version 1 single path (8.5, 6.15)")
+            if not bad:
+                failures += verify_sidestep_openings(prev, src, dst, roots, nonce, openings)  # type: ignore[arg-type]
+
+    # 6.6 to 6.8: the proof hash of the claimed roots at this chain position
+    if value("proof") != _sidestep_binding(roots, x2, y2, z2, plane, prev)[5]:  # type: ignore[arg-type]
+        failures.append("proof: does not match the proof hash of the claimed roots (6.8)")
+    return failures
 
 
 @dataclass(frozen=True)

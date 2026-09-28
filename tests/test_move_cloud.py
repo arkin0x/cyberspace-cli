@@ -34,7 +34,7 @@ from cyberspace_cli.nostr_event import make_spawn_event
 from cyberspace_cli.nostr_keys import pubkey_hex_from_privkey
 from cyberspace_cli.state import STATE_VERSION, CyberspaceState, save_state
 from cyberspace_core.coords import xyz_to_coord
-from cyberspace_core.movement import compute_hop_proof, compute_sidestep_proof
+from cyberspace_core.movement import compute_hop_proof, compute_sidestep_proof, verify_sidestep_event
 
 PRIVKEY_HEX = "5a" * 32
 PUBKEY_HEX = pubkey_hex_from_privkey(bytes.fromhex(PRIVKEY_HEX))
@@ -222,7 +222,10 @@ class TestMoveCloud(unittest.TestCase):
         local = compute_sidestep_proof(x, y, z, 1 << 13, y, z, plane=0, previous_event_id_hex=genesis["id"])
         self.assertEqual(tags["proof"][0], local.proof_hash)
         self.assertEqual(tags["mr"][0].split(":")[0], local.merkle_x.hex())
-        self.assertEqual(tags["mp"][0].split(":")[0], "".join(s.hex() for path in local.openings["x"] for s in path))
+        # Any nonce that meets the price verifies (6.10), and the samples follow
+        # the nonce, so the event is checked at Level 1 rather than byte for byte.
+        self.assertEqual(len(tags["mn"][0]), 16)
+        self.assertEqual(verify_sidestep_event(side[0]), [])
 
     def test_no_cloud_keeps_the_refusal(self):
         self.api = LocalHosaka(self._td.name)
