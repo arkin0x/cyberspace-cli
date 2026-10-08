@@ -94,6 +94,16 @@ class TestVerifier:
         events = [dict(e, sig="") for e in BY_NAME["bracket-valid-then-hop"]["events"]]
         assert verify_chain(events, pubkey=PUBKEY).reason == "no-spawn"
 
+    def test_a_fork_behind_a_cut_off_is_never_reached(self):
+        """Two authentic events that both name a discarded event are cut off with it; they make no fork."""
+        vector = BY_NAME["forged-event-cuts-branch"]
+        spawn, hop, forged, after = vector["events"]
+        twin = dict(after, created_at=after["created_at"] + 1)
+        identity = PrivateKey(bytes.fromhex(DOC["test_key"]["secret_key"]))
+        twin["id"] = event_id(twin)
+        twin["sig"] = identity.sign_schnorr(bytes.fromhex(twin["id"]), bytes(32)).hex()
+        assert verify_chain(vector["events"] + [twin], pubkey=PUBKEY).expected() == vector["expected"]
+
     def test_sector_tags(self):
         spawn = BY_NAME["spawn-only"]["events"][0]
         assert sector_tags_ok(spawn, PUBKEY)
@@ -115,7 +125,8 @@ class TestVerifier:
     def test_other_kinds_and_authors_are_ignored(self):
         """Properly signed noise: a kind 1 copy of the first hop by the identity
         and a copy by another author, each signed one second before the real
-        hop, so each would win the fork if kind or author were not checked."""
+        hop, so each would fork the chain, and kill it, if kind or author were
+        not checked."""
         vector = BY_NAME["bracket-unclosed"]
         events = vector["events"]
         hop = events[1]
@@ -131,10 +142,12 @@ class TestVerifier:
 
         noise = [signed(identity, 1), signed(other, 3333)]
         assert all(event_id(e) == e["id"] for e in noise)
-        assert [e["id"] for e in resolve_active_chain(events + noise, PUBKEY)] == vector["expected"]["chain"]
-        # the control: the same noise as a kind 3333 event by the identity does win the fork
+        resolution = resolve_active_chain(events + noise, PUBKEY)
+        assert [e["id"] for e in resolution.chain] == vector["expected"]["chain"] and not resolution.fork
+        # the control: the same noise as a kind 3333 event by the identity does make a fork
         control = signed(identity, 3333)
-        assert resolve_active_chain(events + [control], PUBKEY)[1]["id"] == control["id"]
+        resolution = resolve_active_chain(events + [control], PUBKEY)
+        assert resolution.fork == tuple(sorted((control["id"], hop["id"]))) and [e["id"] for e in resolution.chain] == [events[0]["id"]]
 
 
 class TestRegion:

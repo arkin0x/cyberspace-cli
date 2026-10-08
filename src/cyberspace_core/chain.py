@@ -1,21 +1,25 @@
 """The chain rules of CYBERSPACE_V2.md section 8.12, revision
 2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and
-clarified on 2026-10-08: which movement chains are valid and where an
-identity stands.
+2026-10-08: which movement chains are valid and where an identity stands.
 
 A verifier holds whatever kind 3333 events relays gave it for one pubkey, in
 no particular order. It first discards every event that is not authentic
-(8.7.3): an event whose id is not its NIP-01 hash, whose sig is not a valid
-signature of that id by its pubkey (8.2), or whose pubkey is not the
-identity's. A discarded event is treated as if it never existed, so a branch
-that runs through one is cut off and the chain ends at the event before it.
-Nobody can end another identity's chain by posting a forged event.
+(8.7.3): an event that is not NIP-01 in shape, whose id is not its NIP-01
+hash, whose sig is not a valid signature of that id by its pubkey (8.2),
+whose pubkey is not the identity's, or whose kind is not 3333. A discarded
+event is treated as if it never existed, so a branch that runs through one
+is cut off and the chain ends at the event before it, and a discarded event
+can never make a fork. Nobody can end another identity's chain by posting a
+forged event.
 
-It then resolves the authentic events into the active chain (8.7.3) by
-links, created_at and ids alone: the newest spawn, valid or not, then forward
-through e previous links among the events whose e genesis names that spawn,
-the branch signed first continuing at a fork. Resolution comes before
-validity, so an earlier invalid branch beats a later valid one.
+It then resolves the authentic events into the active chain (8.7.3) by links
+alone: the newest spawn, valid or not (any A tag equal to spawn makes an event
+a spawn), then forward through e previous links among the events whose e
+genesis names that spawn. A fork is fatal: when two or more of those events
+name the same event as previous, whatever their actions and whichever is
+valid or earlier, the whole chain is invalid from the spawn and the identity
+stands at its spawn coordinate. Forks are found from the links before any
+proof is checked.
 
 It then walks the active chain from the spawn and checks every event in
 order. The first event that breaks a rule makes the chain invalid from that
@@ -23,36 +27,45 @@ event, the walk stops there, and the identity stands frozen at its last valid
 position: the position the chain would give it if it ended at the last valid
 event (3.2, 8.7.3), or the spawn coordinate when the spawn itself is invalid.
 
+Every tag a chain rule reads must appear exactly once with a well-formed
+value. A tag counts by its name alone, so a bare ["A"] is an A tag (with no
+value, and invalid) and a second copy of any read tag is invalid, whatever
+its value. Tags no rule reads are free. Resolution follows the first copy of
+each e tag; validity then rejects a second copy.
+
 What the walk checks:
 
-- Every event carries exactly one A tag (8.8).
+- Every event carries exactly one A tag with a non-empty value (8.8), and
+  every event but the spawn exactly one e genesis and one e previous tag.
 - Recognized actions (8.9) are the base actions (spawn, hop, sidestep,
   enter-virtual, exit-virtual) and the actions of every mandatory DECK
-  (DECK-0001: enter-hyperspace, hyperjump). Each carries the sector tags X,
-  Y, Z and S exactly once, equal to the values computed from its C (10).
-  Outside a bracket each starts where the chain carries it: its c equals the
-  C of the nearest recognized action before it (continuity). Hops,
-  sidesteps, boardings and rides have their proofs checked in full at Level
-  1, each seeded by the id its e previous tag names.
+  (DECK-0001: enter-hyperspace, hyperjump). Each carries its C, the tags its
+  rules read, and the sector tags X, Y, Z and S, each exactly once, the sector
+  tags equal to the values computed from C (10). Outside a bracket each
+  starts where the chain carries it: its c equals the C of the nearest
+  recognized action before it (continuity). Hops, sidesteps, boardings and
+  rides have their proofs checked in full at Level 1, each seeded by the id
+  its e previous tag names.
 - An action the verifier does not recognize is skipped (8.9): it is checked
-  only for being authentic, linked and carrying one A tag, so it neither
-  moves the identity nor stands in for the action before the next one. A
-  skipped action that changed the position leaves the next recognized
-  action's c mismatched.
+  only for being authentic, linked (one e genesis, one e previous) and
+  carrying one A tag, so it neither moves the identity nor stands in for the
+  action before the next one. A skipped action that changed the position
+  leaves the next recognized action's c mismatched.
 - A virtual bracket (8.11) is opaque and checked as a unit. Its
   enter-virtual action does not move the identity (C equals c), and its game
   p tag and region tag are checked for form only; the base position need not
   lie in or near the region. Inside it every name that rule 3 does not
   reserve is a virtual action, checked only for its links and its one A tag;
-  its c, C and sector tags belong to the game. The exit names the open entry
-  and its C restores the entry's c; its c is not checked. Continuity resumes
-  after the exit, and the exit stands in for the action before its entry
-  when a later rule looks back (rule 8).
+  every other tag on it belongs to the game. The exit names the open entry
+  (one e entry tag) and its C restores the entry's c; its c is never read.
+  Continuity resumes after the exit, and the exit stands in for the action
+  before its entry when a later rule looks back (rule 8).
 - Rides follow DECK-0001 section 4.3: a hyperjump looks back (through skipped
   actions and closed brackets) to an enter-hyperspace, whose first ride
   departs from the station within the declared as_of bound, or to a
-  hyperjump, whose B it departs from. No ride has length zero (5.6). Rides
-  need Bitcoin's block data, supplied as a Line (cyberspace_core.hyperspace).
+  hyperjump, whose B it departs from. No ride has length zero (5.6), and that
+  is checked before the ride's proof tags. Rides need Bitcoin's block data,
+  supplied as a Line (cyberspace_core.hyperspace).
 
 This CLI implements no optional DECK, so its recognized actions are exactly
 the base and DECK-0001 actions. The golden vectors in
@@ -65,11 +78,11 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from cyberspace_core.coords import AXIS_BITS, coord_to_xyz
 from cyberspace_core.hyperspace import Line, verify_enter_hyperspace_event
-from cyberspace_core.movement import DEFAULT_MAX_COMPUTE_HEIGHT, verify_hop_event, verify_sidestep_event
+from cyberspace_core.movement import DEFAULT_MAX_COMPUTE_HEIGHT, decode_nonce, verify_hop_event, verify_sidestep_event
 from cyberspace_core.ride import verify_ride_event
 from cyberspace_core.sector import coord_to_sector_id
 
@@ -95,24 +108,25 @@ REGION_MAX_HEIGHT = AXIS_BITS
 # free-text detail, are what the golden vectors lock.
 REASONS: Dict[str, str] = {
     "no-spawn": "no authentic spawn event for this pubkey, so there is no chain (8.7.3 rule 1)",
-    "a-tag": "the event carries no A tag, or more than one (8.8)",
-    "malformed": "a tag the chain rules read is missing or ill-formed: e genesis, e previous or e entry missing or repeated; c or C missing, repeated or not a 32-byte lowercase hex coordinate; from_height or B missing or not a base-10 height (the first of each is read)",
-    "sector-tags": "a recognized action's X, Y, Z or S tag is missing, repeated, or not the value computed from its C (10)",
+    "fork": "two or more events whose e genesis names the newest spawn name the same event as e previous (each event's first e previous tag); the chain is invalid from the spawn, whatever the forking events are and whichever is valid or earlier (8.7.3)",
+    "a-tag": "the event carries no A tag, more than one, or one with no value or an empty value; a bare [\"A\"] counts as an A tag (8.8)",
+    "malformed": "a tag a chain rule reads is missing, repeated, valueless or ill-formed. Each of these must appear exactly once: e genesis and e previous on every event but the spawn (32-byte lowercase hex); e entry on an exit-virtual (32-byte lowercase hex); C on every recognized action and c on every recognized action but the exit-virtual (32-byte lowercase hex); proof on a hop, sidestep, enter-hyperspace or hyperjump (32-byte lowercase hex); mr (three colon-joined 32-byte lowercase hex roots), mp (non-empty) and hx, hy and hz (base-10) on a sidestep; from_height and B (base-10) and mp (non-empty) on a hyperjump; as_of (base-10) on the first ride after boarding, when it is present at all. mn (16 lowercase hex characters) may be absent on a sidestep or hyperjump (6.16, DECK-0001 5.8) but not repeated",
+    "sector-tags": "a recognized action's X, Y, Z or S tag is missing, repeated (a valueless copy counts), or not the value computed from its C (10)",
     "spawn-coordinate": "the spawn's C is not its pubkey (8.3)",
     "c-mismatch": "c is not the C of the nearest recognized action before it (8.9 item 2, continuity)",
-    "hop-proof": "the hop's proof does not verify (8.7.1), including a missing or ill-formed proof tag",
-    "sidestep-proof": "the sidestep does not verify at Level 1 (8.7.2), including its geometry, height tags, price and openings",
+    "hop-proof": "the hop's proof does not verify (8.7.1)",
+    "sidestep-proof": "the sidestep does not verify at Level 1 (8.7.2): its geometry, the values of its height tags, its openings, its price, or a missing mn on an unlisted sidestep (6.16)",
     "enter-hyperspace-moved": "an enter-hyperspace's C is not its c (DECK-0001 3.1)",
     "enter-hyperspace-proof": "the entry proof does not verify (DECK-0001 3.2)",
     "hyperjump-predecessor": "the action a hyperjump looks back to is neither enter-hyperspace nor hyperjump (DECK-0001 4.3)",
     "hyperjump-zero-length": "a ride whose B equals its from_height; there is no zero-length ride (DECK-0001 5.2, 5.6)",
-    "hyperjump-as-of": "the first ride after boarding has no as_of tag, or as_of is not a height on the line, or is below B (DECK-0001 4.2, 4.3)",
+    "hyperjump-as-of": "the first ride after boarding has no as_of tag, or its as_of is not a height on the line, or is below B (DECK-0001 4.2, 4.3)",
     "hyperjump-station": "the first ride after boarding does not depart from the station (DECK-0001 4.2, 4.3)",
     "hyperjump-from-height": "a later ride does not depart from the previous ride's B (DECK-0001 4.3)",
     "hyperjump-stop": "the ride's C is not the stop coordinate of B, or B is not a height on the line (DECK-0001 5.5 Level 1 step 2)",
-    "hyperjump-proof": "the ride's proof does not verify at Level 1 (DECK-0001 5.5, 5.8), including ill-formed proof, mp or mn tags",
+    "hyperjump-proof": "the ride's proof does not verify at Level 1 (DECK-0001 5.5, 5.8): openings that do not decode or do not reach the root, the price, or a missing mn on an unlisted ride",
     "enter-virtual-moved": "an enter-virtual's C is not its c; entering a game does not move the identity (8.11.1)",
-    "region": "the enter-virtual's region tag is missing, repeated or ill-formed: H not canonical in [0, 85], or the base not aligned (8.11.1)",
+    "region": "the enter-virtual's region tag is missing, repeated (a valueless copy counts) or ill-formed: H not canonical in [0, 85], or the base not aligned (8.11.1)",
     "game-tag": "the enter-virtual does not carry exactly one p tag marked game holding a 32-byte lowercase hex pubkey (8.11.1)",
     "base-action-in-bracket": "an action of the base protocol or of a mandatory DECK inside an open bracket (8.11.4 rule 3)",
     "exit-without-bracket": "an exit-virtual when no bracket is open (8.11.4 rule 6)",
@@ -148,6 +162,16 @@ class Region:
 
 
 @dataclass(frozen=True)
+class Resolution:
+    """The outcome of 8.7.3: the active chain from the spawn, or, when two or
+    more events name the same event as previous, the chain up to that event
+    and the ids of the events that fork from it (sorted)."""
+
+    chain: List[Dict[str, Any]]
+    fork: Tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class ChainVerdict:
     """What a verifier says about one identity's events.
 
@@ -158,9 +182,11 @@ class ChainVerdict:
     which may be a skipped action. For an invalid chain it is the last valid
     position (3.2, 8.7.3): the position the chain would give the identity if
     it ended at the last valid event before `invalid_at`, or the spawn
-    coordinate when the spawn itself is invalid. The chain is frozen there
-    until the identity respawns. `invalid_index` counts from the spawn at 0,
-    and `reason` is a code in REASONS."""
+    coordinate when the spawn itself is invalid or the chain forks. The chain
+    is frozen there until the identity respawns. `invalid_index` counts from
+    the spawn at 0, and `reason` is a code in REASONS. For a fork, `chain`
+    runs from the spawn to the event the forking events name, `invalid_at` is
+    the spawn, and `detail` names the forking events."""
 
     valid: bool
     chain: Tuple[str, ...] = ()
@@ -197,31 +223,77 @@ class ChainVerdict:
 
 # ---------------------------------------------------------------- tags
 
-def _tags(event: Dict[str, Any]) -> List[List[str]]:
-    return [t for t in (event.get("tags") or []) if isinstance(t, list) and len(t) >= 2 and all(isinstance(s, str) for s in t)]
+Bad = Tuple[str, str]
 
 
-def _values(event: Dict[str, Any], name: str) -> List[str]:
-    return [t[1] for t in _tags(event) if t[0] == name]
+def _named(event: Dict[str, Any], name: str) -> List[List[str]]:
+    """Every tag with this name, whatever its length: a bare [name] counts."""
+    return [t for t in (event.get("tags") or []) if isinstance(t, list) and t and t[0] == name]
 
 
-def _e(event: Dict[str, Any], marker: str) -> List[str]:
-    """The ids of the e tags with this marker: ["e", <id>, <relay>, <marker>]."""
-    return [t[1] for t in _tags(event) if t[0] == "e" and len(t) >= 4 and t[3] == marker]
+def _value(tag: List[str]) -> str:
+    """A tag's value, the empty string for a bare tag."""
+    return tag[1] if len(tag) >= 2 and isinstance(tag[1], str) else ""
 
 
-def _action(event: Dict[str, Any]) -> Optional[str]:
-    values = _values(event, "A")
-    return values[0] if len(values) == 1 else None
+def _marked_e(event: Dict[str, Any], marker: str) -> List[List[str]]:
+    """The e tags with this marker: ["e", <id>, <relay>, <marker>]."""
+    return [t for t in _named(event, "e") if len(t) >= 4 and t[3] == marker]
+
+
+def _first_e(event: Dict[str, Any], marker: str) -> Optional[str]:
+    """The id the first e tag with this marker names: what resolution follows."""
+    tags = _marked_e(event, marker)
+    return _value(tags[0]) if tags else None
 
 
 def _is_hex32(value: object) -> bool:
     return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
 
 
-def _decimal(value: Optional[str]) -> Optional[int]:
-    """A base-10 height as rides write it (DECK-0001 5.2), else None."""
-    return int(value) if isinstance(value, str) and value.isascii() and value.isdigit() else None
+def _is_decimal(value: str) -> bool:
+    return value.isascii() and value.isdigit()
+
+
+def _is_roots(value: str) -> bool:
+    parts = value.split(":")
+    return len(parts) == 3 and all(_is_hex32(p) for p in parts)
+
+
+def _non_empty(value: str) -> bool:
+    return value != ""
+
+
+def _once(event: Dict[str, Any], name: str, form: Callable[[str], bool]) -> Optional[str]:
+    """The value of the one tag with this name, if there is exactly one and
+    its value has the form; else None."""
+    tags = _named(event, name)
+    return _value(tags[0]) if len(tags) == 1 and form(_value(tags[0])) else None
+
+
+def _require(event: Dict[str, Any], forms: Iterable[Tuple[str, Callable[[str], bool]]]) -> Optional[Bad]:
+    for name, form in forms:
+        if _once(event, name, form) is None:
+            return "malformed", f"{name}: expected exactly once with a well-formed value"
+    return None
+
+
+def _at_most_once(event: Dict[str, Any], name: str, form: Callable[[str], bool]) -> Optional[Bad]:
+    tags = _named(event, name)
+    if len(tags) > 1 or (tags and not form(_value(tags[0]))):
+        return "malformed", f"{name}: expected at most once with a well-formed value"
+    return None
+
+
+def _action(event: Dict[str, Any]) -> Optional[str]:
+    """8.8: the value of the one A tag, None when there is not exactly one or its value is empty."""
+    tags = _named(event, "A")
+    return _value(tags[0]) if len(tags) == 1 and _value(tags[0]) else None
+
+
+def _is_spawn(event: Dict[str, Any]) -> bool:
+    """8.7.3 rule 1: any A tag whose value is spawn makes an event a spawn, wherever it stands among the tags."""
+    return any(_value(t) == "spawn" for t in _named(event, "A"))
 
 
 def event_id(event: Dict[str, Any]) -> str:
@@ -244,8 +316,8 @@ def nip01_shape_ok(event: Any) -> bool:
     """NIP-01's shape: id, pubkey, sig and content are strings, created_at
     and kind are integers, and tags is an array of arrays of strings. An
     event of any other shape is not a valid NIP-01 event, whatever its id
-    hashes to, and resolution must never meet one: fork resolution compares
-    created_at, and a tag holding a null would otherwise vanish from it."""
+    hashes to, and resolution must never meet one: it compares created_at,
+    and a tag holding a null would otherwise read as some other tag."""
     if not isinstance(event, dict):
         return False
     if not all(isinstance(event.get(k), str) for k in ("id", "pubkey", "sig", "content")):
@@ -275,20 +347,21 @@ def is_authentic(event: Any, pubkey: str) -> bool:
 
 
 def sector_tags_ok(event: Dict[str, Any], coord_hex: str) -> bool:
-    """Section 10: X, Y, Z and S each exactly once, equal to the values
-    computed from C (base-10 with no sign or leading zeros, S as
-    "<sx>-<sy>-<sz>"). Comparing with the computed strings checks the format
-    and the values at once."""
+    """Section 10: X, Y, Z and S each exactly once (a valueless copy counts),
+    equal to the values computed from C (base-10 with no sign or leading
+    zeros, S as "<sx>-<sy>-<sz>"). Comparing with the computed strings checks
+    the format and the values at once."""
     sid, _ = coord_to_sector_id(coord=int(coord_hex, 16))
     want = {"X": str(sid.sx), "Y": str(sid.sy), "Z": str(sid.sz), "S": sid.tag()}
-    return all(_values(event, name) == [value] for name, value in want.items())
+    return all(_once(event, name, lambda v, w=value: v == w) is not None for name, value in want.items())
 
 
 def parse_region(event: Dict[str, Any]) -> Tuple[Optional[Region], str]:
-    """8.11.1: the one region tag ["region", <coord_hex>, <H>], with H written
-    canonically in [0, 85] and the base aligned (the low H bits of each axis
-    zero). Returns (region, "") or (None, why). A check of form only."""
-    tags = [t for t in _tags(event) if t[0] == "region"]
+    """8.11.1: the one region tag ["region", <coord_hex>, <H>] (a valueless
+    copy counts), with H written canonically in [0, 85] and the base aligned
+    (the low H bits of each axis zero). Returns (region, "") or (None, why).
+    A check of form only."""
+    tags = _named(event, "region")
     if len(tags) != 1:
         return None, f"expected exactly one region tag, found {len(tags)}"
     tag = tags[0]
@@ -310,57 +383,64 @@ def parse_region(event: Dict[str, Any]) -> Tuple[Optional[Region], str]:
 
 def game_tag_ok(event: Dict[str, Any]) -> bool:
     """8.11.1, 8.11.5: exactly one ["p", <game_pubkey>, <relay_hint>, "game"],
-    the pubkey 32 bytes of lowercase hex. The relay hint may be empty. The
-    game is never contacted: this is a check of form only."""
-    games = [t for t in _tags(event) if t[0] == "p" and len(t) >= 4 and t[3] == "game"]
+    the pubkey 32 bytes of lowercase hex. The relay hint may be empty. p tags
+    without the game marker are not read. The game is never contacted: this
+    is a check of form only."""
+    games = [t for t in _named(event, "p") if len(t) >= 4 and t[3] == "game"]
     return len(games) == 1 and _is_hex32(games[0][1])
 
 
 # ---------------------------------------------------------------- resolving (8.7.3)
 
-def resolve_active_chain(events: Iterable[Dict[str, Any]], pubkey: str) -> List[Dict[str, Any]]:
+def resolve_active_chain(events: Iterable[Dict[str, Any]], pubkey: str) -> Resolution:
     """8.7.3: the identity's active chain, spawn first, from events in any order.
 
     Every event that is not authentic is discarded first and treated as if
     it never existed, so a branch through one is cut off: the event that
     names it as previous is never reached, and the chain ends at the event
-    before it. Then, by links, created_at and ids alone, with no proof or tag
-    checked:
+    before it. A discarded event is never a branch of a fork. Then, by links
+    alone, with no proof or tag value checked:
 
     1. The newest spawn by created_at, the larger id when they tie, whether
-       or not it is valid.
+       or not it is valid. Any A tag equal to spawn makes an event a spawn.
     2. Only events whose e genesis names that spawn take part; the rest are an
        older chain's history.
     3. From the spawn, follow e previous links forward.
-    4. At a fork the event with the smallest created_at continues the chain,
-       the smaller id when they tie, even if it is invalid and a later
-       branch is valid; the other branches are dropped.
-    5. The chain ends at the first event that nothing names as previous.
+    4. A fork is fatal: when more than one event names the current event as
+       previous, resolution stops there and reports the fork, whatever the
+       forking events are and whichever is valid or earlier.
+    5. Otherwise the chain ends at the first event that nothing names as
+       previous.
 
-    A spawn names no previous event, so an event whose A is spawn is never a
+    A spawn names no previous event, so an event that is a spawn is never a
     link: it starts a chain of its own wherever it was published. The first
-    e tag with each marker is the one followed."""
+    e tag with each marker is the one followed; a second copy makes the event
+    invalid when the chain is verified, but does not change what is followed.
+    Events that are never reached, behind a discarded event or naming an id
+    nobody holds, cannot make a fork, because the walk never comes to them."""
     mine: Dict[str, Dict[str, Any]] = {}
     for ev in events:
         if is_authentic(ev, pubkey) and ev["id"] not in mine:
             mine[ev["id"]] = ev
-    spawns = [ev for ev in mine.values() if _values(ev, "A")[:1] == ["spawn"]]
+    spawns = [ev for ev in mine.values() if _is_spawn(ev)]
     if not spawns:
-        return []
-    spawn = max(spawns, key=lambda ev: (ev.get("created_at", 0), ev["id"]))
+        return Resolution([])
+    spawn = max(spawns, key=lambda ev: (ev["created_at"], ev["id"]))
     children: Dict[str, List[Dict[str, Any]]] = {}
     for ev in mine.values():
-        if _values(ev, "A")[:1] == ["spawn"]:
+        if _is_spawn(ev):
             continue
-        genesis, previous = _e(ev, "genesis")[:1], _e(ev, "previous")[:1]
-        if genesis == [spawn["id"]] and previous:
-            children.setdefault(previous[0], []).append(ev)
+        previous = _first_e(ev, "previous")
+        if _first_e(ev, "genesis") == spawn["id"] and previous:
+            children.setdefault(previous, []).append(ev)
     chain = [spawn]
     while True:
-        nxt = children.get(chain[-1]["id"])
+        nxt = children.get(chain[-1]["id"], [])
         if not nxt:
-            return chain
-        chain.append(min(nxt, key=lambda ev: (ev.get("created_at", 0), ev["id"])))
+            return Resolution(chain)
+        if len(nxt) > 1:
+            return Resolution(chain, tuple(sorted(ev["id"] for ev in nxt)))
+        chain.append(nxt[0])
 
 
 # ---------------------------------------------------------------- verifying
@@ -387,39 +467,29 @@ class _Walk:
         recognized action (8.9 item 5)."""
         return self.bracket.base if self.bracket else self.position
 
-    def step(self, index: int, event: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    def step(self, index: int, event: Dict[str, Any]) -> Optional[Bad]:
         """Check one event; returns (reason, detail) when it breaks a rule."""
         action = _action(event)
         if action is None:
-            return "a-tag", f"expected exactly one A tag, found {len(_values(event, 'A'))}"
+            return "a-tag", f"expected exactly one A tag with a value, found {len(_named(event, 'A'))} A tags"
         if index == 0:
             return self._spawn(event)
+        for marker in ("genesis", "previous"):
+            tags = _marked_e(event, marker)
+            if len(tags) != 1 or not _is_hex32(_value(tags[0])):
+                return "malformed", f"e {marker}: expected exactly once with a 32-byte lowercase hex id"
         if self.bracket is not None:
             return self._inside(event, action)
         if action not in RECOGNIZED_ACTIONS:
-            # 8.9: authentic, linked and one A tag, all already established; otherwise as if absent.
+            # 8.9: authentic, linked and one A tag, all now established; otherwise as if absent.
             self.skipped.append(event["id"])
             return None
         return self._outside(event, action)
 
-    @staticmethod
-    def _links(event: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-        for marker in ("genesis", "previous"):
-            if len(_e(event, marker)) != 1:
-                return "malformed", f"e {marker}: expected exactly one"
-        return None
-
-    @staticmethod
-    def _coord(event: Dict[str, Any], name: str) -> Tuple[str, Optional[Tuple[str, str]]]:
-        values = _values(event, name)
-        if len(values) != 1 or not _is_hex32(values[0]):
-            return "", ("malformed", f"{name}: expected exactly one 32-byte lowercase hex coordinate")
-        return values[0], None
-
-    def _spawn(self, event: Dict[str, Any]) -> Optional[Tuple[str, str]]:
-        C, bad = self._coord(event, "C")
-        if bad:
-            return bad
+    def _spawn(self, event: Dict[str, Any]) -> Optional[Bad]:
+        C = _once(event, "C", _is_hex32)
+        if C is None:
+            return "malformed", "C: expected exactly once with a 32-byte lowercase hex coordinate"
         if C != event.get("pubkey"):
             return "spawn-coordinate", "the spawn's C is not its pubkey"
         if not sector_tags_ok(event, C):
@@ -428,26 +498,23 @@ class _Walk:
         self.lookback = event
         return None
 
-    def _inside(self, event: Dict[str, Any], action: str) -> Optional[Tuple[str, str]]:
+    def _inside(self, event: Dict[str, Any], action: str) -> Optional[Bad]:
         """8.11.5 steps 2 and 3: a virtual action, checked only for its links
-        (which resolution guarantees) and its one A tag, or the exit."""
+        and its one A tag (already established), or the exit."""
         b = self.bracket
         assert b is not None
         if action in NOT_IN_BRACKET:
             return "base-action-in-bracket", f"{action} inside the bracket opened by {b.entry_id}"
         if action != "exit-virtual":
             return None
-        bad = self._links(event)
-        if bad:
-            return bad
-        entries = _e(event, "entry")
-        if len(entries) != 1:
-            return "malformed", "e entry: expected exactly one"
-        if entries[0] != b.entry_id:
-            return "exit-wrong-entry", f"e entry names {entries[0]}, the open bracket is {b.entry_id}"
-        C, bad = self._coord(event, "C")
-        if bad:
-            return bad
+        entry = _marked_e(event, "entry")
+        if len(entry) != 1 or not _is_hex32(_value(entry[0])):
+            return "malformed", "e entry: expected exactly once with a 32-byte lowercase hex id"
+        if _value(entry[0]) != b.entry_id:
+            return "exit-wrong-entry", f"e entry names {_value(entry[0])}, the open bracket is {b.entry_id}"
+        C = _once(event, "C", _is_hex32)
+        if C is None:
+            return "malformed", "C: expected exactly once with a 32-byte lowercase hex coordinate"
         if C != b.base:
             return "exit-position", "the exit's C is not the c of its enter-virtual"
         if not sector_tags_ok(event, C):
@@ -459,21 +526,16 @@ class _Walk:
         self.bracket = None
         return None
 
-    def _outside(self, event: Dict[str, Any], action: str) -> Optional[Tuple[str, str]]:
+    def _outside(self, event: Dict[str, Any], action: str) -> Optional[Bad]:
         if action == "exit-virtual":
             return "exit-without-bracket", "no bracket is open"
-        bad = self._links(event)
+        bad = _require(event, (("c", _is_hex32), ("C", _is_hex32)))
         if bad:
             return bad
-        c, bad = self._coord(event, "c")
-        if bad:
-            return bad
-        C, bad = self._coord(event, "C")
-        if bad:
-            return bad
+        c, C = _once(event, "c", _is_hex32), _once(event, "C", _is_hex32)
         if c != self.position:
             return "c-mismatch", "c is not the C of the nearest recognized action before it"
-        if not sector_tags_ok(event, C):
+        if not sector_tags_ok(event, C):  # type: ignore[arg-type]
             return "sector-tags", "sector tags are not X, Y, Z and S once each, computed from C"
         if action == "enter-virtual":
             if C != c:
@@ -484,53 +546,76 @@ class _Walk:
             if not game_tag_ok(event):
                 return "game-tag", "expected exactly one p tag marked game holding a 32-byte lowercase hex pubkey"
             # Rule 1: the position is held at c; position and look-back stay as they are until the exit.
-            self.bracket = _Bracket(event["id"], c, self.lookback)
+            self.bracket = _Bracket(event["id"], c, self.lookback)  # type: ignore[arg-type]
             return None
         if action == "hop":
+            bad = _require(event, (("proof", _is_hex32),))
+            if bad:
+                return bad
             failures = verify_hop_event(event, max_compute_height=self.max_compute_height)
             if failures:
                 return "hop-proof", "; ".join(failures)
         elif action == "sidestep":
+            bad = _require(event, (("proof", _is_hex32), ("mr", _is_roots), ("mp", _non_empty),
+                                   ("hx", _is_decimal), ("hy", _is_decimal), ("hz", _is_decimal)))
+            bad = bad or _at_most_once(event, "mn", lambda v: decode_nonce(v) is not None)
+            if bad:
+                return bad
             failures = verify_sidestep_event(event)
             if failures:
                 return "sidestep-proof", "; ".join(failures)
         elif action == "enter-hyperspace":
             if C != c:
                 return "enter-hyperspace-moved", "C is not c; boarding does not move the identity"
+            bad = _require(event, (("proof", _is_hex32),))
+            if bad:
+                return bad
             failures = verify_enter_hyperspace_event(event)
             if failures:
                 return "enter-hyperspace-proof", "; ".join(failures)
         elif action == "hyperjump":
-            bad = self._ride(event, C)
+            bad = self._ride(event, C)  # type: ignore[arg-type]
             if bad:
                 return bad
-        self.position = C
+        self.position = C  # type: ignore[assignment]
         self.lookback = event
         return None
 
-    def _ride(self, event: Dict[str, Any], C: str) -> Optional[Tuple[str, str]]:
-        """DECK-0001 5.6 and 4.3 against the action this ride looks back to,
-        then the stop of B and the ride's proof (5.5 Level 1)."""
+    def _ride(self, event: Dict[str, Any], C: str) -> Optional[Bad]:
+        """DECK-0001 5.6 (before the proof tags, which a zero-length ride
+        cannot carry in a verifiable form), the ride's tags, 4.3 against the
+        action this ride looks back to, then the stop of B and the ride's
+        proof (5.5 Level 1)."""
         if self.line is None:
             raise LineRequired(f"hyperjump {event['id']} needs the line's block data")
         line = self.line
-        from_height, to_height = _decimal(next(iter(_values(event, "from_height")), None)), _decimal(next(iter(_values(event, "B")), None))
-        if from_height is None or to_height is None:
-            return "malformed", "from_height and B: expected base-10 block heights"
+        bad = _require(event, (("from_height", _is_decimal), ("B", _is_decimal)))
+        if bad:
+            return bad
+        from_height, to_height = int(_once(event, "from_height", _is_decimal)), int(_once(event, "B", _is_decimal))  # type: ignore[arg-type]
         if from_height == to_height:
             return "hyperjump-zero-length", "B equals from_height; every ride passes at least one block"
+        bad = _require(event, (("proof", _is_hex32), ("mp", _non_empty)))
+        bad = bad or _at_most_once(event, "mn", lambda v: decode_nonce(v) is not None)
+        if bad:
+            return bad
         before = _action(self.lookback)
         if before not in ("enter-hyperspace", "hyperjump"):
             return "hyperjump-predecessor", f"the action before this ride is {before}"
         if before == "enter-hyperspace":
-            as_of = _decimal(next(iter(_values(event, "as_of")), None))
-            if as_of is None or as_of > line.tip or as_of < to_height:
-                return "hyperjump-as-of", "the first ride needs as_of, a height on the line and at least B"
-            station = line.station(_values(self.lookback, "C")[0], as_of)
+            as_of_tags = _named(event, "as_of")
+            if not as_of_tags:
+                return "hyperjump-as-of", "the first ride after boarding carries no as_of"
+            if len(as_of_tags) > 1 or not _is_decimal(_value(as_of_tags[0])):
+                return "malformed", "as_of: expected exactly once with a base-10 height"
+            as_of = int(_value(as_of_tags[0]))
+            if as_of > line.tip or as_of < to_height:
+                return "hyperjump-as-of", "as_of must be a height on the line and at least B"
+            station = line.station(_once(self.lookback, "C", _is_hex32), as_of)  # type: ignore[arg-type]
             if from_height != station:
                 return "hyperjump-station", f"from_height {from_height} but the station within {as_of} is {station}"
         else:
-            previous_b = _decimal(_values(self.lookback, "B")[0])
+            previous_b = int(_once(self.lookback, "B", _is_decimal))  # type: ignore[arg-type]
             if from_height != previous_b:
                 return "hyperjump-from-height", f"from_height {from_height} but the previous ride ended at {previous_b}"
         stop = line.stop(to_height)
@@ -550,8 +635,8 @@ def verify_chain(
     max_compute_height: int = DEFAULT_MAX_COMPUTE_HEIGHT,
 ) -> ChainVerdict:
     """Discard inauthentic events, resolve the identity's active chain
-    (8.7.3) and verify it under the chain rules of revision
-    CHAIN_RULES_REVISION.
+    (8.7.3), reject a fork, and verify the chain under the chain rules of
+    revision CHAIN_RULES_REVISION.
 
     `pubkey` defaults to the one pubkey among the kind 3333 events. Every
     event must be signed: an unsigned or wrongly signed event is not
@@ -567,10 +652,16 @@ def verify_chain(
         if len(pubkeys) != 1:
             raise ValueError(f"expected the events of one pubkey, found {len(pubkeys)}; pass pubkey=")
         pubkey = pubkeys.pop()
-    chain = resolve_active_chain(events, pubkey)  # type: ignore[arg-type]
+    resolution = resolve_active_chain(events, pubkey)  # type: ignore[arg-type]
+    chain = resolution.chain
     ids = tuple(ev["id"] for ev in chain)
     if not chain:
         return ChainVerdict(valid=False, reason="no-spawn", detail=REASONS["no-spawn"])
+    if resolution.fork:
+        return ChainVerdict(
+            valid=False, chain=ids, position=pubkey, reason="fork", invalid_at=ids[0], invalid_index=0,
+            detail=f"{', '.join(resolution.fork)} all name {ids[-1]} as previous",
+        )
     walk = _Walk(line, max_compute_height)
     for index, event in enumerate(chain):
         before = walk.held() or pubkey  # an invalid spawn leaves the identity at its spawn coordinate (3.2)

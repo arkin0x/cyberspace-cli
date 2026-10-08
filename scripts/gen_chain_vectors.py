@@ -316,25 +316,56 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
     hb = b.hop(s, s, P, PX, created_at=T0 + 1000)
     ha = b.hop(s, s, P, PY, created_at=T0 + 1001)
     ha2 = b.hop(s, ha, PY, flip(PY, dz=1), created_at=T0 + 1002)
-    add("fork-older-branch-continues", ["8.7.3 rule 4"],
-        "Two hops name the spawn as previous. The one signed first (smaller created_at) continues the chain and the other "
-        "branch, with its descendant, is dropped. Events are listed out of order on purpose.",
-        [ha2, ha, s, hb], valid([s, hb], PX))
+    add("fork-both-valid-dead", ["8.7.3 rule 4"],
+        "Two valid hops name the spawn as previous, one with a valid descendant. A fork is fatal whichever branch is "
+        "valid or earlier: the chain is invalid from the spawn and the identity stands at its spawn coordinate. Events "
+        "are listed out of order on purpose.",
+        [ha2, ha, s, hb], invalid([s], s, "fork", P))
 
     s = b.spawn()
     t = T0 + 2000
     f1, f2 = b.hop(s, s, P, PX, created_at=t), b.hop(s, s, P, PY, created_at=t)
-    win = min((f1, f2), key=lambda e: e["id"])
-    add("fork-tie-smaller-id", ["8.7.3 rule 4"], "Two branches with the same created_at: the smaller event id continues the chain.",
-        [f1, f2, s], valid([s, win], win["tags"][4][1]))
+    add("fork-same-created-at-dead", ["8.7.3 rule 4"], "Two branches with the same created_at: a fork, so the chain is dead; no tie-break applies.",
+        [f1, f2, s], invalid([s], s, "fork", P))
 
     s = b.spawn()
     bad = b.hop(s, s, P, PY, seed={"id": "cd" * 32}, created_at=T0 + 2500)
     good = b.hop(s, s, P, PX, created_at=T0 + 2501)
-    add("fork-earlier-invalid-branch-wins", ["8.7.3 rule 4", "8.7.3 validity and position"],
-        "Resolution comes before validity. The branch signed first has an invalid proof and still continues the chain; the "
-        "later valid branch does not replace it, so the chain is invalid and frozen at the spawn.",
-        [good, bad, s], invalid([s, bad], bad, "hop-proof", P))
+    add("fork-invalid-and-valid-dead", ["8.7.3 rule 4"],
+        "One branch has an invalid proof and the other is valid. The fork is found from the links before any proof is "
+        "checked, so the reason is the fork, and the chain is dead at the spawn coordinate.",
+        [good, bad, s], invalid([s], s, "fork", P))
+
+    s = b.spawn()
+    hist = [s]
+    here = P
+    for mask in (dict(dx=1), dict(dy=1), dict(dz=1), dict(dx=1), dict(dy=1)):
+        nxt = flip(here, **mask)
+        hist.append(b.hop(s, hist[-1], here, nxt))
+        here = nxt
+    fa = b.hop(s, hist[-1], here, flip(here, dz=1))
+    fb = b.hop(s, hist[-1], here, flip(here, dx=1))
+    add("fork-deep-in-history-dead", ["8.7.3 rule 4", "3.2"],
+        "Five valid hops, then two hops that both name the fifth. The fork is fatal however much valid travel came "
+        "before it: the chain is invalid from the spawn and the identity stands at its spawn coordinate, not at the "
+        "fifth hop.",
+        hist + [fa, fb], invalid(hist, s, "fork", P))
+
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    w = b.link("wave", s, h1, PX, PX)
+    h2 = b.hop(s, h1, PX, flip(PX, dy=1))
+    add("fork-skipped-and-hop-dead", ["8.7.3 rule 4", "8.9"],
+        "A skipped action and a hop both name the same event as previous. A skipped action is still a link, so this is a fork and the chain is dead.",
+        [s, h1, w, h2], invalid([s, h1], s, "fork", P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    v1 = b.game(s, ev, "move")
+    v2 = b.game(s, ev, "score")
+    add("fork-virtual-actions-dead", ["8.7.3 rule 4", "8.11"],
+        "Two virtual actions inside a bracket both name the entry as previous. The bracket is opaque, but its links are not: a fork, and the chain is dead.",
+        [s, ev, v1, v2], invalid([s, ev], s, "fork", P))
 
     s1 = b.spawn()
     h1 = b.hop(s1, s1, P, PX)
@@ -360,7 +391,7 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
             "tags": [["A", "hop"], ["e", s["id"], "", "genesis"], ["e", s["id"], "", "previous"], ["c", P], ["C", PY], ["proof", "00" * 32]]}
     add("forged-fork-ignored", ["8.2", "8.7.3 authentic events only", "3.2"],
         "An event whose id is not its hash names the spawn as previous with an earlier created_at than the real hop. It "
-        "is discarded, so it takes no part in the fork and cannot end the chain.",
+        "is discarded, so there is no fork and the chain is valid: a forged event cannot kill a chain.",
         [s, fake, h1], valid([s, h1], PX))
 
     s = b.spawn()
@@ -369,7 +400,7 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
     h1 = b.hop(s, s, P, PX, created_at=T0 + 4001)
     add("unsigned-fork-ignored", ["8.2", "8.7.3 authentic events only"],
         "A hop with a correct id and a valid proof whose sig signs a different id, signed earlier than the real hop. It "
-        "is not authentic and is discarded, so the real hop continues the chain.",
+        "is not authentic and is discarded, so there is no fork and the real hop continues the chain.",
         [s, unsigned, h1], valid([s, h1], PX))
 
     s = b.spawn()
@@ -378,7 +409,7 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
                       + _sector_tags_from_coord_hex(PY), created_at=T0 + 4499)
     add("other-author-ignored", ["8.7.3 authentic events only"],
         "A validly signed event by another pubkey names this spawn as previous, signed earlier than the real hop. Its "
-        "pubkey is not the identity's, so it is discarded. Verify with the test key's pubkey as the identity.",
+        "pubkey is not the identity's, so it is discarded and makes no fork. Verify with the test key's pubkey as the identity.",
         [s, stranger, h1], valid([s, h1], PX))
 
     s = b.spawn()
@@ -901,7 +932,7 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
     stringly = b.sign_raw(str(T0 + 5100), rival["tags"])
     add("forged-string-created-at-ignored", ["8.2", "8.7.3 authentic events only"],
         "An event whose created_at is a string, signed over its own serialization and earlier than the real hop. "
-        "NIP-01 requires an integer created_at, so it is discarded before the fork rule compares created_at values.",
+        "NIP-01 requires an integer created_at, so it is discarded and makes no fork.",
         [s, stringly, h1], valid([s, h1], PX))
 
     s = b.spawn()
@@ -910,8 +941,7 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
     nulled = b.sign_raw(T0 + 5200, [["A", "hop", None]] + rival["tags"][1:])
     add("forged-null-in-tag-ignored", ["8.2", "8.7.3 authentic events only"],
         "An event whose A tag holds a null, signed over its own serialization and earlier than the real hop. NIP-01 "
-        "tags are arrays of strings, so it is discarded; read as if the tag were absent, it would win the fork and "
-        "break the chain for want of an A tag.",
+        "tags are arrays of strings, so it is discarded and makes no fork.",
         [s, nulled, h1], valid([s, h1], PX))
 
     # ------------------------------------------------ more resolution (8.7.3 rule 1)
@@ -929,8 +959,8 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
     newer, older = max((sa, sb), key=lambda e: e["id"]), min((sa, sb), key=lambda e: e["id"])
     h_old = b.hop(older, older, P, PX)
     add("spawn-tie-larger-id", ["8.7.3 rule 1"],
-        "Two spawns with the same created_at: the one with the larger id is newer and starts the active chain (a fork "
-        "breaks its tie the other way, rule 4). The hop on the other spawn is an older chain's history.",
+        "Two spawns with the same created_at: the one with the larger id is newer and starts the active chain. The hop "
+        "on the other spawn is an older chain's history and makes no fork, because its e genesis names the other spawn.",
         [sa, sb, h_old], valid([newer], P))
 
     s = b.spawn()
@@ -939,7 +969,7 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
     note = b.sign(rival["tags"], rival["created_at"], kind=1)
     add("other-kind-ignored", ["8.1", "8.7.3"],
         "A kind 1 event signed by the identity with the links and tags of a hop, signed earlier than the real hop, is "
-        "not a movement event and takes no part in the fork.",
+        "not a movement event and makes no fork.",
         [s, note, h1], valid([s, h1], PX))
 
     # ------------------------------------------------ more rides (DECK-0001 3.3, 4.2, 4.3)
@@ -1017,6 +1047,105 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
     ev = b.retag(b.enter(s, s, P, R), set_value("Y", lambda v: "0" + v))
     add("bracket-enter-sector-tags-noncanonical", ["8.11.1", "10"], "An enter-virtual with a leading zero on its Y tag is invalid.",
         [s, ev], invalid([s, ev], ev, "sector-tags", P))
+
+    # ------------------------------------------------ a spawn with another A tag (8.7.3 rule 1, 8.8)
+    for name, a_tags in (("spawn-first", [["A", "spawn"], ["A", "hop"]]), ("spawn-second", [["A", "hop"], ["A", "spawn"]])):
+        s1 = b.spawn()
+        h1 = b.hop(s1, s1, P, PX)
+        s2 = b.sign(a_tags + [["C", P]] + _sector_tags_from_coord_hex(P))
+        add(f"spawn-two-a-tags-{name}", ["8.7.3 rule 1", "8.8"],
+            "Any A tag equal to spawn makes an event a spawn, wherever it stands among the tags. This one is newest, so it "
+            "starts the active chain, and its second A tag makes it an invalid spawn: the chain is dead at the spawn "
+            "coordinate, with no fallback to the older chain.",
+            [s1, h1, s2], invalid([s2], s2, "a-tag", P))
+
+    # ------------------------------------------------ every read tag exactly once, with a value
+    def hop_with(change, name, why, reason, spec):
+        s = b.spawn()
+        h1 = b.retag(b.hop(s, s, P, PX), change)
+        add(name, spec, why, [s, h1], invalid([s, h1], h1, reason, P))
+
+    def first(tag_name, tag):
+        def change(tags):
+            i = next(i for i, t in enumerate(tags) if t[0] == tag_name)
+            return tags[:i] + [tag] + tags[i:]
+        return change
+
+    hop_with(lambda t: [["A"]] + t[1:], "a-tag-bare", "A hop whose only A tag is a bare [\"A\"]: it is an A tag with no value, and invalid.", "a-tag", ["8.8"])
+    hop_with(lambda t: t + [["A"]], "a-tag-hop-plus-bare", "A hop with [\"A\", \"hop\"] and a bare [\"A\"]: two A tags.", "a-tag", ["8.8"])
+    hop_with(lambda t: [["A", ""]] + t[1:], "a-tag-empty-value", "A hop whose A tag is [\"A\", \"\"]: an empty value, and invalid.", "a-tag", ["8.8"])
+    hop_with(duplicate("C"), "hop-two-c-tags", "A hop with its C tag twice, both copies equal: still invalid.", "malformed", ["8.4", "8.12"])
+    hop_with(duplicate("proof"), "hop-two-proof-tags-equal", "A hop with its valid proof tag twice.", "malformed", ["8.4", "8.12"])
+    hop_with(lambda t: t + [["proof", "zz"]], "hop-two-proof-tags-good-first", "A hop with its valid proof tag and then a garbage one.", "malformed", ["8.4", "8.12"])
+    hop_with(first("proof", ["proof", "zz"]), "hop-two-proof-tags-garbage-first", "A hop with a garbage proof tag and then its valid one: the same verdict as with the valid one first.", "malformed", ["8.4", "8.12"])
+    hop_with(lambda t: t + [["X"]], "hop-sector-tags-valueless-copy", "A hop with its valid X tag and a valueless [\"X\"]: two X tags.", "sector-tags", ["8.4", "10"])
+    hop_with(duplicate("c"), "hop-two-lowercase-c-tags", "A hop with its c tag twice.", "malformed", ["8.4", "8.12"])
+    hop_with(lambda t: [x for x in t if x[0] != "proof"] + [["proof"]], "hop-proof-valueless", "A hop whose only proof tag is a bare [\"proof\"].", "malformed", ["8.4", "8.12"])
+    s = b.spawn()
+    h1 = b.retag(b.hop(s, s, P, PX), first("e", ["e", "", "", "previous"]))
+    add("hop-empty-first-e-previous-unlinked", ["8.7.3 rule 3", "8.12"],
+        "A hop with an empty e previous tag ahead of its real one. Resolution follows the first copy, which names "
+        "nothing, so the hop is never reached: it is not on the chain, and the chain is the spawn alone, valid.",
+        [s, h1], valid([s], P))
+
+    s = b.spawn()
+    h1 = b.retag(b.hop(s, s, P, PX), lambda t: t + [list(next(x for x in t if x[0] == "e" and x[3] == "previous"))])
+    add("hop-e-previous-twice", ["8.4", "8.12"], "A hop with its e previous tag twice, both copies equal: resolution follows the first, and validity rejects the event.",
+        [s, h1], invalid([s, h1], h1, "malformed", P))
+
+    s = b.spawn()
+    w = b.retag(b.link("wave", s, s, P, P), lambda t: t + [list(next(x for x in t if x[0] == "e" and x[3] == "genesis"))])
+    add("skip-two-e-genesis-tags", ["8.9", "8.12"], "A skipped action with its e genesis tag twice is invalid: on a skipped action the A tag and the e tags are constrained.",
+        [s, w], invalid([s, w], w, "malformed", P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    v1 = b.retag(b.game(s, ev, "move"), lambda t: t + [list(next(x for x in t if x[0] == "e" and x[3] == "previous"))])
+    add("bracket-virtual-two-e-previous-tags", ["8.11.4 rule 4", "8.12"],
+        "A virtual action with its e previous tag twice is invalid: inside a bracket the A tag and the e tags are constrained.",
+        [s, ev, v1], invalid([s, ev, v1], v1, "malformed", P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    v1 = b.game(s, ev, "move", [["score", ""], ["board"], ["c", ""], ["C"], ["X", ""], ["proof"]])
+    x = b.exit(s, v1, ev, P)
+    add("bracket-game-tags-empty-values", ["8.11.2", "8.11.4 rule 4"],
+        "A virtual action whose game-defined tags are empty or valueless, including tags whose names base reads elsewhere (c, C, X, proof), is valid: "
+        "inside a bracket only the A tag and the e tags are constrained.",
+        [s, ev, v1, x], valid([s, ev, v1, x], P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    x = b.retag(b.exit(s, ev, ev, P), lambda t: t + [list(next(y for y in t if y[0] == "e" and y[3] == "entry"))])
+    add("bracket-exit-two-entry-tags", ["8.11.3", "8.12"], "An exit with its e entry tag twice is invalid.",
+        [s, ev, x], invalid([s, ev, x], x, "malformed", P))
+
+    s = b.spawn()
+    ev = b.retag(b.enter(s, s, P, R), duplicate("region"))
+    add("bracket-region-two-tags", ["8.11.1"], "An enter-virtual with its region tag twice is invalid.",
+        [s, ev], invalid([s, ev], ev, "region", P))
+
+    s = b.spawn()
+    ev = b.retag(b.enter(s, s, P, R), lambda t: t + [["region"]])
+    add("bracket-region-plus-valueless", ["8.11.1"], "An enter-virtual with its region tag and a bare [\"region\"]: two region tags.",
+        [s, ev], invalid([s, ev], ev, "region", P))
+
+    s = b.spawn()
+    eh = b.board(s, s, P)
+    j1 = b.retag(b.ride(s, eh, P, 2, 4, as_of=5), duplicate("B"))
+    add("ride-two-b-tags", ["DECK-0001 5.2", "8.12"], "A ride with its B tag twice is invalid.",
+        [s, eh, j1], invalid([s, eh, j1], j1, "malformed", P))
+
+    s = b.spawn()
+    eh = b.board(s, s, P)
+    j1 = b.retag(b.ride(s, eh, P, 2, 4, as_of=5), duplicate("as_of"))
+    add("ride-two-as-of-tags", ["DECK-0001 4.2", "8.12"], "A first ride with its as_of tag twice is invalid.",
+        [s, eh, j1], invalid([s, eh, j1], j1, "malformed", P))
+
+    s = b.spawn()
+    st = b.retag(b.sidestep(s, s, P, PZ), duplicate("mn"))
+    add("sidestep-two-mn-tags", ["8.5", "8.12"], "A sidestep with its mn tag twice is invalid.",
+        [s, st], invalid([s, st], st, "malformed", P))
 
     return vectors
 
