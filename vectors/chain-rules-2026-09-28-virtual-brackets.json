@@ -79,7 +79,7 @@
  "reasons": {
   "no-spawn": "no authentic spawn event for this pubkey, so there is no chain (8.7.3 rule 1)",
   "a-tag": "the event carries no A tag, or more than one (8.8)",
-  "malformed": "a tag the chain rules read is missing, repeated or ill-formed: e genesis, e previous, e entry, c, C, from_height, B",
+  "malformed": "a tag the chain rules read is missing or ill-formed: e genesis, e previous or e entry missing or repeated; c or C missing, repeated or not a 32-byte lowercase hex coordinate; from_height or B missing or not a base-10 height (the first of each is read)",
   "sector-tags": "a recognized action's X, Y, Z or S tag is missing, repeated, or not the value computed from its C (10)",
   "spawn-coordinate": "the spawn's C is not its pubkey (8.3)",
   "c-mismatch": "c is not the C of the nearest recognized action before it (8.9 item 2, continuity)",
@@ -6521,7 +6521,7 @@
    "spec": [
     "8.11.1"
    ],
-   "description": "The base position need not lie in or near the declared region, even on another plane: an identity can play a game without traveling to it.",
+   "description": "The base position need not lie in or near the declared region: an identity can play a game without traveling to it.",
    "events": [
     {
      "id": "b72b6f26b30b0358f85bd8e82b5c42f83faaff3a6b80607694eaf5def2296eda",
@@ -16369,6 +16369,3112 @@
     "skipped": [
      "e58557e477532730bc640f22fabee6ac548a40666a6c509294a1dc929b952886"
     ]
+   }
+  },
+  {
+   "name": "forged-lone-surrogate-ignored",
+   "spec": [
+    "8.2",
+    "8.7.3 authentic events only"
+   ],
+   "description": "An event under the identity's pubkey whose content holds a lone surrogate, signed earlier than the real hop. A lone surrogate has no UTF-8 encoding, so the event has no canonical serialization: it is not a NIP-01 event and is discarded. A verifier must not stop on it.",
+   "events": [
+    {
+     "id": "fed3953e1b25233414944447c087a10a8e76c1cf25c43c6d9d217e256c9f3c3d",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000282,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "02969a96e591e71689ed982bc8e4c4c1c828498817fb924d5a813d149e11fd4f8c369ae960ff888ea87865d033c32f04a7c7e374c53c23370d39ba6604f3ce95"
+    },
+    {
+     "id": "505ea49bd79719e39dce5d3e544c0a34af710d61a38c586a946ed89807c3474a",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790005000,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hop"
+      ],
+      [
+       "e",
+       "fed3953e1b25233414944447c087a10a8e76c1cf25c43c6d9d217e256c9f3c3d",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "fed3953e1b25233414944447c087a10a8e76c1cf25c43c6d9d217e256c9f3c3d",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39bab"
+      ],
+      [
+       "proof",
+       "fc974fe2a6bc756beb976bd3d2eafc1a6beeae970bf1739885fbb6a9538d58c8"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "\ud800",
+     "sig": "2d32b4c7c5a0ca1a6f0e317af9b8fb8a607c83b74d43113fa86778d95e9bc6cc99b4e3adb3c443a96012d9db1976d31e9041a946cee82125b3700c3b0cfb84c5"
+    },
+    {
+     "id": "65c3174f1b2752c8459dec0f18506b008b1b399a711fe3dcc5dbcc7a86062422",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790005001,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hop"
+      ],
+      [
+       "e",
+       "fed3953e1b25233414944447c087a10a8e76c1cf25c43c6d9d217e256c9f3c3d",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "fed3953e1b25233414944447c087a10a8e76c1cf25c43c6d9d217e256c9f3c3d",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7"
+      ],
+      [
+       "proof",
+       "17c627f54ed9c282c27c0d9834ecaefaa418dae42419c0a2c557d4edaeec571b"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "76cf7a247f847e811a6e69ef3862764044002b4a93018724ed8942d7d78d0c629964052de17ccb40b9951df1dd58dfd3b2e041ff0820de63add88fd162c96aff"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "fed3953e1b25233414944447c087a10a8e76c1cf25c43c6d9d217e256c9f3c3d",
+     "65c3174f1b2752c8459dec0f18506b008b1b399a711fe3dcc5dbcc7a86062422"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7",
+    "head": "65c3174f1b2752c8459dec0f18506b008b1b399a711fe3dcc5dbcc7a86062422",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "forged-string-created-at-ignored",
+   "spec": [
+    "8.2",
+    "8.7.3 authentic events only"
+   ],
+   "description": "An event whose created_at is a string, signed over its own serialization and earlier than the real hop. NIP-01 requires an integer created_at, so it is discarded before the fork rule compares created_at values.",
+   "events": [
+    {
+     "id": "70587cf96ac41d6814bf51a78a0b10fd221e72f3d6781bb79e6476e5b4fb6294",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000283,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "a36213b4907e404cbc6425e1ba3f3f217387f6b1aee1206f471e81a56884f05a551abce616da462d12382e1f2a3f318edab277f13a94278ddfacba31f458375f"
+    },
+    {
+     "id": "a292609c144791e4d1ecc375cc589f0a92a3b2db8cea62fbcff442b754c369e3",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": "1790005100",
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hop"
+      ],
+      [
+       "e",
+       "70587cf96ac41d6814bf51a78a0b10fd221e72f3d6781bb79e6476e5b4fb6294",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "70587cf96ac41d6814bf51a78a0b10fd221e72f3d6781bb79e6476e5b4fb6294",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39bab"
+      ],
+      [
+       "proof",
+       "c3769f9a0fb1d230b6edfd71b6be1df4c9a8cfa6ad27f9057d9f0fef833ebda4"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "8d70d571cd8e1efcd75a68e6cc7e0e107cee5cfe61d24c21bd7556936e24b763e17a6cbb53baf5539ce8e83f4acee7c825079d5889ab4b4d2e467823c897bbcc"
+    },
+    {
+     "id": "db3fab7ce2e365d535e5e80e132c9d197106b82c1d1aa1b724059b7a811ca6a7",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790005101,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hop"
+      ],
+      [
+       "e",
+       "70587cf96ac41d6814bf51a78a0b10fd221e72f3d6781bb79e6476e5b4fb6294",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "70587cf96ac41d6814bf51a78a0b10fd221e72f3d6781bb79e6476e5b4fb6294",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7"
+      ],
+      [
+       "proof",
+       "e56d243ccfc435a44fc112b90880320fdc8292a24a78ae5037bb960a23d8e120"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "d417ae71be43c29c9d9e24216c9975797ff5a400991739db2f13b1bb49beea1c343a83757e48cd25bdaedd7ac9c2c46c3f77577743e4516dbd15828e007604f3"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "70587cf96ac41d6814bf51a78a0b10fd221e72f3d6781bb79e6476e5b4fb6294",
+     "db3fab7ce2e365d535e5e80e132c9d197106b82c1d1aa1b724059b7a811ca6a7"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7",
+    "head": "db3fab7ce2e365d535e5e80e132c9d197106b82c1d1aa1b724059b7a811ca6a7",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "forged-null-in-tag-ignored",
+   "spec": [
+    "8.2",
+    "8.7.3 authentic events only"
+   ],
+   "description": "An event whose A tag holds a null, signed over its own serialization and earlier than the real hop. NIP-01 tags are arrays of strings, so it is discarded; read as if the tag were absent, it would win the fork and break the chain for want of an A tag.",
+   "events": [
+    {
+     "id": "27dc834467ea250b40b5a1a6ff4031626f15ef610dadaa82a4fbc0b7fd97bc94",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000284,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "ea7cae64dc0125ab3903809b8ab11d4b2fd0512f8e9111b43b4d52dfbd9f028efa60d8e4aecab1ddde9c597276b8a55d45093538d672d5dedce73075a7ea7a68"
+    },
+    {
+     "id": "e44d4bfe37964016b83de8ff7dcb02454d5867f18dddf195e83185ca5d8c411a",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790005200,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hop",
+       null
+      ],
+      [
+       "e",
+       "27dc834467ea250b40b5a1a6ff4031626f15ef610dadaa82a4fbc0b7fd97bc94",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "27dc834467ea250b40b5a1a6ff4031626f15ef610dadaa82a4fbc0b7fd97bc94",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39bab"
+      ],
+      [
+       "proof",
+       "8106082a8b521b62a0575bec1a847098d81582197402c2bb3d8253a46806fecf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "b21ae2e4897bf58cdd7fe1c26461957ba24cc3273ee723a04b246a8c7d03d5b88b9d431f1b01e0f30fa9a5942b55dbff41f1e962487532507b82c7ec504f8920"
+    },
+    {
+     "id": "1890af4fc0b86ff66ea821b48755719e3f6550e518d39b830efa03631feda20a",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790005201,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hop"
+      ],
+      [
+       "e",
+       "27dc834467ea250b40b5a1a6ff4031626f15ef610dadaa82a4fbc0b7fd97bc94",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "27dc834467ea250b40b5a1a6ff4031626f15ef610dadaa82a4fbc0b7fd97bc94",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7"
+      ],
+      [
+       "proof",
+       "a6f12b6464ad2970318ec99bbb62aa0917b89fcf992ac7fca9dcf4cc11ae5f3c"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "ce29ff888ab7c7df3ca788f1925c3ce2e4eb629abb5c73f49be1a889238b42feec20799a0513b35172e93d7d816f6288fc7b50f9bbfac16c3b48deabe25a21aa"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "27dc834467ea250b40b5a1a6ff4031626f15ef610dadaa82a4fbc0b7fd97bc94",
+     "1890af4fc0b86ff66ea821b48755719e3f6550e518d39b830efa03631feda20a"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7",
+    "head": "1890af4fc0b86ff66ea821b48755719e3f6550e518d39b830efa03631feda20a",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "forged-spawn-ignored",
+   "spec": [
+    "8.7.3 authentic events only",
+    "8.7.3 rule 1"
+   ],
+   "description": "A spawn newer than the real one whose sig signs another id is discarded, so it cannot restart the chain.",
+   "events": [
+    {
+     "id": "252d87533257c9c27fada53c7d3b2747bcfba6933854549a7fefc9b815687e87",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000285,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "f901a884896b4c5e09f69787329eb35b2b9471c0fe27650f409dc2ef467e4a95114cc4aef6c7d59ca55770782cd368eaaa4ed976e85ebf90dc0bd6244ab8628e"
+    },
+    {
+     "id": "0a5b134026e2b5b666028c662fc2501d4b222bed7f0fb2881ce903e691977c8f",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000286,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hop"
+      ],
+      [
+       "e",
+       "252d87533257c9c27fada53c7d3b2747bcfba6933854549a7fefc9b815687e87",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "252d87533257c9c27fada53c7d3b2747bcfba6933854549a7fefc9b815687e87",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7"
+      ],
+      [
+       "proof",
+       "9fd1642241e9632ca8fcfdd74ce22b5801bdb25dd05b95015159432704cdeeb1"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "e554b4024c382b9cd0ccff6143daae38f03be97f31f05f9bde274a8b965c0d8e57608a2a03ffdee947765d2ff6fa234b8c299f71a4977599976edeeeadb453bc"
+    },
+    {
+     "id": "23dd2eccbd140b136f80601d193ec0cdc93ccbdb1898a91a7cb98889c503026d",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790006000,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "f901a884896b4c5e09f69787329eb35b2b9471c0fe27650f409dc2ef467e4a95114cc4aef6c7d59ca55770782cd368eaaa4ed976e85ebf90dc0bd6244ab8628e"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "252d87533257c9c27fada53c7d3b2747bcfba6933854549a7fefc9b815687e87",
+     "0a5b134026e2b5b666028c662fc2501d4b222bed7f0fb2881ce903e691977c8f"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7",
+    "head": "0a5b134026e2b5b666028c662fc2501d4b222bed7f0fb2881ce903e691977c8f",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "spawn-tie-larger-id",
+   "spec": [
+    "8.7.3 rule 1"
+   ],
+   "description": "Two spawns with the same created_at: the one with the larger id is newer and starts the active chain (a fork breaks its tie the other way, rule 4). The hop on the other spawn is an older chain's history.",
+   "events": [
+    {
+     "id": "441f9c613d7ef054ce9e1f32d0318c2eee4cb1d5eab01d515bd295947c317747",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790007000,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "a",
+     "sig": "e815e7dc019aa4fea451699e6576d2588e3e1300366eb2007def9edef855e39a70b0d1e34d37e76e99dbb83738953de637aec0a0c901310df5d74a69f1565ede"
+    },
+    {
+     "id": "ce5b613c0ee20b03019b0b7588be3485f4819b376349716f2f2ff66638086047",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790007000,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "b",
+     "sig": "7108abc5348b3b2f5b4e4236b3161d9bc858a45cd2d975dd266b8b951f884f9d2db609216adf2bc1f870ffad0e276adb59d43d666db4565a5ddf2538fc01a3f3"
+    },
+    {
+     "id": "1913fce7d843e2d297a08a5b12f32a304d780797e581fcda11c297627368ff99",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000287,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hop"
+      ],
+      [
+       "e",
+       "441f9c613d7ef054ce9e1f32d0318c2eee4cb1d5eab01d515bd295947c317747",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "441f9c613d7ef054ce9e1f32d0318c2eee4cb1d5eab01d515bd295947c317747",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7"
+      ],
+      [
+       "proof",
+       "596a3e52ebe8478f8bb87ef5d31467329008294f73bc82efb040aa94f93bcfdc"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "9a4791c80137e404f601fa8b35de7c3ac98beabab6abe0e95d9f7ae78898007eaea52b537f6e29a6861abc611c28c5bea692e919e85c76e29219a7290cb1778b"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "ce5b613c0ee20b03019b0b7588be3485f4819b376349716f2f2ff66638086047"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+    "head": "ce5b613c0ee20b03019b0b7588be3485f4819b376349716f2f2ff66638086047",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "other-kind-ignored",
+   "spec": [
+    "8.1",
+    "8.7.3"
+   ],
+   "description": "A kind 1 event signed by the identity with the links and tags of a hop, signed earlier than the real hop, is not a movement event and takes no part in the fork.",
+   "events": [
+    {
+     "id": "6efc173f27b6006eed15231ec1610d491b98cf2e98e71704bfb3094df9b2fe63",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000288,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "5659d596c28398d66cbaaff0f2d1f816845c58c6478493c4ab5f7ee22c2b446bc04b2bdd9c8608abd1d13dd4508fb5a23dfb473d3cd9e43761d1d73f055b371c"
+    },
+    {
+     "id": "c174071ec0b8dd9a9e858ad18d0634bc4391b8176d7298bc1274ba47f261f095",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790008000,
+     "kind": 1,
+     "tags": [
+      [
+       "A",
+       "hop"
+      ],
+      [
+       "e",
+       "6efc173f27b6006eed15231ec1610d491b98cf2e98e71704bfb3094df9b2fe63",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "6efc173f27b6006eed15231ec1610d491b98cf2e98e71704bfb3094df9b2fe63",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39bab"
+      ],
+      [
+       "proof",
+       "fd4a31ccb6d5de4e159adc690820e7f57554036e01de80c1543a8ae15a614937"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "ece49a59f2adcdea6c2ad85dc87784e2b42d0a62c40bd19e6911c88c2a585e68d5111e161fc5e3405944f8dee86b7bc310451771a9e103e0e898d1938b035a0b"
+    },
+    {
+     "id": "67a7b11778cde6628fa8ca505b811532177ff223d9b14f7686ea76b20c03082d",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790008001,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hop"
+      ],
+      [
+       "e",
+       "6efc173f27b6006eed15231ec1610d491b98cf2e98e71704bfb3094df9b2fe63",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "6efc173f27b6006eed15231ec1610d491b98cf2e98e71704bfb3094df9b2fe63",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7"
+      ],
+      [
+       "proof",
+       "8c5b1328c9f5ec4314a9b889d025689c2ac30d7f17e2a97517072af2839041ed"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "65cfd07c8c9f8e54c51cec362cf86b27c461a3c5b24ba0a5fe504f24e1f298aaaa717d69337207156062d65a0d2145376973b6d5131655926af97ea94c7d1660"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "6efc173f27b6006eed15231ec1610d491b98cf2e98e71704bfb3094df9b2fe63",
+     "67a7b11778cde6628fa8ca505b811532177ff223d9b14f7686ea76b20c03082d"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7",
+    "head": "67a7b11778cde6628fa8ca505b811532177ff223d9b14f7686ea76b20c03082d",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "ride-station-tie-lowest-height",
+   "spec": [
+    "DECK-0001 4.2"
+   ],
+   "description": "With the bound 1, stops 0 and 1 are both at distance 85 from the boarding; the tie goes to the lowest height, so the station is 0 and a first ride from 0 to 1 is valid.",
+   "events": [
+    {
+     "id": "9cb07bf3a4ebfe4bff67695572482d5431493896ad537cffff56b8bfcaf0ef53",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000289,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "7549dc6eb873052bd863659d81a354abf5a853a23c3fec918436fbbf366565b3d4a147a01181124f398e22a61f36b38037bb465ddf957af72485bd0d5a42f946"
+    },
+    {
+     "id": "11b4640bb4853f2d5593f7f8283fac785824512bd683d2218590d1b3510f7b40",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000290,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-hyperspace"
+      ],
+      [
+       "e",
+       "9cb07bf3a4ebfe4bff67695572482d5431493896ad537cffff56b8bfcaf0ef53",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "9cb07bf3a4ebfe4bff67695572482d5431493896ad537cffff56b8bfcaf0ef53",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "proof",
+       "64b8ad29b2a9998122a47b7acb882328306ab81f3e0fa4252e77ad1f521fce44"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "27a7dcefb8bc785061f935457a1e526f05d20783efeea5877293ab54eda6c9461204973bc29e0e1650722baf30a2362dc4b8a0f01511c138fed9e6504a55a27c"
+    },
+    {
+     "id": "fb6b2f736e5a48a353a223085cb94922f31c808ba38d7ec4827384818f442e20",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000291,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hyperjump"
+      ],
+      [
+       "e",
+       "9cb07bf3a4ebfe4bff67695572482d5431493896ad537cffff56b8bfcaf0ef53",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "11b4640bb4853f2d5593f7f8283fac785824512bd683d2218590d1b3510f7b40",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "f9cff0e2ccfae8c002d8daf242f001a766f60057780928ac0e63314197177bf3"
+      ],
+      [
+       "from_height",
+       "0"
+      ],
+      [
+       "B",
+       "1"
+      ],
+      [
+       "as_of",
+       "1"
+      ],
+      [
+       "proof",
+       "8160183fe676e8797df8e2eaab2d94183dd2f4149408604fc476c822ae43a157"
+      ],
+      [
+       "mp",
+       ":::::::::::::::::::::::::::::::"
+      ],
+      [
+       "mn",
+       "0000000000000000"
+      ],
+      [
+       "X",
+       "31346288064223627"
+      ],
+      [
+       "Y",
+       "33574553448357765"
+      ],
+      [
+       "Z",
+       "24298451564553743"
+      ],
+      [
+       "S",
+       "31346288064223627-33574553448357765-24298451564553743"
+      ]
+     ],
+     "content": "",
+     "sig": "729b9b6f496a81d2c52751e9244b624690087d09c8ba8493df4f48ffa0763d42a1858cfb567222298a03561cd5a34b32cefe60a560d65894ec59f9806624ed1d"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "9cb07bf3a4ebfe4bff67695572482d5431493896ad537cffff56b8bfcaf0ef53",
+     "11b4640bb4853f2d5593f7f8283fac785824512bd683d2218590d1b3510f7b40",
+     "fb6b2f736e5a48a353a223085cb94922f31c808ba38d7ec4827384818f442e20"
+    ],
+    "position": "f9cff0e2ccfae8c002d8daf242f001a766f60057780928ac0e63314197177bf3",
+    "head": "fb6b2f736e5a48a353a223085cb94922f31c808ba38d7ec4827384818f442e20",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "ride-station-tie-not-higher",
+   "spec": [
+    "DECK-0001 4.2"
+   ],
+   "description": "With the same tie, the station is 0, not 1, so a first ride from 1 to 0 is invalid.",
+   "events": [
+    {
+     "id": "d0879a93c829d93d099a515787bc8ceb3455b9cba85e4a9d636f99613d1aa0aa",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000292,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "10aa0cf127a142ba7b79fe9862023cbee0d4249a04ccacba0ffa8cc139d7c4400712b4d26ce1a02ac5ac8cc75eb64f7d1120c90216c03201a3e1cd6cba3fc597"
+    },
+    {
+     "id": "6fa888d5b512801f17495d9965e7f8aa8a31aca41c24d7f8a0bb3c2dd2250b0c",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000293,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-hyperspace"
+      ],
+      [
+       "e",
+       "d0879a93c829d93d099a515787bc8ceb3455b9cba85e4a9d636f99613d1aa0aa",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "d0879a93c829d93d099a515787bc8ceb3455b9cba85e4a9d636f99613d1aa0aa",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "proof",
+       "08da35f2e43ce5a30ed1eaeafcf3bdbc28d8c1ebbb519d9cc96d3fec0c1d7883"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "3a1a31b4b4753a6c6bb9c40c4d21c48ace4da3c2fd3df0cd1d288e09bf0d9076f397dfa5c4074484e9a4ad16df3e0e63a188f37bdb7ed6a9f32b64f486f3dbbf"
+    },
+    {
+     "id": "4aa7936ac23fa534e3e7b82378da5793ffc1da5359fce3c6d27f9692683d3640",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000294,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hyperjump"
+      ],
+      [
+       "e",
+       "d0879a93c829d93d099a515787bc8ceb3455b9cba85e4a9d636f99613d1aa0aa",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "6fa888d5b512801f17495d9965e7f8aa8a31aca41c24d7f8a0bb3c2dd2250b0c",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "b1fea6d3062231d2035b436713bbaca087cd82c7c94c173da563ab151bb3724b"
+      ],
+      [
+       "from_height",
+       "1"
+      ],
+      [
+       "B",
+       "0"
+      ],
+      [
+       "as_of",
+       "1"
+      ],
+      [
+       "proof",
+       "bc431191a4326773349ff4db222635bc513d98201a4813e9be1c5f15acbe50dd"
+      ],
+      [
+       "mp",
+       ":::::::::::::::::::::::::::::::"
+      ],
+      [
+       "mn",
+       "0000000000000000"
+      ],
+      [
+       "X",
+       "30945927564346074"
+      ],
+      [
+       "Y",
+       "8677968278324742"
+      ],
+      [
+       "Z",
+       "25900493299341207"
+      ],
+      [
+       "S",
+       "30945927564346074-8677968278324742-25900493299341207"
+      ]
+     ],
+     "content": "",
+     "sig": "6d7860b7f935da403fef5db3a54982cfb7ba60400c0b90fb3ef5bf7b8cae718324b295b0fdcadf34ea8fa1b8b192dc2d0ac547dfb91eeea7cf72ace24bb1b8e7"
+    }
+   ],
+   "expected": {
+    "valid": false,
+    "chain": [
+     "d0879a93c829d93d099a515787bc8ceb3455b9cba85e4a9d636f99613d1aa0aa",
+     "6fa888d5b512801f17495d9965e7f8aa8a31aca41c24d7f8a0bb3c2dd2250b0c",
+     "4aa7936ac23fa534e3e7b82378da5793ffc1da5359fce3c6d27f9692683d3640"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+    "reason": "hyperjump-station",
+    "invalid_at": "4aa7936ac23fa534e3e7b82378da5793ffc1da5359fce3c6d27f9692683d3640",
+    "invalid_index": 2
+   }
+  },
+  {
+   "name": "ride-after-board-then-hop",
+   "spec": [
+    "DECK-0001 3.3, 4.3"
+   ],
+   "description": "A hop right after boarding moves as usual and cancels the boarding, so a ride after the hop is invalid.",
+   "events": [
+    {
+     "id": "8a20ad85c8c20b669ef2f2d2033ca7b0159198ed77c6c027063f0091ad29e265",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000295,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "5786b9ee621675fe4f79753e7b8952ac5124ed50100b29baefe273da38b925fc9b0a715e14b29c1c922bfce72c1498898fe4571c18f98652d666422808cce4bb"
+    },
+    {
+     "id": "570a1db864b41d9a00619dd938f1ebba8be4a63a0aedaccb8c25b99adfb918f8",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000296,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-hyperspace"
+      ],
+      [
+       "e",
+       "8a20ad85c8c20b669ef2f2d2033ca7b0159198ed77c6c027063f0091ad29e265",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "8a20ad85c8c20b669ef2f2d2033ca7b0159198ed77c6c027063f0091ad29e265",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "proof",
+       "00e8d31ec5b8a0d6dad1fc3d1fb4ccc066d7c938511e6c544b1949fb3066c712"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "02327a8671ff450de1631049c90095d379e99068cd47b099fa0ddfe7b7b6e65bd41a2945c91f635136510f2b8db9efd3694a2a6e72e8abcf865772998052e8ed"
+    },
+    {
+     "id": "327c568feb8afaae78a45200ae29ff4b03cf13cb0c63d1bd767f061fd2666c7a",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000297,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hop"
+      ],
+      [
+       "e",
+       "8a20ad85c8c20b669ef2f2d2033ca7b0159198ed77c6c027063f0091ad29e265",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "570a1db864b41d9a00619dd938f1ebba8be4a63a0aedaccb8c25b99adfb918f8",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7"
+      ],
+      [
+       "proof",
+       "badd08ae46c97549829cd331440dac3422fde0d5175369e10419eff5ddd31393"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "36105c976b7f3498807c280a248552fa3eef34d1c9304b5148486e1cb01f5246edec263fb58c2ff401821e1cc65a3767c679493e1f151c9168bf332882aea683"
+    },
+    {
+     "id": "db785fa1b27d46012c278feb4d1e6b06e5c540eab682355191cfbe2ef3b74ba3",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000298,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hyperjump"
+      ],
+      [
+       "e",
+       "8a20ad85c8c20b669ef2f2d2033ca7b0159198ed77c6c027063f0091ad29e265",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "327c568feb8afaae78a45200ae29ff4b03cf13cb0c63d1bd767f061fd2666c7a",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7"
+      ],
+      [
+       "C",
+       "3219b3359ec8efc7b4ef0c395470fccbd8bb1783e51060d61cd18ac50bfa9579"
+      ],
+      [
+       "from_height",
+       "2"
+      ],
+      [
+       "B",
+       "4"
+      ],
+      [
+       "as_of",
+       "5"
+      ],
+      [
+       "proof",
+       "9e86e7182a6f652b2921684c67e1f29e946ad80c3f54569ebe3783376405c842"
+      ],
+      [
+       "mp",
+       "3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:3e422801693807ba95bed11f8b8d0e78f353ea9528b2b45a7ac403463da096fb:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88:ea865470fcbcd3413d9adf14a0ebd3a5aba03ad28f5a0cadc036da8a7c914b88"
+      ],
+      [
+       "mn",
+       "0000000000000000"
+      ],
+      [
+       "X",
+       "15521100556000563"
+      ],
+      [
+       "Y",
+       "1009864743285650"
+      ],
+      [
+       "Z",
+       "20547073643059638"
+      ],
+      [
+       "S",
+       "15521100556000563-1009864743285650-20547073643059638"
+      ]
+     ],
+     "content": "",
+     "sig": "2c28f52e3366440bbc3a3705dbef0becc4b6ea8d1f2fe58a196c166e2757a637dfa39815178624db30399dce4efab894ede542a53d86d087c7f5720c8e46ccc6"
+    }
+   ],
+   "expected": {
+    "valid": false,
+    "chain": [
+     "8a20ad85c8c20b669ef2f2d2033ca7b0159198ed77c6c027063f0091ad29e265",
+     "570a1db864b41d9a00619dd938f1ebba8be4a63a0aedaccb8c25b99adfb918f8",
+     "327c568feb8afaae78a45200ae29ff4b03cf13cb0c63d1bd767f061fd2666c7a",
+     "db785fa1b27d46012c278feb4d1e6b06e5c540eab682355191cfbe2ef3b74ba3"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39ba7",
+    "reason": "hyperjump-predecessor",
+    "invalid_at": "db785fa1b27d46012c278feb4d1e6b06e5c540eab682355191cfbe2ef3b74ba3",
+    "invalid_index": 3
+   }
+  },
+  {
+   "name": "ride-reboard-at-stop",
+   "spec": [
+    "DECK-0001 3.3, 4.2"
+   ],
+   "description": "Boarding again while standing at stop 4 makes stop 4 the station (distance 0), and the next ride departs from it.",
+   "events": [
+    {
+     "id": "9000addc31348455671e2544349e670aa25d31f296a011017a6815f4d06e1027",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000299,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "fe166fa74f5782722ff77ada0aa994a85d3fc7338ba1e6f004dc70c3bef93928818d555a5851a077a8687295082da9a5f628ff48e41de64508aa40e2f820250e"
+    },
+    {
+     "id": "8744ea0b78d75fd4fef821919141784ef6c99e2064b0c6b21d52e533a89e0ad0",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000300,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-hyperspace"
+      ],
+      [
+       "e",
+       "9000addc31348455671e2544349e670aa25d31f296a011017a6815f4d06e1027",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "9000addc31348455671e2544349e670aa25d31f296a011017a6815f4d06e1027",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "proof",
+       "e0a810b19c42108f4e7f938c2a0abdc1bcfad84f083deb04a9083b70b5dde162"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "f59fa7d2285c1706be70613cce62b7be0e105892d926611590d5916d3cb9c1171802e4c34536d57146069d5504fb46a9221a7390f4ef1a90c5087c86bb208295"
+    },
+    {
+     "id": "6ade7c2d19ac5df41a938a1b316ecc1ae54935ab0c420503ac03522dbed5bdb0",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000301,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hyperjump"
+      ],
+      [
+       "e",
+       "9000addc31348455671e2544349e670aa25d31f296a011017a6815f4d06e1027",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "8744ea0b78d75fd4fef821919141784ef6c99e2064b0c6b21d52e533a89e0ad0",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "3219b3359ec8efc7b4ef0c395470fccbd8bb1783e51060d61cd18ac50bfa9579"
+      ],
+      [
+       "from_height",
+       "2"
+      ],
+      [
+       "B",
+       "4"
+      ],
+      [
+       "as_of",
+       "5"
+      ],
+      [
+       "proof",
+       "5dbc94bb9b959f99f187dadc12811c135513c22cbd11027a510799da372a5e49"
+      ],
+      [
+       "mp",
+       "d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:89fba2a0ea27e3335d19776dba2d01d689cdac7775993c5dfadc1595d9427236:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7:d06341a886fd70159a0de4b5b0b889bfdaa7bc209ca9f8e4d15fe87573c96ef7"
+      ],
+      [
+       "mn",
+       "0000000000000000"
+      ],
+      [
+       "X",
+       "15521100556000563"
+      ],
+      [
+       "Y",
+       "1009864743285650"
+      ],
+      [
+       "Z",
+       "20547073643059638"
+      ],
+      [
+       "S",
+       "15521100556000563-1009864743285650-20547073643059638"
+      ]
+     ],
+     "content": "",
+     "sig": "44c0e378686eb58324e3ce6e691c2716971ea89de553b522c923863f25e4cb7d26c1222061ab79b882fdb88eec5888c3e4dcf8817d2b9b4ac0a762ac6e0b2cef"
+    },
+    {
+     "id": "ad72deffb0d110233bc441c52e7330b87c4c95b81c99645e263a21cb447efe32",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000302,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-hyperspace"
+      ],
+      [
+       "e",
+       "9000addc31348455671e2544349e670aa25d31f296a011017a6815f4d06e1027",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "6ade7c2d19ac5df41a938a1b316ecc1ae54935ab0c420503ac03522dbed5bdb0",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "3219b3359ec8efc7b4ef0c395470fccbd8bb1783e51060d61cd18ac50bfa9579"
+      ],
+      [
+       "C",
+       "3219b3359ec8efc7b4ef0c395470fccbd8bb1783e51060d61cd18ac50bfa9579"
+      ],
+      [
+       "proof",
+       "f1460d09ec900b95590bd0221469cdf8129f826aa794464eec43807b97832db0"
+      ],
+      [
+       "X",
+       "15521100556000563"
+      ],
+      [
+       "Y",
+       "1009864743285650"
+      ],
+      [
+       "Z",
+       "20547073643059638"
+      ],
+      [
+       "S",
+       "15521100556000563-1009864743285650-20547073643059638"
+      ]
+     ],
+     "content": "",
+     "sig": "0c0817df6263cbd5f44892baac3c57ae7e4e4d260c7441d62c020583a2f02b00d43428f209867c6487c9cc6524b5943642737416c69a1bd34161660f06efc2ec"
+    },
+    {
+     "id": "f85b0a41615676cdef137d0abb5a9587dc89a91641c349deb7e6203de1440eb2",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000303,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "hyperjump"
+      ],
+      [
+       "e",
+       "9000addc31348455671e2544349e670aa25d31f296a011017a6815f4d06e1027",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "ad72deffb0d110233bc441c52e7330b87c4c95b81c99645e263a21cb447efe32",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "3219b3359ec8efc7b4ef0c395470fccbd8bb1783e51060d61cd18ac50bfa9579"
+      ],
+      [
+       "C",
+       "31fa1b879b270565bbae61b5842a06f07da874b9e73f416364c0a92a9c5f871d"
+      ],
+      [
+       "from_height",
+       "4"
+      ],
+      [
+       "B",
+       "5"
+      ],
+      [
+       "as_of",
+       "5"
+      ],
+      [
+       "proof",
+       "7191db915c3cf504a384cd5b96ae6c56a184b4752e10fca68a95bd751f836500"
+      ],
+      [
+       "mp",
+       ":::::::::::::::::::::::::::::::"
+      ],
+      [
+       "mn",
+       "0000000000000000"
+      ],
+      [
+       "X",
+       "12481155026972455"
+      ],
+      [
+       "Y",
+       "7195889861447242"
+      ],
+      [
+       "Z",
+       "26384576278710650"
+      ],
+      [
+       "S",
+       "12481155026972455-7195889861447242-26384576278710650"
+      ]
+     ],
+     "content": "",
+     "sig": "de1541bc236a44668c5bf8b1e945c53aff90631beb261ec62400f31acb986733822c5a9d59a63406986f671f3e4301874d2f5c4b98038d17132275e9b7b32694"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "9000addc31348455671e2544349e670aa25d31f296a011017a6815f4d06e1027",
+     "8744ea0b78d75fd4fef821919141784ef6c99e2064b0c6b21d52e533a89e0ad0",
+     "6ade7c2d19ac5df41a938a1b316ecc1ae54935ab0c420503ac03522dbed5bdb0",
+     "ad72deffb0d110233bc441c52e7330b87c4c95b81c99645e263a21cb447efe32",
+     "f85b0a41615676cdef137d0abb5a9587dc89a91641c349deb7e6203de1440eb2"
+    ],
+    "position": "31fa1b879b270565bbae61b5842a06f07da874b9e73f416364c0a92a9c5f871d",
+    "head": "f85b0a41615676cdef137d0abb5a9587dc89a91641c349deb7e6203de1440eb2",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "bracket-exit-c-not-hex",
+   "spec": [
+    "8.11.3",
+    "8.11.4 rule 4"
+   ],
+   "description": "An exit whose c is not a coordinate at all is valid; its c is not checked.",
+   "events": [
+    {
+     "id": "abdb693006491efcddf45f0128e995e885a985a41cff81c5d7a5c8d7b94988ba",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000304,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "d6f2792038afeb4974608b26c4dc773a731c47a52530b43bb50cbbb623dc4b1ba4efb19df17a1a9039720d4383a61165fe458d03603436008cadbe49634fd8b4"
+    },
+    {
+     "id": "00a0e7178375e3507de6e9c6c67517ef4ec905ce04a3d297cb37b41fe6a3d8e9",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000305,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-virtual"
+      ],
+      [
+       "e",
+       "abdb693006491efcddf45f0128e995e885a985a41cff81c5d7a5c8d7b94988ba",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "abdb693006491efcddf45f0128e995e885a985a41cff81c5d7a5c8d7b94988ba",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "region",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448000001",
+       "8"
+      ],
+      [
+       "p",
+       "0486c4e90088a167771903aeeee47796a472e26e145c7dadf7564549aa4dc008",
+       "wss://game.example",
+       "game"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "19b4e1063c50a2e71d7f6ad1920e13b1f0a142f70c7feb1677df8c2db99c5d9cbf852fbc9723391be759b4d45d0298e9c48b99044241944179cb43c67cd2596c"
+    },
+    {
+     "id": "a90b3c6308e2c7be7d4fb1b2ec656d498182a0c0a2417a7599b04a4d61df28c2",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000306,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "exit-virtual"
+      ],
+      [
+       "e",
+       "abdb693006491efcddf45f0128e995e885a985a41cff81c5d7a5c8d7b94988ba",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "00a0e7178375e3507de6e9c6c67517ef4ec905ce04a3d297cb37b41fe6a3d8e9",
+       "",
+       "previous"
+      ],
+      [
+       "e",
+       "00a0e7178375e3507de6e9c6c67517ef4ec905ce04a3d297cb37b41fe6a3d8e9",
+       "",
+       "entry"
+      ],
+      [
+       "c",
+       "zz"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "93c3e735d3d5f6667d71d64c62383ef9cb85d2cd68c1bda37a005f7f9d8d73b070abc4da0a490c69213eef51cafd73322bce09edfe7ebf532890ea5a95ece2d1"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "abdb693006491efcddf45f0128e995e885a985a41cff81c5d7a5c8d7b94988ba",
+     "00a0e7178375e3507de6e9c6c67517ef4ec905ce04a3d297cb37b41fe6a3d8e9",
+     "a90b3c6308e2c7be7d4fb1b2ec656d498182a0c0a2417a7599b04a4d61df28c2"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+    "head": "a90b3c6308e2c7be7d4fb1b2ec656d498182a0c0a2417a7599b04a4d61df28c2",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "bracket-exit-two-c-tags",
+   "spec": [
+    "8.11.3",
+    "8.11.4 rule 4"
+   ],
+   "description": "An exit with two c tags is valid; its c is not checked.",
+   "events": [
+    {
+     "id": "dd57c31459edb17d3db8b3abf097995a6425738704d1f4c8694a8b721ca5aae2",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000307,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "7e7e78fbb41311616fe78cfc589cab379f4d45e8b9bc39c94607fec4368a044c4a13dec7df4801d005d1615016084dc6989a9bb1b4e5b1f5efc24aa658edfdf6"
+    },
+    {
+     "id": "feb6287255ae7167c7485ec56e974a3391dc854d0d97d2ef40a7c3fe52f955a6",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000308,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-virtual"
+      ],
+      [
+       "e",
+       "dd57c31459edb17d3db8b3abf097995a6425738704d1f4c8694a8b721ca5aae2",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "dd57c31459edb17d3db8b3abf097995a6425738704d1f4c8694a8b721ca5aae2",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "region",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448000001",
+       "8"
+      ],
+      [
+       "p",
+       "0486c4e90088a167771903aeeee47796a472e26e145c7dadf7564549aa4dc008",
+       "wss://game.example",
+       "game"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "fae94e731e2be128f11cfe42b8bd3522331447db46cfa97e6133bb8b1ec3c7f44783e964e0027ab7f5a99e3cf84e1ca0831a72f789b065d5bf26bb57c9fc0b00"
+    },
+    {
+     "id": "53f68414208c5b26026d55b93b40c528c7e6914e1b4777c7636f6032f18825e9",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000309,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "exit-virtual"
+      ],
+      [
+       "e",
+       "dd57c31459edb17d3db8b3abf097995a6425738704d1f4c8694a8b721ca5aae2",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "feb6287255ae7167c7485ec56e974a3391dc854d0d97d2ef40a7c3fe52f955a6",
+       "",
+       "previous"
+      ],
+      [
+       "e",
+       "feb6287255ae7167c7485ec56e974a3391dc854d0d97d2ef40a7c3fe52f955a6",
+       "",
+       "entry"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b11baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448bb9baf"
+      ]
+     ],
+     "content": "",
+     "sig": "93dee915ce3d09cf5421ce8eb6e5f025596f46bbe926c8bd5f383fa13bb5052510db0c6275d22a3cca758aa22701bffe5218c4c802b0b9393f74c9fb3a25c9ee"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "dd57c31459edb17d3db8b3abf097995a6425738704d1f4c8694a8b721ca5aae2",
+     "feb6287255ae7167c7485ec56e974a3391dc854d0d97d2ef40a7c3fe52f955a6",
+     "53f68414208c5b26026d55b93b40c528c7e6914e1b4777c7636f6032f18825e9"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+    "head": "53f68414208c5b26026d55b93b40c528c7e6914e1b4777c7636f6032f18825e9",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "bracket-exit-sector-tags-from-c",
+   "spec": [
+    "8.11.3",
+    "10"
+   ],
+   "description": "An exit's sector tags are computed from its C, the base position, not from its c.",
+   "events": [
+    {
+     "id": "b028803dc165435bb860f4c4d977fc41ef294788e3e524e3f85f1da1152aa9d5",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000310,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "8dcf8dfd4f10dd3a7356435f28f0e04c80338043d4c0c79d4f259f6b6a7ebf4e0cc41f6c0bd6ad2e871bd05b88c6a7611e09a3a7b5907228f7c639251c14a9e2"
+    },
+    {
+     "id": "93d9741b822e3fa1a3fdbb8c364e1ac7982c84ddab635d22d12a976beab88138",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000311,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-virtual"
+      ],
+      [
+       "e",
+       "b028803dc165435bb860f4c4d977fc41ef294788e3e524e3f85f1da1152aa9d5",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "b028803dc165435bb860f4c4d977fc41ef294788e3e524e3f85f1da1152aa9d5",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "region",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448000001",
+       "8"
+      ],
+      [
+       "p",
+       "0486c4e90088a167771903aeeee47796a472e26e145c7dadf7564549aa4dc008",
+       "wss://game.example",
+       "game"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "4bdbfe6eeee6500ccd943b44d9fbb97cc57f13b485e1b9d61e794e7afb24f4fe2bd6370ae209e0035835a2f0944b9fe121ee947fd3ac776dd0cedc3dd246486e"
+    },
+    {
+     "id": "c8feee7d65e38af881bc609ba7ef540c081c7c5374b2eb2f5f7c65eb31b6b34b",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000312,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "exit-virtual"
+      ],
+      [
+       "e",
+       "b028803dc165435bb860f4c4d977fc41ef294788e3e524e3f85f1da1152aa9d5",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "93d9741b822e3fa1a3fdbb8c364e1ac7982c84ddab635d22d12a976beab88138",
+       "",
+       "previous"
+      ],
+      [
+       "e",
+       "93d9741b822e3fa1a3fdbb8c364e1ac7982c84ddab635d22d12a976beab88138",
+       "",
+       "entry"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1ff8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664919"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664919-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "3e3c09cc2a9d5338f836c5d93fff7ba6032d16883f973531b5ad7459af4830eae58a4dd8941db11ab19661345c92d22b739256674214bb8425a2c311070ab1c9"
+    }
+   ],
+   "expected": {
+    "valid": false,
+    "chain": [
+     "b028803dc165435bb860f4c4d977fc41ef294788e3e524e3f85f1da1152aa9d5",
+     "93d9741b822e3fa1a3fdbb8c364e1ac7982c84ddab635d22d12a976beab88138",
+     "c8feee7d65e38af881bc609ba7ef540c081c7c5374b2eb2f5f7c65eb31b6b34b"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+    "reason": "sector-tags",
+    "invalid_at": "c8feee7d65e38af881bc609ba7ef540c081c7c5374b2eb2f5f7c65eb31b6b34b",
+    "invalid_index": 2
+   }
+  },
+  {
+   "name": "bracket-region-other-plane",
+   "spec": [
+    "8.11.1"
+   ],
+   "description": "A region on the other plane from the base position is valid: the region is checked for form only.",
+   "events": [
+    {
+     "id": "7bed1e6c2e4e0d7e6d7ec9cfdf84208affc316e3bf3259f7023c4a3cce1e72e6",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000313,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "5cfd7d9e0a0f2e09314897645e18463797698f44c47e24778bba85feb4bded2fef9174bdb279d896da9b69d9b3301a7206d373b46397b8aeb51b00c1ae82e559"
+    },
+    {
+     "id": "d63aa771d3bef8d2f77494a9f3e428db24ae94a9090bce291cf4f41f17bc308e",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000314,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-virtual"
+      ],
+      [
+       "e",
+       "7bed1e6c2e4e0d7e6d7ec9cfdf84208affc316e3bf3259f7023c4a3cce1e72e6",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "7bed1e6c2e4e0d7e6d7ec9cfdf84208affc316e3bf3259f7023c4a3cce1e72e6",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "region",
+       "bbbbef60d21e8ea850a8de8c2eb515801814047323ba5c82600a44bf2ae66000",
+       "4"
+      ],
+      [
+       "p",
+       "0486c4e90088a167771903aeeee47796a472e26e145c7dadf7564549aa4dc008",
+       "wss://game.example",
+       "game"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "b2af5daf86d3c36d7c35618c7908e9e6658c22cf5e4b040f9325d9b3f6d711a16cc7da7d726bce00fe0f9fbb9571d6e4fea9c00e45b3315681e65f7fe17eedd8"
+    },
+    {
+     "id": "e467cf2de7637898df363758158afca71be0f86bbbcf8882f2211db9af441d13",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000315,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "exit-virtual"
+      ],
+      [
+       "e",
+       "7bed1e6c2e4e0d7e6d7ec9cfdf84208affc316e3bf3259f7023c4a3cce1e72e6",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "d63aa771d3bef8d2f77494a9f3e428db24ae94a9090bce291cf4f41f17bc308e",
+       "",
+       "previous"
+      ],
+      [
+       "e",
+       "d63aa771d3bef8d2f77494a9f3e428db24ae94a9090bce291cf4f41f17bc308e",
+       "",
+       "entry"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "1e060fd75e44aedb14f1247ffca29833dde51f5cf37d2d310c209250940e0cd9b47fbaf4c9174e710ad73bdaab5c3ab0540fa2dfaa4bf7fc2c2a0b5539cc1b15"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "7bed1e6c2e4e0d7e6d7ec9cfdf84208affc316e3bf3259f7023c4a3cce1e72e6",
+     "d63aa771d3bef8d2f77494a9f3e428db24ae94a9090bce291cf4f41f17bc308e",
+     "e467cf2de7637898df363758158afca71be0f86bbbcf8882f2211db9af441d13"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+    "head": "e467cf2de7637898df363758158afca71be0f86bbbcf8882f2211db9af441d13",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "bracket-region-height-0",
+   "spec": [
+    "8.11.1"
+   ],
+   "description": "A region of height 0, a single point is valid: the region is checked for form only.",
+   "events": [
+    {
+     "id": "1a83f43e4341097abf57b90a3013215e6599a0d5127dcd74d3dff6ae182b1d6f",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000316,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "8f6fd715b7cd4f4c40616f6a3578487dcf3b9591506f1d164e6c9a0daf013c32346089d2400dde7963385594d8274935217fdb4334f4cbdf2b4b685296104f78"
+    },
+    {
+     "id": "6e09cbf040572b16da7cc20281ac450bce9b822c284dcc1bdf0d6ad71b2c1276",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000317,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-virtual"
+      ],
+      [
+       "e",
+       "1a83f43e4341097abf57b90a3013215e6599a0d5127dcd74d3dff6ae182b1d6f",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "1a83f43e4341097abf57b90a3013215e6599a0d5127dcd74d3dff6ae182b1d6f",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "region",
+       "bbbbef60d21e8ea850a8de8c2eb515801814047323ba5c82600a44bf2ae664df",
+       "0"
+      ],
+      [
+       "p",
+       "0486c4e90088a167771903aeeee47796a472e26e145c7dadf7564549aa4dc008",
+       "wss://game.example",
+       "game"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "bdb2ed64d4c5819c841c27d580d1c2505719872d7df134580d5c3c79291bda563ec0370d7532fedda912363931bb4cd76db8007d042ca48607eeee4765b4fc36"
+    },
+    {
+     "id": "1e4376ef33c8a01c68d54f2c4f0dc643c64bd7567aa97833767a70b4b6023533",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000318,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "exit-virtual"
+      ],
+      [
+       "e",
+       "1a83f43e4341097abf57b90a3013215e6599a0d5127dcd74d3dff6ae182b1d6f",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "6e09cbf040572b16da7cc20281ac450bce9b822c284dcc1bdf0d6ad71b2c1276",
+       "",
+       "previous"
+      ],
+      [
+       "e",
+       "6e09cbf040572b16da7cc20281ac450bce9b822c284dcc1bdf0d6ad71b2c1276",
+       "",
+       "entry"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "eb15640cc95d68f7a74ec3efd38fffcc5f4ef1955ca38b472e1fbf34c348b7f27fc18bcee307dc1c141d950b574a76ed8fc82360c087043f7ca46bef1a101e1f"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "1a83f43e4341097abf57b90a3013215e6599a0d5127dcd74d3dff6ae182b1d6f",
+     "6e09cbf040572b16da7cc20281ac450bce9b822c284dcc1bdf0d6ad71b2c1276",
+     "1e4376ef33c8a01c68d54f2c4f0dc643c64bd7567aa97833767a70b4b6023533"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+    "head": "1e4376ef33c8a01c68d54f2c4f0dc643c64bd7567aa97833767a70b4b6023533",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "bracket-region-height-85",
+   "spec": [
+    "8.11.1"
+   ],
+   "description": "A region of height 85, a whole plane is valid: the region is checked for form only.",
+   "events": [
+    {
+     "id": "ce4e46ef5ce09c12c4079aa07cec5fced517c8c30036f56d529104b3052dd7aa",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000319,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "f6e2fa0a78318d47c62288726fa9c0e42642e1cf785c00bb51ee603b1d6dbae2fd8d0303ff83b1fc68ed71a016520a1a0bbd6186e165ced66f2d597607ff1569"
+    },
+    {
+     "id": "8a5c8c6514d072afcbefda58b013d4d9ef18099104f2e821218d6f0de13d4a46",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000320,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-virtual"
+      ],
+      [
+       "e",
+       "ce4e46ef5ce09c12c4079aa07cec5fced517c8c30036f56d529104b3052dd7aa",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "ce4e46ef5ce09c12c4079aa07cec5fced517c8c30036f56d529104b3052dd7aa",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "region",
+       "0000000000000000000000000000000000000000000000000000000000000001",
+       "85"
+      ],
+      [
+       "p",
+       "0486c4e90088a167771903aeeee47796a472e26e145c7dadf7564549aa4dc008",
+       "wss://game.example",
+       "game"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "1e8de5231c0a1a446ddac41cd0b233a758792e318cea2666cc54dc28428290be77c6e8d3687b76925fee808ba377ac77e5fbcecb0e69ba1183ddbe71655caab0"
+    },
+    {
+     "id": "3d34139f782658f8f2c37b9a2d90a9b63c621715da35d386a2602b28ebf38154",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000321,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "exit-virtual"
+      ],
+      [
+       "e",
+       "ce4e46ef5ce09c12c4079aa07cec5fced517c8c30036f56d529104b3052dd7aa",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "8a5c8c6514d072afcbefda58b013d4d9ef18099104f2e821218d6f0de13d4a46",
+       "",
+       "previous"
+      ],
+      [
+       "e",
+       "8a5c8c6514d072afcbefda58b013d4d9ef18099104f2e821218d6f0de13d4a46",
+       "",
+       "entry"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "7a3073aa28c6d6772312f1ca66192177e6458069a8ce061c488e13ef0d90a338e4df503cbc56966941a8dacecad0a3b7f7f380ef6e03ff21009c4be038b96b03"
+    }
+   ],
+   "expected": {
+    "valid": true,
+    "chain": [
+     "ce4e46ef5ce09c12c4079aa07cec5fced517c8c30036f56d529104b3052dd7aa",
+     "8a5c8c6514d072afcbefda58b013d4d9ef18099104f2e821218d6f0de13d4a46",
+     "3d34139f782658f8f2c37b9a2d90a9b63c621715da35d386a2602b28ebf38154"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+    "head": "3d34139f782658f8f2c37b9a2d90a9b63c621715da35d386a2602b28ebf38154",
+    "open_bracket": null,
+    "skipped": []
+   }
+  },
+  {
+   "name": "board-sector-tags-noncanonical",
+   "spec": [
+    "DECK-0001 1.3",
+    "10"
+   ],
+   "description": "An enter-hyperspace with a leading zero on its Z tag is invalid.",
+   "events": [
+    {
+     "id": "9c25301b8adcce31cf10da53dd0ff5103be6e01c992a7fd7e6ca7cfcbc67d5fc",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000322,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "642e5f5e887424afb03585d7f283024fd1eff1b47596daef17e6aa7da96e250c8a4a8ee2153e15c84d8e81e15484ea6ac27b2392ed39a1e2114d80bd06a7481f"
+    },
+    {
+     "id": "46e9f953cddf8e47326716b4e8d523a7eea5c0d94f045f34f5dd926daa24d7ef",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000323,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-hyperspace"
+      ],
+      [
+       "e",
+       "9c25301b8adcce31cf10da53dd0ff5103be6e01c992a7fd7e6ca7cfcbc67d5fc",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "9c25301b8adcce31cf10da53dd0ff5103be6e01c992a7fd7e6ca7cfcbc67d5fc",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "proof",
+       "485d1e7718ea69f57885db080cd1752df029290b4009bf6859a811f6be5018e2"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "023529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "97933799c1c47fb6a2b4b00bac9b9b444193e6a386cfc49169f9be4de149b07a3655e1eddb298f0b3fa57c3ae4425b81a40fe43c08832929ac77bc046236f8c6"
+    }
+   ],
+   "expected": {
+    "valid": false,
+    "chain": [
+     "9c25301b8adcce31cf10da53dd0ff5103be6e01c992a7fd7e6ca7cfcbc67d5fc",
+     "46e9f953cddf8e47326716b4e8d523a7eea5c0d94f045f34f5dd926daa24d7ef"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+    "reason": "sector-tags",
+    "invalid_at": "46e9f953cddf8e47326716b4e8d523a7eea5c0d94f045f34f5dd926daa24d7ef",
+    "invalid_index": 1
+   }
+  },
+  {
+   "name": "bracket-enter-sector-tags-noncanonical",
+   "spec": [
+    "8.11.1",
+    "10"
+   ],
+   "description": "An enter-virtual with a leading zero on its Y tag is invalid.",
+   "events": [
+    {
+     "id": "359ef9d43c32bb9d3d17aae18c3a3e25df451839e48b70b7dcdd2d5753766444",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000324,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "spawn"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "24775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "20fcdc9617b0abd13b354b006824910a2c9fb5f3b1b3d53ab7a52f5926087b43f90721d80abb865f4b3316a02775f586ddf772b5c561334e106d61fc5d2271a1"
+    },
+    {
+     "id": "62e4be11395cbfac520c6ae65ba9e3c0141252a9c22e16faab140ff2bf926d21",
+     "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+     "created_at": 1790000325,
+     "kind": 3333,
+     "tags": [
+      [
+       "A",
+       "enter-virtual"
+      ],
+      [
+       "e",
+       "359ef9d43c32bb9d3d17aae18c3a3e25df451839e48b70b7dcdd2d5753766444",
+       "",
+       "genesis"
+      ],
+      [
+       "e",
+       "359ef9d43c32bb9d3d17aae18c3a3e25df451839e48b70b7dcdd2d5753766444",
+       "",
+       "previous"
+      ],
+      [
+       "c",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "C",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+      ],
+      [
+       "region",
+       "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448000001",
+       "8"
+      ],
+      [
+       "p",
+       "0486c4e90088a167771903aeeee47796a472e26e145c7dadf7564549aa4dc008",
+       "wss://game.example",
+       "game"
+      ],
+      [
+       "X",
+       "16651794195664918"
+      ],
+      [
+       "Y",
+       "024775930175555303"
+      ],
+      [
+       "Z",
+       "23529476586002063"
+      ],
+      [
+       "S",
+       "16651794195664918-24775930175555303-23529476586002063"
+      ]
+     ],
+     "content": "",
+     "sig": "477e018736ccf83436ad53a242f8939532cfee5426c9f27959df7365d44b7ad015acd9e789786b06037edaebdc81e3b0a5548e0aa732eb757f60e7f8705ce10d"
+    }
+   ],
+   "expected": {
+    "valid": false,
+    "chain": [
+     "359ef9d43c32bb9d3d17aae18c3a3e25df451839e48b70b7dcdd2d5753766444",
+     "62e4be11395cbfac520c6ae65ba9e3c0141252a9c22e16faab140ff2bf926d21"
+    ],
+    "position": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+    "reason": "sector-tags",
+    "invalid_at": "62e4be11395cbfac520c6ae65ba9e3c0141252a9c22e16faab140ff2bf926d21",
+    "invalid_index": 1
    }
   }
  ]

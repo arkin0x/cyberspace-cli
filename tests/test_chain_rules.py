@@ -10,14 +10,17 @@ ports load too. Regenerate them with scripts/gen_chain_vectors.py."""
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
+from coincurve import PrivateKey
 
 from cyberspace_core.chain import (
     CHAIN_RULES_REVISION,
     REASONS,
     LineRequired,
+    event_id,
     Region,
     is_authentic,
     parse_region,
@@ -110,9 +113,28 @@ class TestVerifier:
             assert verify_chain(ordered, pubkey=PUBKEY).expected() == vector["expected"]
 
     def test_other_kinds_and_authors_are_ignored(self):
-        events = BY_NAME["bracket-unclosed"]["events"]
-        noise = [dict(events[0], kind=1), dict(events[1], pubkey="00" * 32)]
-        assert [e["id"] for e in resolve_active_chain(events + noise, PUBKEY)] == BY_NAME["bracket-unclosed"]["expected"]["chain"]
+        """Properly signed noise: a kind 1 copy of the first hop by the identity
+        and a copy by another author, each signed one second before the real
+        hop, so each would win the fork if kind or author were not checked."""
+        vector = BY_NAME["bracket-unclosed"]
+        events = vector["events"]
+        hop = events[1]
+        identity = PrivateKey(bytes.fromhex(DOC["test_key"]["secret_key"]))
+        other = PrivateKey(sha256(b"CYBERSPACE_CHAIN_VECTORS_OTHER_KEY").digest())
+        assert other.public_key_xonly.format().hex() == DOC["other_key"]["pubkey"]
+
+        def signed(key, kind):
+            ev = dict(hop, pubkey=key.public_key_xonly.format().hex(), kind=kind, created_at=hop["created_at"] - 1)
+            ev["id"] = event_id(ev)
+            ev["sig"] = key.sign_schnorr(bytes.fromhex(ev["id"]), bytes(32)).hex()
+            return ev
+
+        noise = [signed(identity, 1), signed(other, 3333)]
+        assert all(event_id(e) == e["id"] for e in noise)
+        assert [e["id"] for e in resolve_active_chain(events + noise, PUBKEY)] == vector["expected"]["chain"]
+        # the control: the same noise as a kind 3333 event by the identity does win the fork
+        control = signed(identity, 3333)
+        assert resolve_active_chain(events + [control], PUBKEY)[1]["id"] == control["id"]
 
 
 class TestRegion:

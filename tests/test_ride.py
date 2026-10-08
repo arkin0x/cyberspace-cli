@@ -221,8 +221,10 @@ class TestGrandfathered:
         expected = ["B: equals from_height; there is no zero-length ride (5.6)"] if tags["from_height"] == tags["B"] else []
         assert verify_ride_event(ev, no_block_data) == expected
 
-    def test_the_listed_zero_length_ride_is_in_the_fixture(self):
-        assert any(e["id"].startswith("17f65f44") for e in LISTED["rides"])
+    def test_the_listed_zero_length_rides_are_in_the_fixture(self):
+        """5.6 names the three listed zero-length rides; all three are here and all three are invalid."""
+        zero = {e["id"][:8] for e in LISTED["rides"] if {t[0]: t[1] for t in e["tags"]}["from_height"] == {t[0]: t[1] for t in e["tags"]}["B"]}
+        assert zero == {"17f65f44", "331059b3", "d457ac3a"}
 
     def test_a_borrowed_id_is_not_listed(self):
         ev = json.loads(json.dumps(LISTED["rides"][1]))

@@ -39,7 +39,7 @@ from cyberspace_cli.nostr_event import _sector_tags_from_coord_hex, compute_even
 from cyberspace_core.cantor import sha256
 from cyberspace_core.chain import CHAIN_RULES_REVISION, REASONS, verify_chain
 from cyberspace_core.coords import coord_to_xyz, xyz_to_coord
-from cyberspace_core.hyperspace import Line, enter_hyperspace_proof
+from cyberspace_core.hyperspace import Line, enter_hyperspace_proof, stop_distance
 from cyberspace_core.movement import compute_hop_proof, compute_sidestep_proof, encode_nonce, encode_openings
 from cyberspace_core.ride import K_LINE, encode_ride_openings, line_terrain_k, prove_ride
 from cyberspace_core.terrain import terrain_k
@@ -135,13 +135,21 @@ class Builder:
         self.pub = sk.public_key_xonly.format().hex()
         self.clock = clock if clock is not None else [T0]
 
-    def sign(self, tags: Tags, created_at: Optional[int] = None, content: str = "") -> Dict[str, Any]:
+    def sign(self, tags: Tags, created_at: Optional[int] = None, content: str = "", kind: int = 3333) -> Dict[str, Any]:
         if created_at is None:
             self.clock[0] += 1
             created_at = self.clock[0]
-        eid = compute_event_id_hex(pubkey_hex=self.pub, created_at=created_at, kind=3333, tags=tags, content=content)
+        eid = compute_event_id_hex(pubkey_hex=self.pub, created_at=created_at, kind=kind, tags=tags, content=content)
         sig = self.sk.sign_schnorr(bytes.fromhex(eid), bytes(32)).hex()
-        return {"id": eid, "pubkey": self.pub, "created_at": created_at, "kind": 3333, "tags": tags, "content": content, "sig": sig}
+        return {"id": eid, "pubkey": self.pub, "created_at": created_at, "kind": kind, "tags": tags, "content": content, "sig": sig}
+
+    def sign_raw(self, created_at: Any, tags: Any, content: Any = "", kind: Any = 3333) -> Dict[str, Any]:
+        """An event of any shape whose id is the hash of its serialization and
+        whose sig signs that id: well signed, but not NIP-01 unless the shape is."""
+        payload = [0, self.pub, created_at, kind, tags, content]
+        eid = sha256(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hex()
+        sig = self.sk.sign_schnorr(bytes.fromhex(eid), bytes(32)).hex()
+        return {"id": eid, "pubkey": self.pub, "created_at": created_at, "kind": kind, "tags": tags, "content": content, "sig": sig}
 
     def retag(self, event: Dict[str, Any], change: Callable[[Tags], Tags]) -> Dict[str, Any]:
         """The event re-signed with its tags changed, at the same created_at."""
@@ -561,7 +569,7 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
     ev = b.enter(s, s, P, region_around(far, 4))
     x = b.exit(s, ev, ev, P)
     add("bracket-region-elsewhere", ["8.11.1"],
-        "The base position need not lie in or near the declared region, even on another plane: an identity can play a game without traveling to it.",
+        "The base position need not lie in or near the declared region: an identity can play a game without traveling to it.",
         [s, ev, x], valid([s, ev, x], P))
 
     s = b.spawn()
@@ -876,6 +884,140 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
         "A game played at a stop and a skipped action, then the next ride: it looks back to the previous ride and departs from its B.",
         [s, eh, j1, ev, x, w, j2], valid([s, eh, j1, ev, x, w, j2], S[5], skipped=[w]))
 
+    # ------------------------------------------------ events that are not NIP-01 at all (8.2, 8.7.3)
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX, created_at=T0 + 5001)
+    rival = b.hop(s, s, P, PY, created_at=T0 + 5000)
+    surrogate = dict(rival, content="\ud800")
+    add("forged-lone-surrogate-ignored", ["8.2", "8.7.3 authentic events only"],
+        "An event under the identity's pubkey whose content holds a lone surrogate, signed earlier than the real hop. A "
+        "lone surrogate has no UTF-8 encoding, so the event has no canonical serialization: it is not a NIP-01 event and "
+        "is discarded. A verifier must not stop on it.",
+        [s, surrogate, h1], valid([s, h1], PX))
+
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX, created_at=T0 + 5101)
+    rival = b.hop(s, s, P, PY, created_at=T0 + 5100)
+    stringly = b.sign_raw(str(T0 + 5100), rival["tags"])
+    add("forged-string-created-at-ignored", ["8.2", "8.7.3 authentic events only"],
+        "An event whose created_at is a string, signed over its own serialization and earlier than the real hop. "
+        "NIP-01 requires an integer created_at, so it is discarded before the fork rule compares created_at values.",
+        [s, stringly, h1], valid([s, h1], PX))
+
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX, created_at=T0 + 5201)
+    rival = b.hop(s, s, P, PY, created_at=T0 + 5200)
+    nulled = b.sign_raw(T0 + 5200, [["A", "hop", None]] + rival["tags"][1:])
+    add("forged-null-in-tag-ignored", ["8.2", "8.7.3 authentic events only"],
+        "An event whose A tag holds a null, signed over its own serialization and earlier than the real hop. NIP-01 "
+        "tags are arrays of strings, so it is discarded; read as if the tag were absent, it would win the fork and "
+        "break the chain for want of an A tag.",
+        [s, nulled, h1], valid([s, h1], PX))
+
+    # ------------------------------------------------ more resolution (8.7.3 rule 1)
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    fake_spawn = b.spawn(created_at=T0 + 6000)
+    fake_spawn = dict(fake_spawn, sig=b.sk.sign_schnorr(bytes.fromhex(s["id"]), bytes(32)).hex())
+    add("forged-spawn-ignored", ["8.7.3 authentic events only", "8.7.3 rule 1"],
+        "A spawn newer than the real one whose sig signs another id is discarded, so it cannot restart the chain.",
+        [s, h1, fake_spawn], valid([s, h1], PX))
+
+    t = T0 + 7000
+    sa = b.sign([["A", "spawn"], ["C", P]] + _sector_tags_from_coord_hex(P), t, content="a")
+    sb = b.sign([["A", "spawn"], ["C", P]] + _sector_tags_from_coord_hex(P), t, content="b")
+    newer, older = max((sa, sb), key=lambda e: e["id"]), min((sa, sb), key=lambda e: e["id"])
+    h_old = b.hop(older, older, P, PX)
+    add("spawn-tie-larger-id", ["8.7.3 rule 1"],
+        "Two spawns with the same created_at: the one with the larger id is newer and starts the active chain (a fork "
+        "breaks its tie the other way, rule 4). The hop on the other spawn is an older chain's history.",
+        [sa, sb, h_old], valid([newer], P))
+
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX, created_at=T0 + 8001)
+    rival = b.hop(s, s, P, PY, created_at=T0 + 8000)
+    note = b.sign(rival["tags"], rival["created_at"], kind=1)
+    add("other-kind-ignored", ["8.1", "8.7.3"],
+        "A kind 1 event signed by the identity with the links and tags of a hop, signed earlier than the real hop, is "
+        "not a movement event and takes no part in the fork.",
+        [s, note, h1], valid([s, h1], PX))
+
+    # ------------------------------------------------ more rides (DECK-0001 3.3, 4.2, 4.3)
+    s = b.spawn()
+    eh = b.board(s, s, P)
+    j1 = b.ride(s, eh, P, 0, 1, as_of=1)
+    add("ride-station-tie-lowest-height", ["DECK-0001 4.2"],
+        "With the bound 1, stops 0 and 1 are both at distance 85 from the boarding; the tie goes to the lowest height, "
+        "so the station is 0 and a first ride from 0 to 1 is valid.",
+        [s, eh, j1], valid([s, eh, j1], S[1]))
+
+    s = b.spawn()
+    eh = b.board(s, s, P)
+    j1 = b.ride(s, eh, P, 1, 0, as_of=1)
+    add("ride-station-tie-not-higher", ["DECK-0001 4.2"],
+        "With the same tie, the station is 0, not 1, so a first ride from 1 to 0 is invalid.",
+        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-station", P))
+
+    s = b.spawn()
+    eh = b.board(s, s, P)
+    h1 = b.hop(s, eh, P, PX)
+    j1 = b.ride(s, h1, PX, 2, 4, as_of=5)
+    add("ride-after-board-then-hop", ["DECK-0001 3.3, 4.3"],
+        "A hop right after boarding moves as usual and cancels the boarding, so a ride after the hop is invalid.",
+        [s, eh, h1, j1], invalid([s, eh, h1, j1], j1, "hyperjump-predecessor", PX))
+
+    s = b.spawn()
+    eh = b.board(s, s, P)
+    j1 = b.ride(s, eh, P, 2, 4, as_of=5)
+    eh2 = b.board(s, j1, S[4])
+    j2 = b.ride(s, eh2, S[4], 4, 5, as_of=5)
+    add("ride-reboard-at-stop", ["DECK-0001 3.3, 4.2"],
+        "Boarding again while standing at stop 4 makes stop 4 the station (distance 0), and the next ride departs from it.",
+        [s, eh, j1, eh2, j2], valid([s, eh, j1, eh2, j2], S[5]))
+
+    # ------------------------------------------------ more brackets (8.11)
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    x = b.exit(s, ev, ev, P, c="zz")
+    add("bracket-exit-c-not-hex", ["8.11.3", "8.11.4 rule 4"], "An exit whose c is not a coordinate at all is valid; its c is not checked.",
+        [s, ev, x], valid([s, ev, x], P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    x = b.retag(b.exit(s, ev, ev, P, c=G1), lambda t: t + [["c", G2]])
+    add("bracket-exit-two-c-tags", ["8.11.3", "8.11.4 rule 4"], "An exit with two c tags is valid; its c is not checked.",
+        [s, ev, x], valid([s, ev, x], P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    x = b.retag(b.exit(s, ev, ev, P, c=FAR_SECTOR),
+                lambda t: [y for y in t if y[0] not in ("X", "Y", "Z", "S")] + _sector_tags_from_coord_hex(FAR_SECTOR))
+    add("bracket-exit-sector-tags-from-c", ["8.11.3", "10"],
+        "An exit's sector tags are computed from its C, the base position, not from its c.",
+        [s, ev, x], invalid([s, ev, x], x, "sector-tags", P))
+
+    other_plane = flip(far, plane=1 - coord_to_xyz(int(P, 16))[3])
+    for name, region, why in (
+        ("other-plane", region_around(other_plane, 4), "on the other plane from the base position"),
+        ("height-0", [far, "0"], "of height 0, a single point"),
+        ("height-85", [format(xyz_to_coord(0, 0, 0, 1), "064x"), "85"], "of height 85, a whole plane"),
+    ):
+        s = b.spawn()
+        ev = b.enter(s, s, P, region)
+        x = b.exit(s, ev, ev, P)
+        add(f"bracket-region-{name}", ["8.11.1"], f"A region {why} is valid: the region is checked for form only.",
+            [s, ev, x], valid([s, ev, x], P))
+
+    s = b.spawn()
+    eh = b.retag(b.board(s, s, P), set_value("Z", lambda v: "0" + v))
+    add("board-sector-tags-noncanonical", ["DECK-0001 1.3", "10"], "An enter-hyperspace with a leading zero on its Z tag is invalid.",
+        [s, eh], invalid([s, eh], eh, "sector-tags", P))
+
+    s = b.spawn()
+    ev = b.retag(b.enter(s, s, P, R), set_value("Y", lambda v: "0" + v))
+    add("bracket-enter-sector-tags-noncanonical", ["8.11.1", "10"], "An enter-virtual with a leading zero on its Y tag is invalid.",
+        [s, ev], invalid([s, ev], ev, "sector-tags", P))
+
     return vectors
 
 
@@ -886,6 +1028,9 @@ def main() -> None:
     line = Line.from_blocks(blocks)
     for bound, station in ((2, 2), (5, 2), (6, 6), (7, 6)):
         assert line.station(pub, bound) == station, (bound, line.station(pub, bound))
+    # the tie-break vectors need stops 0 and 1 equally far from the spawn
+    xyz = coord_to_xyz(int(pub, 16))[:3]
+    assert stop_distance(xyz, line.stop(0).xyzp[:3]) == stop_distance(xyz, line.stop(1).xyzp[:3]) == 85
     vectors = build(sk, other, line)
     names = [v["name"] for v in vectors]
     assert len(names) == len(set(names)), "vector names must be unique"
@@ -919,7 +1064,8 @@ def main() -> None:
         "vectors": vectors,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(doc, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    # ASCII with escapes, so a vector can carry a lone surrogate, which has no UTF-8 encoding.
+    OUT.write_text(json.dumps(doc, indent=1, ensure_ascii=True) + "\n", encoding="utf-8")
     print(f"wrote {len(vectors)} vectors to {OUT}")
 
 

@@ -31,7 +31,9 @@ The chain rules of `CYBERSPACE_V2.md` section 8.12 at revision `2026-09-28-virtu
 | `events` | Complete NIP-01 events (`id`, `pubkey`, `created_at`, `kind`, `tags`, `content`, `sig`), kind 3333. Their order is not meaningful: a verifier must resolve them per 8.7.3, and some vectors list them out of order on purpose. Events that are not on the active chain (an older chain, the losing branch of a fork, a branch cut off behind a discarded event) are included where the vector is about ignoring them. |
 | `expected` | The verdict. |
 
-Before resolving, a verifier MUST discard every event that is not authentic (8.7.3): its `id` is not the hash of its canonical serialization, its `sig` is not a valid signature of that `id` by its `pubkey`, or its `pubkey` is not `verify_with.identity`. Signatures are always checked, with no option to skip them. Vectors whose names end in `-ignored`, and `forged-event-cuts-branch` and `cut-off-then-continue`, contain such events.
+Before resolving, a verifier MUST discard every event that is not authentic (8.7.3): it is not a NIP-01 event (`id`, `pubkey`, `sig` and `content` strings, `created_at` and `kind` integers, `tags` an array of arrays of strings, every string encodable as UTF-8), its `id` is not the hash of its canonical serialization, its `sig` is not a valid signature of that `id` by its `pubkey`, its `pubkey` is not `verify_with.identity`, or its `kind` is not 3333. Signatures are always checked, with no option to skip them. Vectors whose names end in `-ignored`, and `forged-event-cuts-branch` and `cut-off-then-continue`, contain such events. Three of them are malformed on purpose: a lone surrogate in `content`, a string `created_at`, and a `null` inside a tag. A port must discard them rather than fail on them; the file is written as ASCII JSON with `\u` escapes so that the lone surrogate can be carried at all.
+
+A port MUST check DECK-0001 5.6 (`B` differs from `from_height`) before it checks a ride's proof. `ride-zero-length-first` and `ride-zero-length-later` carry the zero root, zero nonce and empty `mp` of the removed zero-length ride, which no Level 1 check can verify, so a port that checks the proof first reports `hyperjump-proof` where the vectors expect `hyperjump-zero-length`.
 
 A valid verdict:
 
@@ -56,7 +58,7 @@ An invalid verdict:
 - `reason`: one code from `reasons`.
 - When no authentic spawn exists, `chain` is empty and `position`, `invalid_at` and `invalid_index` are `null`, with reason `no-spawn`.
 
-Each invalid vector breaks exactly one rule, so the order in which a verifier runs its checks on an event does not change the reason. The free-text detail a verifier prints is not part of the vectors.
+Each invalid vector breaks exactly one rule, so the order in which a verifier runs its checks on an event does not change the reason, with one exception: the two zero-length ride vectors also carry unverifiable proofs, which is why 5.6 must come before the proof check (above). The free-text detail a verifier prints is not part of the vectors.
 
 ### What it costs to run them
 

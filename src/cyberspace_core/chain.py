@@ -96,7 +96,7 @@ REGION_MAX_HEIGHT = AXIS_BITS
 REASONS: Dict[str, str] = {
     "no-spawn": "no authentic spawn event for this pubkey, so there is no chain (8.7.3 rule 1)",
     "a-tag": "the event carries no A tag, or more than one (8.8)",
-    "malformed": "a tag the chain rules read is missing, repeated or ill-formed: e genesis, e previous, e entry, c, C, from_height, B",
+    "malformed": "a tag the chain rules read is missing or ill-formed: e genesis, e previous or e entry missing or repeated; c or C missing, repeated or not a 32-byte lowercase hex coordinate; from_height or B missing or not a base-10 height (the first of each is read)",
     "sector-tags": "a recognized action's X, Y, Z or S tag is missing, repeated, or not the value computed from its C (10)",
     "spawn-coordinate": "the spawn's C is not its pubkey (8.3)",
     "c-mismatch": "c is not the C of the nearest recognized action before it (8.9 item 2, continuity)",
@@ -240,18 +240,38 @@ def signature_ok(event: Dict[str, Any]) -> bool:
         return False
 
 
+def nip01_shape_ok(event: Any) -> bool:
+    """NIP-01's shape: id, pubkey, sig and content are strings, created_at
+    and kind are integers, and tags is an array of arrays of strings. An
+    event of any other shape is not a valid NIP-01 event, whatever its id
+    hashes to, and resolution must never meet one: fork resolution compares
+    created_at, and a tag holding a null would otherwise vanish from it."""
+    if not isinstance(event, dict):
+        return False
+    if not all(isinstance(event.get(k), str) for k in ("id", "pubkey", "sig", "content")):
+        return False
+    if not all(isinstance(event.get(k), int) and not isinstance(event.get(k), bool) for k in ("created_at", "kind")):
+        return False
+    tags = event.get("tags")
+    return isinstance(tags, list) and all(isinstance(t, list) and all(isinstance(v, str) for v in t) for t in tags)
+
+
 def is_authentic(event: Any, pubkey: str) -> bool:
-    """8.7.3: a valid NIP-01 event (its id is the hash of its canonical
-    serialization and its sig a valid signature of that id) by the identity
-    itself, of the movement kind. Anything else is discarded before
-    resolution, wherever the reader got it."""
-    return (
-        isinstance(event, dict)
-        and event.get("kind") == MOVEMENT_KIND
-        and event.get("pubkey") == pubkey
-        and event_id(event) == event.get("id")
-        and signature_ok(event)
-    )
+    """8.7.3: a valid NIP-01 event (the shape of nip01_shape_ok, its id the
+    hash of its canonical serialization, its sig a valid signature of that
+    id) by the identity itself, of the movement kind. Anything else is
+    discarded before resolution, wherever the reader got it. A string that
+    cannot be encoded as UTF-8, such as a lone surrogate, has no canonical
+    serialization, so such an event is discarded too rather than stopping
+    the verifier."""
+    if not (nip01_shape_ok(event) and event["kind"] == MOVEMENT_KIND and event["pubkey"] == pubkey):
+        return False
+    try:
+        if event_id(event) != event["id"]:
+            return False
+    except UnicodeEncodeError:
+        return False
+    return signature_ok(event)
 
 
 def sector_tags_ok(event: Dict[str, Any], coord_hex: str) -> bool:
