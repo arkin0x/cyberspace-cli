@@ -162,13 +162,11 @@ def prove_ride(
     on_progress: Optional[Callable[[int], None]] = None,
 ) -> Tuple[bytes, int, List[List[bytes]]]:
     """(root, nonce, openings) for the blocks lo + 1 .. hi: every leaf and the
-    root, then the nonce, then the paths at the positions drawn from G. A
-    zero-length ride is the zero root, nonce 0 and no openings (5.6)."""
+    root, then the nonce, then the paths at the positions drawn from G. There
+    is no zero-length ride (5.6), so lo must be below hi."""
     n = hi - lo
-    if n < 0:
-        raise ValueError("lo must not exceed hi")
-    if n == 0:
-        return PAD_LEAF, 0, []
+    if n <= 0:
+        raise ValueError("a ride passes at least one block: lo must be below hi (5.6)")
     levels = merkle_levels([ride_leaf(previous_event_id, b, block_hash(b)) for b in range(lo + 1, hi + 1)])
     root = levels[-1][0]
     nonce = find_ride_nonce(previous_event_id, root, n, workers=workers, on_progress=on_progress)
@@ -189,15 +187,8 @@ def verify_ride(
     check the price, draw the samples from G, recompute each sampled leaf from
     its block and carry it to the root. Returns the failed checks."""
     n = hi - lo
-    if n == 0:
-        failures = []
-        if root != PAD_LEAF:
-            failures.append("proof: a zero-length ride's root is 32 zero bytes (5.6)")
-        if nonce != 0:
-            failures.append("mn: a zero-length ride's nonce is 16 zeros (5.6)")
-        if openings:
-            failures.append("mp: a zero-length ride has nothing to open (5.6)")
-        return failures
+    if n <= 0:
+        return ["B: equals from_height; there is no zero-length ride (5.6)"]
     depth = ride_depth(n)
     if len(openings) != SAMPLES or any(len(p) != depth for p in openings):
         return [f"mp: expected {SAMPLES} paths of {depth} siblings (5.5)"]
@@ -224,9 +215,9 @@ def _is_hex(value: str) -> bool:
 
 def decode_ride_openings(value: str, n: int) -> Optional[List[List[bytes]]]:
     """The openings in an mp value for a ride of n blocks, or None when
-    malformed. A zero-length ride's mp is empty."""
-    if n == 0:
-        return [] if value == "" else None
+    malformed or when n is not positive (there is no zero-length ride, 5.6)."""
+    if n <= 0:
+        return None
     depth = ride_depth(n)
     parts = value.split(":")
     if len(parts) != SAMPLES or any(len(p) != 64 * depth or not _is_hex(p) for p in parts):
@@ -247,10 +238,11 @@ def verify_ride_event(event: Dict[str, Any], block_hash: BlockHash) -> List[str]
     against the stop coordinate of B (section 1), and the NIP-01 signature.
     `block_hash(b)` returns block b's 32-byte hash in display order.
 
-    A ride without an mn tag is invalid unless its id is listed in
+    A ride whose B equals its from_height is invalid: there is no zero-length
+    ride (5.6). A ride without an mn tag is invalid unless its id is listed in
     decks/grandfathered-v1-hyperjumps.txt (5.8). A listed ride's root and
     openings are taken as audited and not recomputed, so no block hash is
-    needed for it; its tags are still checked."""
+    needed for it; everything else about it is checked, 5.6 included."""
     from cyberspace_core.grandfathered import GRANDFATHERED_V1_HYPERJUMPS, is_grandfathered
 
     tags = [t for t in (event.get("tags") or []) if isinstance(t, list) and len(t) >= 2]
@@ -277,6 +269,8 @@ def verify_ride_event(event: Dict[str, Any], block_hash: BlockHash) -> List[str]
     if failures:
         return failures
     assert from_height is not None and to_height is not None and prev_hex is not None and proof is not None
+    if from_height == to_height:
+        return ["B: equals from_height; there is no zero-length ride (5.6)"]
     lo, hi = min(from_height, to_height), max(from_height, to_height)
 
     mn = value("mn")
@@ -289,7 +283,5 @@ def verify_ride_event(event: Dict[str, Any], block_hash: BlockHash) -> List[str]
         return ["mn: not exactly 16 lowercase hex characters"]
     openings = decode_ride_openings(value("mp") or "", hi - lo)
     if openings is None:
-        if hi == lo:
-            return ["mp: a zero-length ride has nothing to open (5.6)"]
         return [f"mp: not {SAMPLES} colon-joined paths of {ride_depth(hi - lo)} siblings each (5.5)"]
     return verify_ride(bytes.fromhex(prev_hex), lo, hi, block_hash, bytes.fromhex(proof), nonce, openings)

@@ -1,7 +1,9 @@
 """The chain rules of CYBERSPACE_V2 section 8.12, revision
-2026-09-28-virtual-brackets: active chain resolution (8.7.3), skipping
-actions a verifier does not recognize (8.9), virtual brackets (8.11) and the
-DECK-0001 ride rules, each locked by the golden vectors in
+2026-09-28-virtual-brackets with the rulings of 2026-10-07 and 2026-10-08:
+authentic events only and active chain resolution (8.7.3), frozen chains at
+their last valid position (3.2), one A tag (8.8), skipping actions a verifier
+does not recognize (8.9), opaque virtual brackets (8.11), sector tags (10)
+and the DECK-0001 ride rules, each locked by the golden vectors in
 vectors/chain-rules-2026-09-28-virtual-brackets.json, which the TypeScript
 ports load too. Regenerate them with scripts/gen_chain_vectors.py."""
 
@@ -17,8 +19,10 @@ from cyberspace_core.chain import (
     REASONS,
     LineRequired,
     Region,
+    is_authentic,
     parse_region,
     resolve_active_chain,
+    sector_tags_ok,
     verify_chain,
 )
 from cyberspace_core.coords import xyz_to_coord
@@ -26,7 +30,7 @@ from cyberspace_core.hyperspace import Line
 
 VECTORS_PATH = Path(__file__).resolve().parents[1] / "vectors" / f"chain-rules-{CHAIN_RULES_REVISION}.json"
 DOC = json.loads(VECTORS_PATH.read_text(encoding="utf-8"))
-PUBKEY = DOC["test_key"]["pubkey"]
+PUBKEY = DOC["verify_with"]["identity"]
 LINE = Line.from_blocks(DOC["line"]["blocks"])
 BY_NAME = {v["name"]: v for v in DOC["vectors"]}
 
@@ -37,7 +41,7 @@ def _has_ride(vector) -> bool:
 
 @pytest.mark.parametrize("vector", DOC["vectors"], ids=[v["name"] for v in DOC["vectors"]])
 def test_vector(vector):
-    verdict = verify_chain(vector["events"], pubkey=PUBKEY, line=LINE, check_signatures=True)
+    verdict = verify_chain(vector["events"], pubkey=PUBKEY, line=LINE)
     assert verdict.expected() == vector["expected"], verdict.detail
     assert verdict.revision == CHAIN_RULES_REVISION
 
@@ -45,13 +49,14 @@ def test_vector(vector):
 @pytest.mark.parametrize("vector", [v for v in DOC["vectors"] if not _has_ride(v)], ids=lambda v: v["name"])
 def test_vector_in_any_order(vector):
     """Relays return events in no particular order, and 8.7.3 resolves them the same way whatever the order."""
-    verdict = verify_chain(list(reversed(vector["events"])), pubkey=PUBKEY, line=LINE, check_signatures=True)
+    verdict = verify_chain(list(reversed(vector["events"])), pubkey=PUBKEY, line=LINE)
     assert verdict.expected() == vector["expected"]
 
 
 class TestTheFile:
     def test_revision_and_reasons(self):
         assert DOC["chain_rules_revision"] == CHAIN_RULES_REVISION == "2026-09-28-virtual-brackets"
+        assert DOC["test_key"]["pubkey"] == PUBKEY
         assert DOC["reasons"] == REASONS
         assert {v["expected"].get("reason") for v in DOC["vectors"]} - {None} == set(REASONS)
 
@@ -60,8 +65,14 @@ class TestTheFile:
             assert LINE.stop(block["height"]).coord_hex == block["coord"]
         assert [LINE.station(PUBKEY, bound) for bound in range(8)][2:] == [2, 2, 2, 2, 6, 6]
 
-    def test_open_questions_are_named(self):
-        assert sorted(v["name"] for v in DOC["vectors"] if "open_question" in v) == ["bracket-exit-c-mismatch", "ride-zero-length-later"]
+    def test_no_open_questions_remain(self):
+        """The rulings of 2026-10-07 and 2026-10-08 answered every reading the first vectors left open."""
+        assert not [v["name"] for v in DOC["vectors"] if "open_question" in v]
+
+    def test_every_invalid_verdict_names_a_position(self):
+        for v in DOC["vectors"]:
+            if not v["expected"]["valid"] and v["expected"]["reason"] != "no-spawn":
+                assert v["expected"]["position"], v["name"]
 
 
 class TestVerifier:
@@ -69,16 +80,21 @@ class TestVerifier:
         with pytest.raises(LineRequired):
             verify_chain(BY_NAME["ride-valid"]["events"], pubkey=PUBKEY)
 
-    def test_signatures_are_checked_only_when_asked(self):
-        """Without signature checks the unsigned branch, signed first, wins the fork; with them it is set aside."""
-        vector = BY_NAME["unsigned-fork-ignored"]
-        spawn, unsigned, real = vector["events"]
-        assert verify_chain(vector["events"], pubkey=PUBKEY).chain == (spawn["id"], unsigned["id"])
-        assert verify_chain(vector["events"], pubkey=PUBKEY, check_signatures=True).chain == (spawn["id"], real["id"])
+    def test_authenticity(self):
+        spawn, unsigned, real = BY_NAME["unsigned-fork-ignored"]["events"]
+        assert is_authentic(spawn, PUBKEY) and is_authentic(real, PUBKEY)
+        assert not is_authentic(unsigned, PUBKEY)  # its sig signs another id
+        assert not is_authentic(dict(real, sig=""), PUBKEY)  # unsigned local events are discarded too (8.2)
+        assert not is_authentic(real, DOC["other_key"]["pubkey"])
 
-    def test_invalid_reports_the_carried_position(self):
-        verdict = verify_chain(BY_NAME["bracket-exit-position-mismatch"]["events"], pubkey=PUBKEY)
-        assert not verdict.valid and verdict.last_valid_position == PUBKEY
+    def test_an_unsigned_chain_resolves_to_nothing(self):
+        events = [dict(e, sig="") for e in BY_NAME["bracket-valid-then-hop"]["events"]]
+        assert verify_chain(events, pubkey=PUBKEY).reason == "no-spawn"
+
+    def test_sector_tags(self):
+        spawn = BY_NAME["spawn-only"]["events"][0]
+        assert sector_tags_ok(spawn, PUBKEY)
+        assert not sector_tags_ok(BY_NAME["spawn-sector-tags-wrong"]["events"][0], PUBKEY)
 
     def test_pubkey_is_inferred_from_one_author(self):
         events = BY_NAME["bracket-valid-then-hop"]["events"]
@@ -91,7 +107,7 @@ class TestVerifier:
         events = vector["events"]
         forged = dict(events[2], tags=events[2]["tags"] + [["x", "forged"]])
         for ordered in ([forged] + events, events + [forged]):
-            assert verify_chain(ordered, pubkey=PUBKEY, check_signatures=True).expected() == vector["expected"]
+            assert verify_chain(ordered, pubkey=PUBKEY).expected() == vector["expected"]
 
     def test_other_kinds_and_authors_are_ignored(self):
         events = BY_NAME["bracket-unclosed"]["events"]

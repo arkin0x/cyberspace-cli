@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Regenerate vectors/chain-rules-2026-09-28-virtual-brackets.json, the golden
-vectors for the chain rules of CYBERSPACE_V2.md section 8.12.
+vectors for the chain rules of CYBERSPACE_V2.md section 8.12, revision
+2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and
+clarified on 2026-10-08 (arkin0x/cyberspace 912f3d7).
 
     PYTHONPATH=src python scripts/gen_chain_vectors.py
 
@@ -29,7 +31,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from coincurve import PrivateKey
 
@@ -43,8 +45,9 @@ from cyberspace_core.ride import K_LINE, encode_ride_openings, line_terrain_k, p
 from cyberspace_core.terrain import terrain_k
 
 OUT = Path(__file__).resolve().parents[1] / "vectors" / f"chain-rules-{CHAIN_RULES_REVISION}.json"
-SPEC_COMMIT = "df00a48654cd2162103c0812fbe3494da611e3b5"
+SPEC_COMMIT = "912f3d70e4d15d70054e9fa98646098a1c216d47"
 KEY_DOMAIN = b"CYBERSPACE_CHAIN_VECTORS_KEY"
+OTHER_KEY_DOMAIN = b"CYBERSPACE_CHAIN_VECTORS_OTHER_KEY"
 STOP_DOMAIN = b"CYBERSPACE_CHAIN_VECTORS_STOP"
 GAME_DOMAIN = b"CYBERSPACE_CHAIN_VECTORS_GAME"
 T0 = 1790000000
@@ -64,7 +67,7 @@ def flip(coord_hex: str, dx: int = 0, dy: int = 0, dz: int = 0, plane: Optional[
     return format(xyz_to_coord(x ^ dx, y ^ dy, z ^ dz, p if plane is None else plane), "064x")
 
 
-# ---------------------------------------------------------------- the key and the line
+# ---------------------------------------------------------------- the keys and the line
 
 def test_key() -> tuple:
     j = 0
@@ -120,32 +123,45 @@ def make_line(spawn: str) -> List[Dict[str, Any]]:
 
 # ---------------------------------------------------------------- events
 
+GAME = sha256(GAME_DOMAIN).hex()
+Tags = List[List[str]]
+
+
 class Builder:
-    """Signed kind 3333 events by the test key, created_at counting up from T0."""
+    """Signed kind 3333 events by one key, created_at counting up from T0."""
 
-    def __init__(self, sk: PrivateKey, pub: str, line: Line):
-        self.sk, self.pub, self.line = sk, pub, line
-        self.clock = T0
+    def __init__(self, sk: PrivateKey, line: Line, clock: Optional[List[int]] = None):
+        self.sk, self.line = sk, line
+        self.pub = sk.public_key_xonly.format().hex()
+        self.clock = clock if clock is not None else [T0]
 
-    def sign(self, tags: List[List[str]], created_at: Optional[int] = None, content: str = "") -> Dict[str, Any]:
+    def sign(self, tags: Tags, created_at: Optional[int] = None, content: str = "") -> Dict[str, Any]:
         if created_at is None:
-            self.clock += 1
-            created_at = self.clock
+            self.clock[0] += 1
+            created_at = self.clock[0]
         eid = compute_event_id_hex(pubkey_hex=self.pub, created_at=created_at, kind=3333, tags=tags, content=content)
         sig = self.sk.sign_schnorr(bytes.fromhex(eid), bytes(32)).hex()
         return {"id": eid, "pubkey": self.pub, "created_at": created_at, "kind": 3333, "tags": tags, "content": content, "sig": sig}
+
+    def retag(self, event: Dict[str, Any], change: Callable[[Tags], Tags]) -> Dict[str, Any]:
+        """The event re-signed with its tags changed, at the same created_at."""
+        return self.sign(change([list(t) for t in event["tags"]]), event["created_at"], event["content"])
 
     def spawn(self, created_at: Optional[int] = None, coord: Optional[str] = None) -> Dict[str, Any]:
         coord = coord or self.pub
         return self.sign([["A", "spawn"], ["C", coord]] + _sector_tags_from_coord_hex(coord), created_at)
 
-    def link(self, action: str, genesis: Dict, prev: Dict, c: str, C: str, extra: Optional[List[List[str]]] = None,
+    def link(self, action: str, genesis: Dict, prev: Dict, c: Optional[str], C: str, extra: Optional[Tags] = None,
              created_at: Optional[int] = None, entry: Optional[Dict] = None) -> Dict[str, Any]:
         tags = [["A", action], ["e", genesis["id"], "", "genesis"], ["e", prev["id"], "", "previous"]]
         if entry is not None:
             tags.append(["e", entry["id"], "", "entry"])
-        tags += [["c", c], ["C", C]] + (extra or []) + _sector_tags_from_coord_hex(C)
+        tags += ([["c", c]] if c is not None else []) + [["C", C]] + (extra or []) + _sector_tags_from_coord_hex(C)
         return self.sign(tags, created_at)
+
+    def game(self, genesis: Dict, prev: Dict, name: str, extra: Optional[Tags] = None) -> Dict[str, Any]:
+        """A virtual action: its name, its links, and whatever tags the game gives it."""
+        return self.sign([["A", name], ["e", genesis["id"], "", "genesis"], ["e", prev["id"], "", "previous"]] + (extra or []))
 
     def hop(self, genesis: Dict, prev: Dict, c: str, C: str, seed: Optional[Dict] = None, **kw) -> Dict[str, Any]:
         (x1, y1, z1, _), (x2, y2, z2, p2) = coord_to_xyz(int(c, 16)), coord_to_xyz(int(C, 16))
@@ -171,29 +187,34 @@ class Builder:
 
     def ride(self, genesis: Dict, prev: Dict, c: str, from_height: int, to_height: int, as_of: Optional[int] = None,
              C: Optional[str] = None, seed: Optional[Dict] = None) -> Dict[str, Any]:
+        """A hyperjump with a real proof. A ride with from_height equal to B
+        (which no longer exists, DECK-0001 5.6) carries the proof shape the
+        earlier draft gave it: a zero root, a zero nonce and an empty mp."""
         C = C or self.line.stop(to_height).coord_hex
         lo, hi = min(from_height, to_height), max(from_height, to_height)
-        root, nonce, openings = prove_ride(bytes.fromhex((seed or prev)["id"]), lo, hi, self.line.block_hash, workers=1)
+        if lo == hi:
+            root, nonce, mp = bytes(32), 0, ""
+        else:
+            root, nonce, openings = prove_ride(bytes.fromhex((seed or prev)["id"]), lo, hi, self.line.block_hash, workers=1)
+            mp = encode_ride_openings(openings)
         extra = [["from_height", str(from_height)], ["B", str(to_height)]]
         if as_of is not None:
             extra.append(["as_of", str(as_of)])
-        extra += [["proof", root.hex()], ["mp", encode_ride_openings(openings)], ["mn", encode_nonce(nonce)]]
+        extra += [["proof", root.hex()], ["mp", mp], ["mn", encode_nonce(nonce)]]
         return self.link("hyperjump", genesis, prev, c, C, extra)
 
-    def enter(self, genesis: Dict, prev: Dict, c: str, C: str, region: List[str], games: Optional[List[List[str]]] = None) -> Dict[str, Any]:
+    def enter(self, genesis: Dict, prev: Dict, c: str, region: List[str], games: Optional[Tags] = None, C: Optional[str] = None) -> Dict[str, Any]:
+        """An enter-virtual: its C repeats its c unless told otherwise."""
         if games is None:
             games = [["p", GAME, "wss://game.example", "game"]]
-        return self.link("enter-virtual", genesis, prev, c, C, [["region"] + region] + games)
+        return self.link("enter-virtual", genesis, prev, c, C or c, [["region"] + region] + games)
 
-    def exit(self, genesis: Dict, prev: Dict, entry: Optional[Dict], c: str, C: str) -> Dict[str, Any]:
+    def exit(self, genesis: Dict, prev: Dict, entry: Optional[Dict], C: str, c: Optional[str] = None) -> Dict[str, Any]:
+        """An exit-virtual. Its c is optional and belongs to the game (8.11.3)."""
         if entry is None:
-            tags = [["A", "exit-virtual"], ["e", genesis["id"], "", "genesis"], ["e", prev["id"], "", "previous"],
-                    ["c", c], ["C", C]] + _sector_tags_from_coord_hex(C)
-            return self.sign(tags)
+            tags = [["A", "exit-virtual"], ["e", genesis["id"], "", "genesis"], ["e", prev["id"], "", "previous"], ["C", C]]
+            return self.sign(tags + _sector_tags_from_coord_hex(C))
         return self.link("exit-virtual", genesis, prev, c, C, entry=entry)
-
-
-GAME = sha256(GAME_DOMAIN).hex()
 
 
 def region_around(coord_hex: str, h: int) -> List[str]:
@@ -201,6 +222,18 @@ def region_around(coord_hex: str, h: int) -> List[str]:
     x, y, z, p = coord_to_xyz(int(coord_hex, 16))
     base = xyz_to_coord((x >> h) << h, (y >> h) << h, (z >> h) << h, p)
     return [format(base, "064x"), str(h)]
+
+
+def drop(name: str) -> Callable[[Tags], Tags]:
+    return lambda tags: [t for t in tags if t[0] != name]
+
+
+def duplicate(name: str) -> Callable[[Tags], Tags]:
+    return lambda tags: tags + [list(next(t for t in tags if t[0] == name))]
+
+
+def set_value(name: str, value: Callable[[str], str]) -> Callable[[Tags], Tags]:
+    return lambda tags: [[name, value(t[1])] + t[2:] if t[0] == name else t for t in tags]
 
 
 # ---------------------------------------------------------------- expectations
@@ -216,53 +249,66 @@ def valid(chain: List[Dict], position: str, open_bracket: Optional[Dict] = None,
     }
 
 
-def invalid(chain: List[Dict], at: Optional[Dict], reason: str) -> Dict[str, Any]:
+def invalid(chain: List[Dict], at: Optional[Dict], reason: str, position: Optional[str]) -> Dict[str, Any]:
+    """`position` is the last valid position, where the frozen chain leaves the identity (3.2, 8.7.3)."""
     assert reason in REASONS, reason
     return {
         "valid": False,
         "chain": [e["id"] for e in chain],
+        "position": position,
         "reason": reason,
         "invalid_at": at["id"] if at else None,
         "invalid_index": next(i for i, e in enumerate(chain) if e is at) if at else None,
     }
 
 
-def build(sk: PrivateKey, pub: str, line: Line) -> List[Dict[str, Any]]:
-    b = Builder(sk, pub, line)
-    P = pub
+def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]:
+    b = Builder(sk, line)
+    o = Builder(other, line, b.clock)
+    P = b.pub
     PX, PY, PZ = flip(P, dx=1), flip(P, dy=1), flip(P, dz=1)
-    R = region_around(P, 8)  # the game's box around the spawn
+    FAR_SECTOR = flip(P, dx=1 << 30)  # another sector, for wrong sector tags
+    R = region_around(P, 8)  # a game's box around the spawn
     G0, G1, G2 = flip(P, dx=0x10), flip(P, dx=0x10, dy=0x20), flip(P, dz=0x40)  # inside R
     OUT_R = flip(P, dx=0x100)  # outside R, on the same plane
     S = {h: line.stop(h).coord_hex for h in range(TIP + 1)}
     vectors: List[Dict[str, Any]] = []
 
-    def add(name: str, spec: List[str], description: str, events: List[Dict], expected: Dict, open_question: Optional[str] = None):
-        v = {"name": name, "spec": spec, "description": description}
-        if open_question:
-            v["open_question"] = open_question
-        v["events"] = events
-        v["expected"] = expected
-        vectors.append(v)
+    def add(name: str, spec: List[str], description: str, events: List[Dict], expected: Dict):
+        vectors.append({"name": name, "spec": spec, "description": description, "events": events, "expected": expected})
 
-    # ------------------------------------------------ resolution (8.7.3) and the spawn
+    # ------------------------------------------------ the spawn (3.2, 8.3)
     s = b.spawn()
     add("spawn-only", ["8.3", "8.7.3"], "A spawn alone is a valid chain; the position is the spawn coordinate, the pubkey.",
         [s], valid([s], P))
 
     s = b.spawn(coord=PX)
-    add("spawn-coordinate-not-pubkey", ["8.3"], "A spawn whose C is not its pubkey is invalid, and so is the chain from it.",
-        [s], invalid([s], s, "spawn-coordinate"))
+    add("spawn-coordinate-not-pubkey", ["3.2", "8.3"],
+        "A spawn whose C is not its pubkey is invalid; with no valid event, the identity stands at its spawn coordinate.",
+        [s], invalid([s], s, "spawn-coordinate", P))
+
+    s = b.retag(b.spawn(), lambda t: t[:2] + _sector_tags_from_coord_hex(FAR_SECTOR))
+    add("spawn-sector-tags-wrong", ["8.3", "10"], "A spawn whose sector tags are computed from another coordinate is invalid.",
+        [s], invalid([s], s, "sector-tags", P))
+
+    s1 = b.spawn()
+    h1 = b.hop(s1, s1, P, PX)
+    s2 = b.spawn(coord=PX)
+    add("spawn-newest-invalid-no-fallback", ["3.2", "8.7.3 rule 1"],
+        "The newest spawn is invalid. It still starts the active chain, the reader does not fall back to the older spawn "
+        "and its valid hop, and the identity stands at its spawn coordinate.",
+        [s1, h1, s2], invalid([s2], s2, "spawn-coordinate", P))
 
     ghost = {"id": "ab" * 32}
     h = b.hop(ghost, ghost, P, PX)
-    add("no-spawn", ["8.7.3"], "Events with no spawn among them resolve to no chain.", [h], invalid([], None, "no-spawn"))
+    add("no-spawn", ["8.7.3"], "Events with no spawn among them resolve to no chain.", [h], invalid([], None, "no-spawn", None))
 
+    # ------------------------------------------------ resolution (8.7.3)
     s = b.spawn()
     hb = b.hop(s, s, P, PX, created_at=T0 + 1000)
     ha = b.hop(s, s, P, PY, created_at=T0 + 1001)
     ha2 = b.hop(s, ha, PY, flip(PY, dz=1), created_at=T0 + 1002)
-    add("fork-older-branch-continues", ["8.7.3"],
+    add("fork-older-branch-continues", ["8.7.3 rule 4"],
         "Two hops name the spawn as previous. The one signed first (smaller created_at) continues the chain and the other "
         "branch, with its descendant, is dropped. Events are listed out of order on purpose.",
         [ha2, ha, s, hb], valid([s, hb], PX))
@@ -271,100 +317,183 @@ def build(sk: PrivateKey, pub: str, line: Line) -> List[Dict[str, Any]]:
     t = T0 + 2000
     f1, f2 = b.hop(s, s, P, PX, created_at=t), b.hop(s, s, P, PY, created_at=t)
     win = min((f1, f2), key=lambda e: e["id"])
-    add("fork-tie-smaller-id", ["8.7.3"], "Two branches with the same created_at: the smaller event id continues the chain.",
+    add("fork-tie-smaller-id", ["8.7.3 rule 4"], "Two branches with the same created_at: the smaller event id continues the chain.",
         [f1, f2, s], valid([s, win], win["tags"][4][1]))
+
+    s = b.spawn()
+    bad = b.hop(s, s, P, PY, seed={"id": "cd" * 32}, created_at=T0 + 2500)
+    good = b.hop(s, s, P, PX, created_at=T0 + 2501)
+    add("fork-earlier-invalid-branch-wins", ["8.7.3 rule 4", "8.7.3 validity and position"],
+        "Resolution comes before validity. The branch signed first has an invalid proof and still continues the chain; the "
+        "later valid branch does not replace it, so the chain is invalid and frozen at the spawn.",
+        [good, bad, s], invalid([s, bad], bad, "hop-proof", P))
 
     s1 = b.spawn()
     h1 = b.hop(s1, s1, P, PX)
     s2 = b.spawn()
     stale = b.hop(s1, s2, P, PY)  # names the new spawn as previous but the old one as genesis
-    add("respawn-newest-spawn", ["3.2", "8.7.3"],
+    add("respawn-newest-spawn", ["3.2", "8.7.3 rules 1, 2"],
         "The newest spawn starts the active chain. An event whose e genesis names the older spawn is ignored even "
         "though its e previous names the newest spawn.",
         [s1, h1, s2, stale], valid([s2], P))
 
+    # ------------------------------------------------ authentic events only (8.2, 8.7.3)
     s = b.spawn()
     h1 = b.hop(s, s, P, PX)
     copy = dict(h1, content="altered by someone else")
-    add("forged-copy-ignored", ["8.2", "8.7.3"],
-        "A copy of a real event with its content altered keeps the real id and sig, but the id is not its hash: it is not "
-        "an event by this pubkey and is set aside before resolving, whichever copy a relay returns first.",
+    add("forged-copy-ignored", ["8.2", "8.7.3 authentic events only"],
+        "A copy of a real event with its content altered keeps the real id and sig, but the id is not its hash: it is "
+        "discarded before resolving, whichever copy a relay returns first.",
         [copy, s, h1], valid([s, h1], PX))
 
     s = b.spawn()
     h1 = b.hop(s, s, P, PX, created_at=T0 + 3001)
     fake = {"id": "ee" * 32, "pubkey": P, "created_at": T0 + 3000, "kind": 3333, "content": "", "sig": h1["sig"],
             "tags": [["A", "hop"], ["e", s["id"], "", "genesis"], ["e", s["id"], "", "previous"], ["c", P], ["C", PY], ["proof", "00" * 32]]}
-    add("forged-fork-ignored", ["8.2", "8.7.3", "3.2"],
-        "An event whose id is not its hash names the spawn as previous with an earlier created_at than the real hop. It is "
-        "not authentic, so it takes no part in the fork, and nothing another identity publishes can end this chain.",
+    add("forged-fork-ignored", ["8.2", "8.7.3 authentic events only", "3.2"],
+        "An event whose id is not its hash names the spawn as previous with an earlier created_at than the real hop. It "
+        "is discarded, so it takes no part in the fork and cannot end the chain.",
         [s, fake, h1], valid([s, h1], PX))
-
-    # ------------------------------------------------ base movement
-    s = b.spawn()
-    h1 = b.hop(s, s, P, PX)
-    h2 = b.hop(s, h1, PX, flip(PX, dy=1), seed=s)
-    add("hop-proof-wrong-seed", ["8.7.1", "5.3"], "A hop whose proof is seeded by an id other than its e previous is invalid.",
-        [s, h1, h2], invalid([s, h1, h2], h2, "hop-proof"))
 
     s = b.spawn()
     unsigned = b.hop(s, s, P, PY, created_at=T0 + 4000)
     unsigned = dict(unsigned, sig=b.sk.sign_schnorr(bytes.fromhex(s["id"]), bytes(32)).hex())
     h1 = b.hop(s, s, P, PX, created_at=T0 + 4001)
-    add("unsigned-fork-ignored", ["8.2", "8.7.3"],
-        "A hop with a correct id and a valid proof whose sig signs a different id, signed earlier than the real hop. With "
-        "signatures checked (verify_with) it is set aside and the real hop continues the chain; a verifier that does not "
-        "check signatures would follow it instead.",
+    add("unsigned-fork-ignored", ["8.2", "8.7.3 authentic events only"],
+        "A hop with a correct id and a valid proof whose sig signs a different id, signed earlier than the real hop. It "
+        "is not authentic and is discarded, so the real hop continues the chain.",
         [s, unsigned, h1], valid([s, h1], PX))
 
     s = b.spawn()
-    w = b.link("wave", s, s, P, P)
-    st = b.sidestep(s, w, P, PZ, seed=s)
-    add("sidestep-proof-wrong-seed", ["8.7.2", "8.9 step 3"],
-        "A sidestep after a skipped action whose trees and proof were seeded by the spawn instead of the skipped action is invalid.",
-        [s, w, st], invalid([s, w, st], st, "sidestep-proof"))
+    h1 = b.hop(s, s, P, PX, created_at=T0 + 4500)
+    stranger = o.sign([["A", "hop"], ["e", s["id"], "", "genesis"], ["e", s["id"], "", "previous"], ["c", P], ["C", PY]]
+                      + _sector_tags_from_coord_hex(PY), created_at=T0 + 4499)
+    add("other-author-ignored", ["8.7.3 authentic events only"],
+        "A validly signed event by another pubkey names this spawn as previous, signed earlier than the real hop. Its "
+        "pubkey is not the identity's, so it is discarded. Verify with the test key's pubkey as the identity.",
+        [s, stranger, h1], valid([s, h1], PX))
+
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    forged = b.hop(s, h1, PX, flip(PX, dy=1))
+    forged = dict(forged, sig=b.sk.sign_schnorr(bytes.fromhex(h1["id"]), bytes(32)).hex())
+    after = b.hop(s, forged, flip(PX, dy=1), flip(PX, dy=1, dz=1))
+    add("forged-event-cuts-branch", ["8.7.3 a branch through a discarded event is cut off"],
+        "An inauthentic event names the head as previous, and an authentic event names the inauthentic one. The "
+        "inauthentic event never existed, so the branch is cut off and the head is the event before it; the chain is valid.",
+        [s, h1, forged, after], valid([s, h1], PX))
+
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    forged = b.hop(s, h1, PX, flip(PX, dy=1))
+    forged = dict(forged, sig=b.sk.sign_schnorr(bytes.fromhex(h1["id"]), bytes(32)).hex())
+    after = b.hop(s, forged, flip(PX, dy=1), flip(PX, dy=1, dz=1))
+    h2 = b.hop(s, h1, PX, flip(PX, dz=1))
+    add("cut-off-then-continue", ["8.7.3 a branch through a discarded event is cut off"],
+        "After a cut-off branch the identity continues from the head: its next action names the head as previous and is "
+        "not a fork, because the cut-off events count for nothing.",
+        [s, h1, forged, after, h2], valid([s, h1, h2], flip(PX, dz=1)))
+
+    # ------------------------------------------------ exactly one A tag (8.8)
+    s = b.spawn()
+    h1 = b.retag(b.hop(s, s, P, PX), lambda t: [["A", "hop"]] + t)
+    add("a-tag-two-on-hop", ["8.8"], "A hop with two A tags is invalid.", [s, h1], invalid([s, h1], h1, "a-tag", P))
+
+    s = b.spawn()
+    w = b.sign([["e", s["id"], "", "genesis"], ["e", s["id"], "", "previous"], ["c", P], ["C", P]])
+    add("a-tag-missing", ["8.8", "8.9"], "An event with no A tag is invalid, not skipped.", [s, w], invalid([s, w], w, "a-tag", P))
+
+    s = b.spawn()
+    w = b.retag(b.link("wave", s, s, P, P), lambda t: t + [["A", "wave"]])
+    add("a-tag-two-on-skipped", ["8.8", "8.9"], "An unrecognized action with two A tags is invalid, not skipped.",
+        [s, w], invalid([s, w], w, "a-tag", P))
+
+    # ------------------------------------------------ base movement and frozen chains
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    h2 = b.hop(s, h1, PX, flip(PX, dy=1), seed=s)
+    add("hop-proof-wrong-seed", ["8.7.1", "5.3"], "A hop whose proof is seeded by an id other than its e previous is invalid.",
+        [s, h1, h2], invalid([s, h1, h2], h2, "hop-proof", PX))
+
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    h2 = b.hop(s, h1, PX, flip(PX, dy=1), seed=s)
+    h3 = b.hop(s, h2, flip(PX, dy=1), flip(PX, dy=1, dz=1))
+    add("frozen-after-invalid", ["3.2", "8.7.3 validity and position"],
+        "A valid hop after an invalid one does not move the identity: the chain is frozen at its last valid position.",
+        [s, h1, h2, h3], invalid([s, h1, h2, h3], h2, "hop-proof", PX))
 
     s = b.spawn()
     h1 = b.hop(s, s, P, PX)
     h2 = b.hop(s, h1, P, PY)
-    add("hop-c-mismatch", ["8.4", "8.9"], "A hop whose c is not the previous C is invalid.",
-        [s, h1, h2], invalid([s, h1, h2], h2, "c-mismatch"))
+    add("hop-c-mismatch", ["8.4", "8.9 item 2"], "A hop whose c is not the previous C is invalid.",
+        [s, h1, h2], invalid([s, h1, h2], h2, "c-mismatch", PX))
+
+    s = b.spawn()
+    w = b.link("wave", s, s, P, P)
+    st = b.sidestep(s, w, P, PZ, seed=s)
+    add("sidestep-proof-wrong-seed", ["8.7.2", "8.9 item 3"],
+        "A sidestep after a skipped action whose trees and proof were seeded by the spawn instead of the skipped action is invalid.",
+        [s, w, st], invalid([s, w, st], st, "sidestep-proof", P))
+
+    for name, change, why in (
+        ("missing", drop("S"), "without its S tag"),
+        ("duplicated", duplicate("X"), "with its X tag twice"),
+        ("wrong", set_value("Y", lambda v: str(int(v) + 1)), "with a Y tag one sector off"),
+        ("noncanonical", set_value("X", lambda v: "0" + v), "with a leading zero on X"),
+    ):
+        s = b.spawn()
+        h1 = b.retag(b.hop(s, s, P, PX), change)
+        add(f"hop-sector-tags-{name}", ["8.4", "10"], f"A hop {why} is invalid.", [s, h1], invalid([s, h1], h1, "sector-tags", P))
+
+    s = b.spawn()
+    st = b.retag(b.sidestep(s, s, P, PZ), drop("Z"))
+    add("sidestep-sector-tags-missing", ["8.5", "10"], "A sidestep without its Z tag is invalid.",
+        [s, st], invalid([s, st], st, "sector-tags", P))
 
     # ------------------------------------------------ skipping (8.9)
     s = b.spawn()
     w = b.link("wave", s, s, P, P)
     h1 = b.hop(s, w, P, PX)
-    add("skip-unknown-nonmoving-then-hop", ["8.9 steps 1-3"],
+    add("skip-unknown-nonmoving-then-hop", ["8.9 items 1-3"],
         "An unrecognized action that does not move is skipped; the hop after it starts from the carried position and its "
         "proof is seeded by the skipped action's id.",
         [s, w, h1], valid([s, w, h1], PX, skipped=[w]))
 
     s = b.spawn()
+    w = b.sign([["A", "wave"], ["e", s["id"], "", "genesis"], ["e", s["id"], "", "previous"], ["X", "x"]])
+    h1 = b.hop(s, w, P, PX)
+    add("skip-checks-nothing-else", ["8.9 what a skipped action is checked for"],
+        "A skipped action is checked only for being authentic, linked and carrying one A tag: one with no c, no C and a "
+        "malformed sector tag is still skipped.",
+        [s, w, h1], valid([s, w, h1], PX, skipped=[w]))
+
+    s = b.spawn()
     w = b.link("wave", s, s, P, P)
     h1 = b.hop(s, w, P, PX, seed=s)
-    add("skip-hop-seeded-by-nearest-recognized", ["8.9 step 3"],
+    add("skip-hop-seeded-by-nearest-recognized", ["8.9 item 3"],
         "Work is seeded by the actual previous event. A hop after a skipped action whose proof was seeded by the nearest "
         "recognized action (the spawn) instead is invalid.",
-        [s, w, h1], invalid([s, w, h1], h1, "hop-proof"))
+        [s, w, h1], invalid([s, w, h1], h1, "hop-proof", P))
 
     s = b.spawn()
     w = b.link("wave", s, s, P, P)
     st = b.sidestep(s, w, P, PZ)
-    add("skip-then-sidestep", ["8.9 step 3", "8.7.2"], "A sidestep after a skipped action is seeded by the skipped id and fully checked.",
+    add("skip-then-sidestep", ["8.9 item 3", "8.7.2"], "A sidestep after a skipped action is seeded by the skipped id and fully checked.",
         [s, w, st], valid([s, w, st], PZ, skipped=[w]))
 
     s = b.spawn()
     tp = b.link("teleport", s, s, P, PY)
     h1 = b.hop(s, tp, PY, flip(PY, dx=1))
-    add("skip-unknown-moving-then-hop-from-moved", ["8.9 step 2"],
+    add("skip-unknown-moving-then-hop-from-moved", ["8.9 item 2"],
         "An unrecognized action that changes the position is skipped, so the hop after it, starting where the skipped "
         "action left off, has a c that is not the carried position: the chain is invalid from the hop.",
-        [s, tp, h1], invalid([s, tp, h1], h1, "c-mismatch"))
+        [s, tp, h1], invalid([s, tp, h1], h1, "c-mismatch", P))
 
     s = b.spawn()
     tp = b.link("teleport", s, s, P, PY)
     h1 = b.hop(s, tp, P, PX)
-    add("skip-unknown-moving-then-hop-from-carried", ["8.9 step 2"],
+    add("skip-unknown-moving-then-hop-from-carried", ["8.9 item 2"],
         "A hop after a skipped moving action is valid when its c is the carried position (the C of the nearest "
         "recognized action), since the skipped action is treated as if it were not on the chain.",
         [s, tp, h1], valid([s, tp, h1], PX, skipped=[tp]))
@@ -373,64 +502,125 @@ def build(sk: PrivateKey, pub: str, line: Line) -> List[Dict[str, Any]]:
     h1 = b.hop(s, s, P, PX)
     tp = b.link("teleport", s, h1, PX, PY)
     w = b.link("wave", s, tp, PY, PY)
-    add("skip-chain-ends-on-unknown", ["8.9 step 5"],
+    add("skip-chain-ends-on-unknown", ["8.9 item 5"],
         "A chain that ends on skipped actions is valid; the position is the C of the last recognized action, and the head "
         "is the last skipped event.",
         [s, h1, tp, w], valid([s, h1, tp, w], PX, skipped=[tp, w]))
 
     s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    tp = b.link("teleport", s, h1, PX, PY)
+    h2 = b.hop(s, tp, PY, flip(PY, dz=1))
+    add("skip-invalid-after-skipped", ["8.7.3 validity and position", "8.9 item 5"],
+        "When the last valid event is a skipped action, the last valid position is the C of the last recognized action.",
+        [s, h1, tp, h2], invalid([s, h1, tp, h2], h2, "c-mismatch", PX))
+
+    s = b.spawn()
     w = b.link("wave", s, s, P, P)
-    ev = b.enter(s, w, P, G0, R)
-    x = b.exit(s, ev, ev, G0, P)
-    add("skip-then-bracket", ["8.9 step 2", "8.11.5"], "An enter-virtual after a skipped action starts from the carried position.",
+    ev = b.enter(s, w, P, R)
+    x = b.exit(s, ev, ev, P)
+    add("skip-then-bracket", ["8.9 continuity and virtual brackets"], "An enter-virtual after a skipped action starts from the carried position.",
         [s, w, ev, x], valid([s, w, ev, x], P, skipped=[w]))
 
-    # ------------------------------------------------ brackets (8.11)
+    # ------------------------------------------------ virtual brackets (8.11)
     s = b.spawn()
     h1 = b.hop(s, s, P, PX)
-    ev = b.enter(s, h1, PX, G0, R)
-    v1 = b.link("move", s, ev, G0, G1)
-    v2 = b.link("score", s, v1, G1, G1)
-    x = b.exit(s, v2, ev, G1, PX)
+    ev = b.enter(s, h1, PX, R)
+    v1 = b.game(s, ev, "move", [["c", G0], ["C", G1]] + _sector_tags_from_coord_hex(G1))
+    v2 = b.game(s, v1, "score", [["points", "3"]])
+    x = b.exit(s, v2, ev, PX, c=G1)
     h2 = b.hop(s, x, PX, flip(PX, dy=1))
     add("bracket-valid-then-hop", ["8.11.1-8.11.5", "8.11.4 rule 8"],
-        "Enter, two virtual actions with names of the game's choosing, exit back to the base position, then a hop from "
-        "it seeded by the exit's id.",
+        "Enter (C repeats c), two virtual actions with names and tags of the game's choosing, exit back to the base "
+        "position, then a hop from it seeded by the exit's id.",
         [s, h1, ev, v1, v2, x, h2], valid([s, h1, ev, v1, v2, x, h2], flip(PX, dy=1)))
 
     s = b.spawn()
-    ev = b.enter(s, s, P, G0, R)
-    v1 = b.link("move", s, ev, G0, G2)
-    x = b.exit(s, v1, ev, G2, P)
+    ev = b.enter(s, s, P, R)
+    v1 = b.game(s, ev, "move", [["c", G0], ["C", G2]])
+    x = b.exit(s, v1, ev, P, c=G2)
     add("bracket-position-held", ["8.11.4 rules 1, 2"], "After the exit the position is the entry's c, wherever the game moved.",
         [s, ev, v1, x], valid([s, ev, v1, x], P))
 
     s = b.spawn()
-    ev = b.enter(s, s, P, G0, R)
-    x = b.exit(s, ev, ev, G0, P)
+    ev = b.enter(s, s, P, R)
+    x = b.exit(s, ev, ev, P)
     add("bracket-empty", ["8.11.3"], "An exit straight after its entry: e previous and e entry both name the entry.",
         [s, ev, x], valid([s, ev, x], P))
 
     s = b.spawn()
     h1 = b.hop(s, s, P, PX)
-    ev = b.enter(s, h1, PX, G0, R)
-    v1 = b.link("move", s, ev, G0, G1)
-    v2 = b.link("move", s, v1, G1, G2)
+    ev = b.enter(s, h1, PX, R)
+    v1 = b.game(s, ev, "move")
+    v2 = b.game(s, v1, "move")
     add("bracket-unclosed", ["8.11.4 rule 7"], "A chain may end inside a bracket; the position is the open entry's c.",
         [s, h1, ev, v1, v2], valid([s, h1, ev, v1, v2], PX, open_bracket=ev))
 
     far = port(b"CYBERSPACE_CHAIN_VECTORS_FAR_BOX")
-    far = flip(far, plane=coord_to_xyz(int(P, 16))[3])
     s = b.spawn()
-    ev = b.enter(s, s, P, far, region_around(far, 4))
-    x = b.exit(s, ev, ev, far, P)
-    add("bracket-region-elsewhere", ["8.11.1"], "The game's box need not hold the base position; only the C tags inside the bracket must lie in it.",
+    ev = b.enter(s, s, P, region_around(far, 4))
+    x = b.exit(s, ev, ev, P)
+    add("bracket-region-elsewhere", ["8.11.1"],
+        "The base position need not lie in or near the declared region, even on another plane: an identity can play a game without traveling to it.",
         [s, ev, x], valid([s, ev, x], P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    v = [ev]
+    for name, extra in (
+        ("noop", []),
+        ("teleport", [["c", "zz"], ["C", OUT_R]]),
+        ("move", [["c", PX], ["C", far]] + _sector_tags_from_coord_hex(G0)),
+        ("tag", [["X", "1"], ["X", "2"], ["S", "nowhere"]]),
+    ):
+        v.append(b.game(s, v[-1], name, extra))
+    x = b.exit(s, v[-1], ev, P)
+    add("bracket-game-events-unchecked", ["8.11.2", "8.11.4 rules 4, 5"],
+        "The inside of a bracket belongs to the game. Virtual actions with no coordinates, malformed ones, ones far "
+        "outside the region or on another plane, and missing, wrong or repeated sector tags are all valid.",
+        [s] + v + [x], valid([s] + v + [x], P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    v1 = b.game(s, ev, "move", [["C", G1]])
+    x = b.exit(s, v1, ev, P)
+    add("bracket-exit-c-missing", ["8.11.3"], "An exit without a c tag is valid; its c is optional.",
+        [s, ev, v1, x], valid([s, ev, v1, x], P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    v1 = b.game(s, ev, "move", [["C", G1]])
+    x = b.exit(s, v1, ev, P, c=OUT_R)
+    add("bracket-exit-c-unchecked", ["8.11.3", "8.11.4 rule 4"],
+        "An exit whose c is neither the previous event's C nor anything else in particular is valid; its c is not checked.",
+        [s, ev, v1, x], valid([s, ev, v1, x], P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R, C=G0)
+    add("bracket-enter-moves", ["8.11.1", "8.11.5 step 1"], "An enter-virtual whose C is not its c is invalid: entering a game does not move the identity.",
+        [s, ev], invalid([s, ev], ev, "enter-virtual-moved", P))
+
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    ev = b.enter(s, h1, P, R)
+    add("bracket-entry-c-mismatch", ["8.11.1", "8.11.5 step 1"], "An entry's c is the carried position.",
+        [s, h1, ev], invalid([s, h1, ev], ev, "c-mismatch", PX))
+
+    s = b.spawn()
+    ev = b.retag(b.enter(s, s, P, R), lambda t: [x for x in t if x[0] not in "XYZS"] + _sector_tags_from_coord_hex(FAR_SECTOR))
+    add("bracket-enter-sector-tags-wrong", ["8.11.1", "10"], "An enter-virtual's sector tags are computed from its C, the base position.",
+        [s, ev], invalid([s, ev], ev, "sector-tags", P))
+
+    s = b.spawn()
+    ev = b.enter(s, s, P, R)
+    x = b.retag(b.exit(s, ev, ev, P), drop("X"))
+    add("bracket-exit-sector-tags-missing", ["8.11.3", "10"], "An exit-virtual without its X tag is invalid.",
+        [s, ev, x], invalid([s, ev, x], x, "sector-tags", P))
 
     for name, action in (("hop", "hop"), ("enter-hyperspace", "enter-hyperspace"), ("enter-virtual", "enter-virtual"), ("sidestep", "sidestep")):
         s = b.spawn()
-        ev = b.enter(s, s, P, G0, R)
-        v1 = b.link("move", s, ev, G0, G1)
+        ev = b.enter(s, s, P, R)
+        v1 = b.game(s, ev, "move", [["c", P], ["C", G1]])
         if action == "hop":
             bad = b.hop(s, v1, G1, flip(G1, dx=1))
         elif action == "sidestep":
@@ -438,84 +628,60 @@ def build(sk: PrivateKey, pub: str, line: Line) -> List[Dict[str, Any]]:
         elif action == "enter-hyperspace":
             bad = b.board(s, v1, G1)
         else:
-            bad = b.enter(s, v1, G1, G2, R)
+            bad = b.enter(s, v1, G1, R)
         add(f"bracket-{name}-inside", ["8.11.4 rule 3"],
-            f"A {action} inside an open bracket is invalid, even with a valid proof and a C in the box. Brackets do not nest.",
-            [s, ev, v1, bad], invalid([s, ev, v1, bad], bad, "base-action-in-bracket"))
+            f"A {action} inside an open bracket is invalid, even when it is valid on its own: the name is reserved. Brackets do not nest.",
+            [s, ev, v1, bad], invalid([s, ev, v1, bad], bad, "base-action-in-bracket", P))
 
     s = b.spawn()
     eh = b.board(s, s, P)
-    ev = b.enter(s, eh, P, G0, R)
-    hj = b.ride(s, ev, G0, 2, 4, as_of=5)
+    ev = b.enter(s, eh, P, R)
+    hj = b.ride(s, ev, P, 2, 4, as_of=5)
     add("bracket-hyperjump-inside", ["8.11.4 rule 3", "DECK-0001 8"], "A hyperjump inside an open bracket is invalid.",
-        [s, eh, ev, hj], invalid([s, eh, ev, hj], hj, "base-action-in-bracket"))
+        [s, eh, ev, hj], invalid([s, eh, ev, hj], hj, "base-action-in-bracket", P))
 
     s = b.spawn()
-    ev = b.enter(s, s, P, G0, R)
-    v1 = b.link("teleport", s, ev, G0, OUT_R)
-    add("bracket-virtual-outside-region", ["8.11.4 rules 4, 5"],
-        "Inside a bracket an unrecognized name is a virtual action, not a skipped one: its C must lie in the box.",
-        [s, ev, v1], invalid([s, ev, v1], v1, "outside-region"))
+    ev = b.enter(s, s, P, R)
+    v1 = b.game(s, ev, "move")
+    v2 = b.retag(b.game(s, v1, "move"), lambda t: t + [["A", "score"]])
+    add("bracket-virtual-two-a-tags", ["8.8", "8.11.4 rule 4"],
+        "A virtual action with two A tags is invalid; inside a bracket the last valid position is the base position.",
+        [s, ev, v1, v2], invalid([s, ev, v1, v2], v2, "a-tag", P))
 
     s = b.spawn()
-    ev = b.enter(s, s, P, OUT_R, R)
-    add("bracket-entry-outside-region", ["8.11.1", "8.11.4 rule 4"], "The enter-virtual's own C must lie in the box.",
-        [s, ev], invalid([s, ev], ev, "outside-region"))
-
-    s = b.spawn()
-    ev = b.enter(s, s, P, G0, R)
-    v1 = b.link("move", s, ev, G0, G1)
-    x = b.exit(s, v1, ev, G1, G1)
+    ev = b.enter(s, s, P, R)
+    v1 = b.game(s, ev, "move")
+    x = b.exit(s, v1, ev, G1)
     add("bracket-exit-position-mismatch", ["8.11.4 rule 2"], "An exit whose C is not the entry's c is invalid.",
-        [s, ev, v1, x], invalid([s, ev, v1, x], x, "exit-position"))
+        [s, ev, v1, x], invalid([s, ev, v1, x], x, "exit-position", P))
 
     s = b.spawn()
     h1 = b.hop(s, s, P, PX)
-    x = b.exit(s, h1, s, PX, PX)
+    x = b.exit(s, h1, s, PX, c=PX)
     add("bracket-exit-without-bracket", ["8.11.4 rule 6"], "An exit with no bracket open is invalid.",
-        [s, h1, x], invalid([s, h1, x], x, "exit-without-bracket"))
+        [s, h1, x], invalid([s, h1, x], x, "exit-without-bracket", PX))
 
     s = b.spawn()
-    ev = b.enter(s, s, P, G0, R)
-    x1 = b.exit(s, ev, ev, G0, P)
-    x2 = b.exit(s, x1, ev, P, P)
+    ev = b.enter(s, s, P, R)
+    x1 = b.exit(s, ev, ev, P)
+    x2 = b.exit(s, x1, ev, P, c=P)
     add("bracket-exit-twice", ["8.11.4 rule 6"], "A second exit naming a bracket that is already closed: no bracket is open.",
-        [s, ev, x1, x2], invalid([s, ev, x1, x2], x2, "exit-without-bracket"))
+        [s, ev, x1, x2], invalid([s, ev, x1, x2], x2, "exit-without-bracket", P))
 
     s = b.spawn()
-    ev1 = b.enter(s, s, P, G0, R)
-    x1 = b.exit(s, ev1, ev1, G0, P)
-    ev2 = b.enter(s, x1, P, G1, R)
-    v1 = b.link("move", s, ev2, G1, G2)
-    x2 = b.exit(s, v1, ev1, G2, P)
+    ev1 = b.enter(s, s, P, R)
+    x1 = b.exit(s, ev1, ev1, P)
+    ev2 = b.enter(s, x1, P, R)
+    v1 = b.game(s, ev2, "move")
+    x2 = b.exit(s, v1, ev1, P)
     add("bracket-exit-wrong-entry", ["8.11.4 rule 6"], "An exit whose e entry names an earlier, closed bracket instead of the open one is invalid.",
-        [s, ev1, x1, ev2, v1, x2], invalid([s, ev1, x1, ev2, v1, x2], x2, "exit-wrong-entry"))
+        [s, ev1, x1, ev2, v1, x2], invalid([s, ev1, x1, ev2, v1, x2], x2, "exit-wrong-entry", P))
 
     s = b.spawn()
-    ev = b.enter(s, s, P, G0, R)
-    x = b.exit(s, ev, None, G0, P)
+    ev = b.enter(s, s, P, R)
+    x = b.exit(s, ev, None, P)
     add("bracket-exit-missing-entry-tag", ["8.11.3"], "An exit without an e entry tag is malformed.",
-        [s, ev, x], invalid([s, ev, x], x, "malformed"))
-
-    s = b.spawn()
-    ev = b.enter(s, s, P, G0, R)
-    v1 = b.link("move", s, ev, G0, G1)
-    x = b.exit(s, v1, ev, G0, P)
-    add("bracket-exit-c-mismatch", ["8.11.3"], "An exit's c is the C of the previous event, the last position inside the game.",
-        [s, ev, v1, x], invalid([s, ev, v1, x], x, "c-mismatch"),
-        open_question="8.11.5 step 3 does not list this check; 8.11.3 defines the exit's c as the previous C, read here as a rule.")
-
-    s = b.spawn()
-    ev = b.enter(s, s, P, G0, R)
-    v1 = b.link("move", s, ev, G1, G2)
-    add("bracket-virtual-c-mismatch", ["8.11.2", "8.11.5 step 2"], "A virtual action's c is the C of the previous event.",
-        [s, ev, v1], invalid([s, ev, v1], v1, "c-mismatch"))
-
-    s = b.spawn()
-    h1 = b.hop(s, s, P, PX)
-    ev = b.enter(s, h1, P, G0, R)
-    add("bracket-entry-c-mismatch", ["8.11.5 step 1"], "An entry's c is the carried position.",
-        [s, h1, ev], invalid([s, h1, ev], ev, "c-mismatch"))
+        [s, ev, x], invalid([s, ev, x], x, "malformed", P))
 
     for name, games in (
         ("missing", []),
@@ -524,33 +690,30 @@ def build(sk: PrivateKey, pub: str, line: Line) -> List[Dict[str, Any]]:
         ("bad-pubkey", [["p", GAME.upper(), "", "game"]]),
     ):
         s = b.spawn()
-        ev = b.enter(s, s, P, G0, R, games=games)
+        ev = b.enter(s, s, P, R, games=games)
         add(f"bracket-game-tag-{name}", ["8.11.1", "8.11.5"],
             "An enter-virtual must carry exactly one p tag marked game holding a 32-byte lowercase hex pubkey.",
-            [s, ev], invalid([s, ev], ev, "game-tag"))
+            [s, ev], invalid([s, ev], ev, "game-tag", P))
 
     s = b.spawn()
-    ev = b.enter(s, s, P, G0, R, games=[["p", GAME, "", "game"], ["p", "cd" * 32, "", "referee"]])
-    x = b.exit(s, ev, ev, G0, P)
+    ev = b.enter(s, s, P, R, games=[["p", GAME, "", "game"], ["p", "cd" * 32, "", "referee"]])
+    x = b.exit(s, ev, ev, P)
     add("bracket-game-tag-with-other-p", ["8.11.1"], "Other p tags are not game tags; one marked game is exactly one.",
         [s, ev, x], valid([s, ev, x], P))
 
     unaligned = [format(int(R[0], 16) | (1 << 3), "064x"), "8"]
     for name, region in (("unaligned", unaligned), ("noncanonical-height", [R[0], "08"]), ("height-above-85", [R[0], "86"]), ("missing", None)):
         s = b.spawn()
+        ev = b.enter(s, s, P, region or R)
         if region is None:
-            tags = [["A", "enter-virtual"], ["e", s["id"], "", "genesis"], ["e", s["id"], "", "previous"], ["c", P], ["C", G0],
-                    ["p", GAME, "", "game"]] + _sector_tags_from_coord_hex(G0)
-            ev = b.sign(tags)
-        else:
-            ev = b.enter(s, s, P, G0, region)
+            ev = b.retag(ev, drop("region"))
         add(f"bracket-region-{name}", ["8.11.1"],
             "The region tag must be present once, with H a canonical decimal in [0, 85] and the base aligned to H.",
-            [s, ev], invalid([s, ev], ev, "region"))
+            [s, ev], invalid([s, ev], ev, "region", P))
 
     s1 = b.spawn()
-    ev = b.enter(s1, s1, P, G0, R)
-    v1 = b.link("move", s1, ev, G0, G1)
+    ev = b.enter(s1, s1, P, R)
+    v1 = b.game(s1, ev, "move")
     s2 = b.spawn()
     h1 = b.hop(s2, s2, P, PX)
     add("bracket-spawn-inside", ["8.11.2", "8.11.4", "8.7.3"],
@@ -558,7 +721,7 @@ def build(sk: PrivateKey, pub: str, line: Line) -> List[Dict[str, Any]]:
         "stays in the old chain's history.",
         [s1, ev, v1, s2, h1], valid([s2, h1], PX))
 
-    # ------------------------------------------------ DECK-0001 rides, with look-back (8.9 step 4, 8.11.4 rule 8)
+    # ------------------------------------------------ DECK-0001 rides, with look-back (8.9 item 4, 8.11.4 rule 8)
     s = b.spawn()
     h1 = b.hop(s, s, P, PX)
     eh = b.board(s, h1, PX)
@@ -568,6 +731,14 @@ def build(sk: PrivateKey, pub: str, line: Line) -> List[Dict[str, Any]]:
     add("ride-valid", ["DECK-0001 3, 4.2, 4.3, 5, 6"],
         "Board, ride from the station (stop 2 within the bound 5) to stop 4, ride on to stop 3, exit by a hop.",
         [s, h1, eh, j1, j2, out], valid([s, h1, eh, j1, j2, out], flip(S[3], dx=1)))
+
+    s = b.spawn()
+    eh = b.board(s, s, P)
+    j1 = b.ride(s, eh, P, 2, 3, as_of=5)
+    j2 = b.ride(s, j1, S[3], 3, 2)
+    add("ride-out-and-back-to-station", ["DECK-0001 5.6"],
+        "To stand at its own station an identity rides to a different stop and back: two rides, each passing a block.",
+        [s, eh, j1, j2], valid([s, eh, j1, j2], S[2]))
 
     s = b.spawn()
     eh = b.board(s, s, P)
@@ -581,79 +752,87 @@ def build(sk: PrivateKey, pub: str, line: Line) -> List[Dict[str, Any]]:
     j1 = b.ride(s, eh, P, 2, 4, as_of=7)
     add("ride-not-from-station", ["DECK-0001 4.2, 4.3"],
         "With the bound 7 the station is stop 6, so a first ride from stop 2 is invalid.",
-        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-station"))
+        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-station", P))
 
     s = b.spawn()
     eh = b.board(s, s, P)
     j1 = b.ride(s, eh, P, 2, 2, as_of=5)
-    add("ride-zero-length-first", ["DECK-0001 5.6"],
-        "A first ride whose destination is the station has length 0, a zero proof, zero mn and empty mp; it moves the identity to the stop.",
-        [s, eh, j1], valid([s, eh, j1], S[2]))
+    add("ride-zero-length-first", ["DECK-0001 5.2, 5.6"],
+        "A first ride from the station to the station itself, in the shape the earlier draft defined, is invalid: there is no zero-length ride.",
+        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-zero-length", P))
 
     s = b.spawn()
     eh = b.board(s, s, P)
     j1 = b.ride(s, eh, P, 2, 4, as_of=5)
     j2 = b.ride(s, j1, S[4], 4, 4)
-    add("ride-zero-length-later", ["DECK-0001 5.2, 5.6"],
-        "A later ride with from_height equal to B: 5.2 allows B_to = B_from only when 5.6 applies, and 5.6 is the first ride from the station.",
-        [s, eh, j1, j2], invalid([s, eh, j1, j2], j2, "hyperjump-zero-length"),
-        open_question="Published chains contain such rides (for example 331059b3... and d457ac3a..., both on the exemption "
-                      "list of DECK-0001 5.8, which says no chain is invalidated). Read literally, 5.2 makes them invalid.")
+    add("ride-zero-length-later", ["DECK-0001 5.2, 5.6"], "A later ride with from_height equal to B is invalid.",
+        [s, eh, j1, j2], invalid([s, eh, j1, j2], j2, "hyperjump-zero-length", S[4]))
 
     s = b.spawn()
     h1 = b.hop(s, s, P, PX)
     j1 = b.ride(s, h1, PX, 2, 4, as_of=5)
     add("ride-after-hop", ["DECK-0001 4.3"], "A hyperjump whose previous action is a hop is invalid.",
-        [s, h1, j1], invalid([s, h1, j1], j1, "hyperjump-predecessor"))
+        [s, h1, j1], invalid([s, h1, j1], j1, "hyperjump-predecessor", PX))
 
     s = b.spawn()
     eh = b.board(s, s, P)
     j1 = b.ride(s, eh, P, 2, 4)
     add("ride-missing-as-of", ["DECK-0001 4.3"], "The first ride after boarding must carry as_of.",
-        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-as-of"))
+        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-as-of", P))
 
     s = b.spawn()
     eh = b.board(s, s, P)
     j1 = b.ride(s, eh, P, 2, 4, as_of=3)
     add("ride-as-of-below-destination", ["DECK-0001 4.2"], "as_of must be at least B.",
-        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-as-of"))
+        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-as-of", P))
 
     s = b.spawn()
     eh = b.board(s, s, P)
     j1 = b.ride(s, eh, P, 2, 4, as_of=TIP + 1)
     add("ride-as-of-beyond-tip", ["DECK-0001 4.2"], "as_of must be a height that exists; the line ends at 7.",
-        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-as-of"))
+        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-as-of", P))
 
     s = b.spawn()
     eh = b.board(s, s, P)
     j1 = b.ride(s, eh, P, 2, 4, as_of=5)
     j2 = b.ride(s, j1, S[4], 3, 5)
     add("ride-later-from-height-mismatch", ["DECK-0001 4.3"], "A later ride departs from the previous ride's B.",
-        [s, eh, j1, j2], invalid([s, eh, j1, j2], j2, "hyperjump-from-height"))
+        [s, eh, j1, j2], invalid([s, eh, j1, j2], j2, "hyperjump-from-height", S[4]))
 
     s = b.spawn()
     eh = b.board(s, s, P)
     j1 = b.ride(s, eh, P, 2, 4, as_of=5, C=S[5])
     add("ride-wrong-stop", ["DECK-0001 5.5"], "A ride's C must be the stop coordinate of its B.",
-        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-stop"))
+        [s, eh, j1], invalid([s, eh, j1], j1, "hyperjump-stop", P))
+
+    s = b.spawn()
+    eh = b.board(s, s, P)
+    j1 = b.retag(b.ride(s, eh, P, 2, 4, as_of=5), set_value("S", lambda v: v + "0"))
+    add("ride-sector-tags-wrong", ["DECK-0001 1.3", "10"], "A ride whose S tag is not computed from its C is invalid.",
+        [s, eh, j1], invalid([s, eh, j1], j1, "sector-tags", P))
 
     s = b.spawn()
     eh = b.board(s, s, P, C=PX)
     add("board-moves", ["DECK-0001 3.1"], "An enter-hyperspace whose C differs from its c is invalid.",
-        [s, eh], invalid([s, eh], eh, "enter-hyperspace-moved"))
+        [s, eh], invalid([s, eh], eh, "enter-hyperspace-moved", P))
 
     s = b.spawn()
     w = b.link("wave", s, s, P, P)
     eh = b.board(s, w, P, seed=s)
-    add("board-proof-wrong-seed", ["DECK-0001 3.2", "8.9 step 3"],
+    add("board-proof-wrong-seed", ["DECK-0001 3.2", "8.9 item 3"],
         "The entry proof is seeded by the actual previous event, here a skipped action; one seeded by the spawn is invalid.",
-        [s, w, eh], invalid([s, w, eh], eh, "enter-hyperspace-proof"))
+        [s, w, eh], invalid([s, w, eh], eh, "enter-hyperspace-proof", P))
+
+    s = b.spawn()
+    eh = b.retag(b.board(s, s, P), duplicate("S"))
+    add("board-sector-tags-duplicated", ["DECK-0001 1.3", "10"], "An enter-hyperspace with its S tag twice is invalid.",
+        [s, eh], invalid([s, eh], eh, "sector-tags", P))
 
     s = b.spawn()
     eh = b.board(s, s, P)
-    ev = b.enter(s, eh, P, G0, R)
-    v1 = b.link("move", s, ev, G0, G1)
-    x = b.exit(s, v1, ev, G1, P)
+    ev = b.enter(s, eh, P, R)
+    v1 = b.game(s, ev, "move", [["C", G1]])
+    x = b.exit(s, v1, ev, P, c=G1)
     j1 = b.ride(s, x, P, 2, 4, as_of=5)
     add("lookback-ride-through-bracket", ["8.11.4 rule 8", "DECK-0001 4.3, 8"],
         "Board, play a game, exit, ride: the exit stands for the boarding, so this is the first ride and departs from the "
@@ -662,38 +841,38 @@ def build(sk: PrivateKey, pub: str, line: Line) -> List[Dict[str, Any]]:
 
     s = b.spawn()
     eh = b.board(s, s, P)
-    ev = b.enter(s, eh, P, G0, R)
-    x = b.exit(s, ev, ev, G0, P)
+    ev = b.enter(s, eh, P, R)
+    x = b.exit(s, ev, ev, P)
     j1 = b.ride(s, x, P, 2, 4, as_of=5, seed=eh)
     add("lookback-ride-seeded-by-boarding", ["8.11.4 rule 8", "DECK-0001 5.3"],
         "The exit stands in for the boarding only for the look-back rule; a ride seeded by the boarding instead of the exit is invalid.",
-        [s, eh, ev, x, j1], invalid([s, eh, ev, x, j1], j1, "hyperjump-proof"))
+        [s, eh, ev, x, j1], invalid([s, eh, ev, x, j1], j1, "hyperjump-proof", P))
 
     s = b.spawn()
     eh = b.board(s, s, P)
     w = b.link("wave", s, eh, P, P)
     j1 = b.ride(s, w, P, 2, 4, as_of=5)
-    add("lookback-ride-through-skipped", ["8.9 step 4", "DECK-0001 4.3"],
+    add("lookback-ride-through-skipped", ["8.9 item 4", "DECK-0001 4.3"],
         "A skipped action between boarding and the first ride: the boarding stands before the ride, which is seeded by the skipped id.",
         [s, eh, w, j1], valid([s, eh, w, j1], S[4], skipped=[w]))
 
     s = b.spawn()
     h1 = b.hop(s, s, P, PX)
-    ev = b.enter(s, h1, PX, G0, R)
-    x = b.exit(s, ev, ev, G0, PX)
+    ev = b.enter(s, h1, PX, R)
+    x = b.exit(s, ev, ev, PX)
     j1 = b.ride(s, x, PX, 2, 4, as_of=5)
     add("lookback-exit-stands-for-hop", ["8.11.4 rule 8", "DECK-0001 4.3"],
         "The exit stands for the hop before its entry, so the ride has no boarding before it and is invalid.",
-        [s, h1, ev, x, j1], invalid([s, h1, ev, x, j1], j1, "hyperjump-predecessor"))
+        [s, h1, ev, x, j1], invalid([s, h1, ev, x, j1], j1, "hyperjump-predecessor", PX))
 
     s = b.spawn()
     eh = b.board(s, s, P)
     j1 = b.ride(s, eh, P, 2, 4, as_of=5)
-    ev = b.enter(s, j1, S[4], flip(S[4], dx=2), region_around(S[4], 4))
-    x = b.exit(s, ev, ev, flip(S[4], dx=2), S[4])
+    ev = b.enter(s, j1, S[4], region_around(S[4], 4))
+    x = b.exit(s, ev, ev, S[4])
     w = b.link("wave", s, x, S[4], S[4])
     j2 = b.ride(s, w, S[4], 4, 5)
-    add("lookback-later-ride-through-bracket-and-skipped", ["8.9 step 4", "8.11.4 rule 8", "DECK-0001 4.3, 8"],
+    add("lookback-later-ride-through-bracket-and-skipped", ["8.9 item 4", "8.11.4 rule 8", "DECK-0001 4.3, 8"],
         "A game played at a stop and a skipped action, then the next ride: it looks back to the previous ride and departs from its B.",
         [s, eh, j1, ev, x, w, j2], valid([s, eh, j1, ev, x, w, j2], S[5], skipped=[w]))
 
@@ -702,30 +881,33 @@ def build(sk: PrivateKey, pub: str, line: Line) -> List[Dict[str, Any]]:
 
 def main() -> None:
     j, sk, pub = test_key()
+    other = PrivateKey(sha256(OTHER_KEY_DOMAIN))
     blocks = make_line(pub)
     line = Line.from_blocks(blocks)
     for bound, station in ((2, 2), (5, 2), (6, 6), (7, 6)):
         assert line.station(pub, bound) == station, (bound, line.station(pub, bound))
-    vectors = build(sk, pub, line)
+    vectors = build(sk, other, line)
     names = [v["name"] for v in vectors]
     assert len(names) == len(set(names)), "vector names must be unique"
     for v in vectors:
-        got = verify_chain(v["events"], pubkey=pub, line=line, check_signatures=True).expected()
+        got = verify_chain(v["events"], pubkey=pub, line=line).expected()
         if got != v["expected"]:
             raise SystemExit(f"{v['name']}: the verifier says {json.dumps(got)}, the vector says {json.dumps(v['expected'])}")
     doc = {
         "name": "cyberspace chain rules golden vectors",
         "chain_rules_revision": CHAIN_RULES_REVISION,
+        "revision_note": "2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and clarified on 2026-10-08 (CYBERSPACE_V2.md 8.12)",
         "spec": {"repository": "arkin0x/cyberspace", "commit": SPEC_COMMIT},
         "generator": "scripts/gen_chain_vectors.py in arkin0x/cyberspace-cli",
         "regenerate": "PYTHONPATH=src python scripts/gen_chain_vectors.py",
         "format": "vectors/README.md",
-        "verify_with": {"check_signatures": True, "line": "line.blocks below"},
+        "verify_with": {"identity": pub, "line": "line.blocks below"},
         "test_key": {
             "secret_key": sha256(KEY_DOMAIN + j.to_bytes(4, "big")).hex(),
             "pubkey": pub,
             "derivation": f"sha256({KEY_DOMAIN.decode()} || be32({j})), the first j whose spawn coordinate has terrain K <= {MAX_K}",
         },
+        "other_key": {"pubkey": other.public_key_xonly.format().hex(), "derivation": f"sha256({OTHER_KEY_DOMAIN.decode()})"},
         "game_pubkey": GAME,
         "line": {
             "description": "Synthetic stops 0..7, all ports (plane bit 1), so each stop coordinate is its merkle root. "
