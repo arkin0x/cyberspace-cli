@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Regenerate vectors/chain-rules-2026-09-28-virtual-brackets.json, the golden
 vectors for the chain rules of CYBERSPACE_V2.md section 8.12, revision
-2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and
-clarified on 2026-10-08 (arkin0x/cyberspace 912f3d7).
+2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and in
+two rounds on 2026-10-08 (arkin0x/cyberspace 1bf5694).
 
     PYTHONPATH=src python scripts/gen_chain_vectors.py
 
@@ -45,7 +45,7 @@ from cyberspace_core.ride import K_LINE, encode_ride_openings, line_terrain_k, p
 from cyberspace_core.terrain import terrain_k
 
 OUT = Path(__file__).resolve().parents[1] / "vectors" / f"chain-rules-{CHAIN_RULES_REVISION}.json"
-SPEC_COMMIT = "912f3d70e4d15d70054e9fa98646098a1c216d47"
+SPEC_COMMIT = "1bf5694f349241f60762145efad5019569e837e6"
 KEY_DOMAIN = b"CYBERSPACE_CHAIN_VECTORS_KEY"
 OTHER_KEY_DOMAIN = b"CYBERSPACE_CHAIN_VECTORS_OTHER_KEY"
 STOP_DOMAIN = b"CYBERSPACE_CHAIN_VECTORS_STOP"
@@ -1147,6 +1147,55 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
     add("sidestep-two-mn-tags", ["8.5", "8.12"], "A sidestep with its mn tag twice is invalid.",
         [s, st], invalid([s, st], st, "malformed", P))
 
+    # ------------------------------------------------ the second round of 2026-10-08, as merged (1bf5694)
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    h2 = b.hop(s, h1, PX, flip(PX, dy=1))
+    old = b.sign([["A", "spawn"], ["e", s["id"], "", "genesis"], ["e", h1["id"], "", "previous"], ["C", P]]
+                 + _sector_tags_from_coord_hex(P), created_at=s["created_at"] - 1)
+    add("spawn-never-a-link-old", ["8.7.3 a spawn is never a link"],
+        "An older spawn whose e tags name the newest spawn as genesis and a hop in the middle of its chain as previous. "
+        "A spawn is never a link, so it is not a second next event after that hop: there is no fork, and the chain is "
+        "valid at its head.",
+        [s, h1, h2, old], valid([s, h1, h2], flip(PX, dy=1)))
+
+    s1 = b.spawn()
+    h1 = b.hop(s1, s1, P, PX)
+    s2 = b.sign([["A", "spawn"], ["e", s1["id"], "", "genesis"], ["e", h1["id"], "", "previous"], ["C", P]]
+                + _sector_tags_from_coord_hex(P))
+    h2 = b.hop(s2, s2, P, PY)
+    add("spawn-never-a-link-newest", ["8.7.3 rule 1", "8.7.3 a spawn is never a link", "8.8"],
+        "The newest spawn carries e tags naming the old chain's spawn and head. It starts the active chain as usual; "
+        "its e tags are not read, so it neither extends the old chain nor is made invalid by them.",
+        [s1, h1, s2, h2], valid([s2, h2], PY))
+
+    s = b.spawn()
+    eh = b.retag(b.board(s, s, P), lambda t: t + [["net", "testnet"]])
+    j1 = b.retag(b.ride(s, eh, P, 2, 4, as_of=5), lambda t: t + [["net", "testnet"], ["net", "signet"]])
+    add("ride-net-tag-unread", ["DECK-0001 1.4", "8.8"],
+        "A boarding and a ride carrying net tags that name other networks, the ride two of them. The line is Bitcoin "
+        "mainnet, always; a net tag is informational and never read, so it is not constrained and the ride is valid.",
+        [s, eh, j1], valid([s, eh, j1], S[4]))
+
+    for name, change, reason, why in (
+        ("sector-tags-repeated", duplicate("S"), "sector-tags", "its S tag twice"),
+        ("c-repeated", duplicate("C"), "malformed", "its C tag twice"),
+    ):
+        s1 = b.spawn()
+        h1 = b.hop(s1, s1, P, PX)
+        s2 = b.retag(b.spawn(), change)
+        add(f"spawn-{name}", ["8.3", "8.8", "3.2"],
+            f"The newest spawn carries {why}. It is an invalid newest spawn, so the chain is dead at the spawn "
+            "coordinate, with no fallback to the older chain.",
+            [s1, h1, s2], invalid([s2], s2, reason, P))
+
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    add("same-event-twice", ["8.7.3 rule 4"],
+        "The same hop is delivered twice in the input. Forks are counted among distinct events, distinct by id, so a "
+        "copy of one event is not a fork.",
+        [s, h1, dict(h1)], valid([s, h1], PX))
+
     return vectors
 
 
@@ -1170,7 +1219,10 @@ def main() -> None:
     doc = {
         "name": "cyberspace chain rules golden vectors",
         "chain_rules_revision": CHAIN_RULES_REVISION,
-        "revision_note": "2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and clarified on 2026-10-08 (CYBERSPACE_V2.md 8.12)",
+        "revision_note": "2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and in two rounds on 2026-10-08 (CYBERSPACE_V2.md 8.12): "
+                         "the first round clarified forks, signatures, sector tags and regions; the second made a fork fatal, made any A tag equal to spawn "
+                         "a spawn, made a spawn never a link, required every tag the chain rules read exactly once with a well-formed value, and fixed the "
+                         "network for chain validity as Bitcoin mainnet, always, so a net tag is never read (DECK-0001 1.4)",
         "spec": {"repository": "arkin0x/cyberspace", "commit": SPEC_COMMIT},
         "generator": "scripts/gen_chain_vectors.py in arkin0x/cyberspace-cli",
         "regenerate": "PYTHONPATH=src python scripts/gen_chain_vectors.py",
