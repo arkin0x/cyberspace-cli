@@ -20,6 +20,8 @@ from cyberspace_cli.hosaka import (
     CloudUnavailable,
     HosakaClient,
     Limits,
+    coord,
+    idempotency_key,
 )
 from cyberspace_cli.nip98 import nip98_authorization, nip98_event
 from cyberspace_core.cantor import int_to_bytes_be_min, sha256
@@ -115,6 +117,30 @@ class TestClientErrors(unittest.TestCase):
             c.get_job("j1", "tok")
             self.assertEqual(seen["token"], "tok")
             self.assertIsNone(seen["auth"])
+
+
+    def test_submit_sends_one_idempotency_key_per_move(self):
+        """Running the same move again after a lost answer must name the same job."""
+        c = self._client()
+        seen = []
+
+        def fake_urlopen(req, timeout=0):
+            seen.append((req.get_header("Idempotency-key"), req.get_header("Authorization")))
+            return _Resp({"id": "j1", "status": "computing"})
+
+        v1, v2 = coord(1, 2, 3), coord(1 + (1 << 20), 2, 3)
+        prev = "ab" * 32
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            c.submit("hop", v1, v2, prev)
+            c.submit("hop", dict(v1), dict(v2), prev)
+            c.submit("hop", v1, v2, "cd" * 32)
+            c.submit("sidestep", v1, v2, prev)
+        keys = [k for k, _ in seen]
+        self.assertEqual(keys[0], idempotency_key("hop", v1, v2, prev))
+        self.assertRegex(keys[0], r"^cyberspace-cli-[0-9a-f]{64}$")
+        self.assertEqual(keys[0], keys[1])            # the same move: the same key
+        self.assertEqual(len({keys[0], keys[2], keys[3]}), 3)  # a new head, a new action: new keys
+        self.assertNotEqual(seen[0][1], seen[1][1])  # each attempt is still freshly signed
 
 
 class TestDecisions(unittest.TestCase):

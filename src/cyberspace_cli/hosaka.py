@@ -10,6 +10,7 @@ this side: the server's node decides when an invoice settled.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 import urllib.error
@@ -114,6 +115,24 @@ def coord(x: int, y: int, z: int, plane: int = 0) -> Dict[str, int]:
     return {"x": int(x), "y": int(y), "z": int(z), "plane": int(plane)}
 
 
+def idempotency_key(action: str, v1: Dict[str, int], v2: Dict[str, int], previous_event_id: str) -> str:
+    """The idempotency key of one move: the same move from the same chain head is the same key.
+
+    A submit whose answer is lost (a timeout, a dropped connection) may already
+    have made its job and charged for it, and running the move again signs a
+    new NIP-98 event, which the server cannot tell from a new request. With
+    this key, sent on every attempt, a HOSAKA that honors it (hosaka-api#21)
+    hands back the job the first attempt made instead of charging twice. It is
+    computed from the request, so nothing has to be remembered between runs;
+    a different move or a moved chain head is a different key.
+    """
+    canonical = json.dumps(
+        {"action": action, "v1": v1, "v2": v2, "previous_event_id": previous_event_id},
+        sort_keys=True, separators=(",", ":"),
+    )
+    return "cyberspace-cli-" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 class HosakaClient:
     def __init__(
         self,
@@ -192,7 +211,10 @@ class HosakaClient:
     def submit(self, action: str, v1: Dict[str, int], v2: Dict[str, int], previous_event_id: str) -> Dict[str, Any]:
         if action not in ("hop", "sidestep"):
             raise ValueError("action must be hop or sidestep")
-        return self._request("POST", f"/api/v1/{action}", {"v1": v1, "v2": v2, "previous_event_id": previous_event_id}, auth=True)
+        return self._request(
+            "POST", f"/api/v1/{action}", {"v1": v1, "v2": v2, "previous_event_id": previous_event_id}, auth=True,
+            headers={"Idempotency-Key": idempotency_key(action, v1, v2, previous_event_id)},
+        )
 
     def get_job(self, job_id: str, poll_token: Optional[str] = None) -> Dict[str, Any]:
         if poll_token:
