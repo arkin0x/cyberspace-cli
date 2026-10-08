@@ -10,6 +10,10 @@ and section 2.2 (legacy anchor interpretation), plus the section 4.1 distance:
   without an ``M`` tag as legacy (``C`` is the merkle root) per section 2.2 and
   checking ``C`` against the derivation when ``M`` is present (section 2.3).
 - ``stop_distance(...)``: the max-axis LCA height of section 4.1.
+- ``enter_hyperspace_proof`` / ``verify_enter_hyperspace_event``: the entry
+  proof of section 3.2.
+- ``Line``: the stops a verifier knows by height, with the station of
+  section 4.2, for the chain rules of rides (``cyberspace_core.chain``).
 
 The landfall derivation runs in the base spec's decimal profile (precision 96,
 ROUND_HALF_EVEN, exact PI_STR, deterministic Taylor sin/cos), reusing the
@@ -25,8 +29,9 @@ import hashlib
 import math
 from dataclasses import dataclass
 from decimal import Decimal, localcontext, ROUND_HALF_EVEN
-from typing import Optional, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from cyberspace_core.cantor import cantor_pair, int_to_bytes_be_min, sha256
 from cyberspace_core.coords import (
     AXIS_BITS,
     DECIMAL_PREC,
@@ -41,7 +46,8 @@ from cyberspace_core.coords import (
     ecef_km_to_dataspace_xyz,
     xyz_to_coord,
 )
-from cyberspace_core.movement import find_lca_height
+from cyberspace_core.movement import TEMPORAL_MAX_COMPUTE_HEIGHT, compute_subtree_cantor, find_lca_height
+from cyberspace_core.terrain import terrain_k
 
 DECK_0001_VERSION = "v3 (2026-08-24)"
 LANDFALL_DOMAIN = b"CYBERSPACE_LANDFALL_V1"
@@ -197,6 +203,106 @@ def resolve_stop(*, c_hex: str, m_hex: Optional[str], h_hex: Optional[str]) -> S
 def stop_distance(p_xyz: Tuple[int, int, int], q_xyz: Tuple[int, int, int]) -> int:
     """Section 4.1: d(p, q) = max per-axis LCA height (plane bits ignored)."""
     return max(find_lca_height(a, b) for a, b in zip(p_xyz, q_xyz))
+
+
+# ---------------------------------------------------------------- boarding (section 3)
+
+def enter_hyperspace_proof(coord_hex: str, previous_event_id: bytes) -> str:
+    """Section 3.2: the entry proof, the base protocol's temporal axis at the
+    identity's coordinate with no spatial component. K is the terrain K at C
+    including the plane bit (base 5.2), cantor_t is the Cantor root of the
+    aligned subtree of height K around t = previous_event_id mod 2^85 (base
+    5.3), and the proof is the double SHA-256 of enter_n = pi(0, cantor_t).
+    It binds the boarding to its chain position; it is not a fare (section 7)."""
+    x, y, z, plane = coord_to_xyz(int(coord_hex, 16))
+    k = terrain_k(x=x, y=y, z=z, plane=plane)
+    t = int.from_bytes(previous_event_id, "big") % (1 << AXIS_BITS)
+    cantor_t = compute_subtree_cantor((t >> k) << k, k, max_compute_height=TEMPORAL_MAX_COMPUTE_HEIGHT)
+    return sha256(sha256(int_to_bytes_be_min(cantor_pair(0, cantor_t)))).hex()
+
+
+def verify_enter_hyperspace_event(event: Dict[str, Any]) -> List[str]:
+    """The entry proof of a published enter-hyperspace event (section 3.2).
+    Returns the failed checks; empty means the proof holds.
+
+    The proof is seeded by the id the e previous tag names, which is the
+    actual previous event whatever its action. That C equals c (section 3.1)
+    and that c is the position the chain carries to this event are chain
+    rules and stay with the caller, as does the NIP-01 signature."""
+    tags = [t for t in (event.get("tags") or []) if isinstance(t, list) and len(t) >= 2]
+
+    def value(name: str) -> Optional[str]:
+        return next((t[1] for t in tags if t[0] == name), None)
+
+    if value("A") != "enter-hyperspace":
+        return ["A: not an enter-hyperspace"]
+    failures: List[str] = []
+    prev = next((t[1] for t in tags if t[0] == "e" and len(t) >= 4 and t[3] == "previous"), None)
+    if not _is_hex32(prev):
+        failures.append("e previous: missing or not 32 bytes of lowercase hex")
+    if not _is_hex32(value("C")):
+        failures.append("C: missing or not a 32-byte lowercase hex coordinate")
+    if not _is_hex32(value("proof")):
+        failures.append("proof: missing or not a 32-byte lowercase hex hash")
+    if failures:
+        return failures
+    if value("proof") != enter_hyperspace_proof(value("C"), bytes.fromhex(prev)):  # type: ignore[arg-type]
+        return ["proof: does not match the entry proof at this chain position (3.2)"]
+    return []
+
+
+def _is_hex32(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 64 and all(c in "0123456789abcdef" for c in value)
+
+
+# ---------------------------------------------------------------- the line (sections 1, 4, 5)
+
+class Line:
+    """The stops a verifier knows, one per block height from 0 to the tip.
+
+    Rides are checked against it: a ride's C is the stop coordinate of its B
+    (5.5 Level 1 step 2), its leaves need each passed block's hash (5.3), and
+    the first ride after boarding departs from the station (4.2), which ranges
+    over every stop up to the declared bound. A height above the tip does not
+    exist as far as this line knows. The heights MUST run without a gap from
+    0, because a station computed over a line with holes could differ from
+    the station every other verifier computes.
+
+    How the stops are obtained (a node, header blobs, anchors) is out of scope
+    (section 2.3). The station here is a linear scan, which is exact and fine
+    for small lines; section 4.4 describes the sorted lookup a full line needs."""
+
+    def __init__(self, stops: Mapping[int, Stop]):
+        heights = sorted(stops)
+        if heights != list(range(len(heights))):
+            raise ValueError("a line's heights must run from 0 without a gap")
+        self._stops = dict(stops)
+        self.tip = len(heights) - 1
+
+    @classmethod
+    def from_blocks(cls, blocks: Iterable[Mapping[str, Any]]) -> "Line":
+        """A line from records carrying `height`, `merkle_root` and
+        `block_hash` (lowercase hex, display order), each stop derived per
+        section 1."""
+        return cls({int(b["height"]): stop_from_block(merkle_root_hex=b["merkle_root"], block_hash_hex=b["block_hash"]) for b in blocks})
+
+    def stop(self, height: int) -> Optional[Stop]:
+        return self._stops.get(height)
+
+    def block_hash(self, height: int) -> bytes:
+        """Block `height`'s 32-byte hash in display order, for the ride leaves (5.3)."""
+        stop = self._stops[height]
+        if stop.block_hash_hex is None:
+            raise KeyError(f"block {height} has no block hash on this line")
+        return bytes.fromhex(stop.block_hash_hex)
+
+    def station(self, coord_hex: str, bound: int) -> int:
+        """Section 4.2: the height of the stop with height <= bound nearest the
+        coordinate by the distance of 4.1, ties broken by the lowest height."""
+        if not 0 <= bound <= self.tip:
+            raise ValueError(f"station bound {bound} is not a height on this line (0..{self.tip})")
+        x, y, z, _ = coord_to_xyz(int(coord_hex, 16))
+        return min(range(bound + 1), key=lambda h: (stop_distance((x, y, z), self._stops[h].xyzp[:3]), h))
 
 
 def axis_gibsons_to_km(gibsons: int) -> Decimal:

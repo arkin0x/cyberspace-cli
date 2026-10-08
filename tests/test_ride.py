@@ -1,6 +1,6 @@
 """DECK-0001 section 5, ride openings version 2: per-block leaves, the padded
 root, the re-roll price (one height-16 Cantor tree per attempt) with samples
-drawn from G, the zero-length ride and the exemption list, against the
+drawn from G, the absence of a zero-length ride and the exemption list, against the
 spec's decks/hyperjump-reference.py vectors.
 
 Real block hashes come from Bitcoin; like the reference, these tests use
@@ -136,11 +136,10 @@ class TestLevel1:
         failures = verify_ride(ZERO, LO, HI, synthetic_block_hash, forged_root, nonce, [path_of(levels, i) for i in idx])
         assert bool(failures) == (skip in idx)
 
-    def test_zero_length_ride(self):
-        assert prove_ride(ZERO, LO, LO, synthetic_block_hash) == (PAD_LEAF, 0, [])
-        assert verify_ride(ZERO, LO, LO, no_block_data, PAD_LEAF, 0, []) == []
-        assert verify_ride(ZERO, LO, LO, no_block_data, PAD_LEAF, 1, []) == ["mn: a zero-length ride's nonce is 16 zeros (5.6)"]
-        assert verify_ride(ZERO, LO, LO, no_block_data, b"\x01" * 32, 0, []) == ["proof: a zero-length ride's root is 32 zero bytes (5.6)"]
+    def test_there_is_no_zero_length_ride(self):
+        with pytest.raises(ValueError):
+            prove_ride(ZERO, LO, LO, synthetic_block_hash)
+        assert verify_ride(ZERO, LO, LO, no_block_data, PAD_LEAF, 0, []) == ["B: equals from_height; there is no zero-length ride (5.6)"]
 
     def test_attempts(self):
         assert [attempts_required(n) for n in (1, 32, 33, 40, 320000)] == [1, 1, 2, 2, 10000]
@@ -160,7 +159,7 @@ class TestLevel1:
         assert decode_ride_openings(mp, 65) is None                        # depth 7
         assert decode_ride_openings(mp.upper(), HI - LO) is None
         assert decode_ride_openings(":".join(mp.split(":")[:-1]), HI - LO) is None
-        assert decode_ride_openings("", 0) == [] and decode_ride_openings(":", 0) is None
+        assert decode_ride_openings("", 0) is None and decode_ride_openings(":", 0) is None
 
 
 PREV_HEX = ZERO.hex()
@@ -189,10 +188,8 @@ class TestRideEvent:
         ev = _ride_event(HI, LO, root, mn=encode_nonce(nonce), mp=encode_ride_openings(openings))
         assert verify_ride_event(ev, synthetic_block_hash) == []
 
-    def test_a_zero_length_ride(self):
-        assert verify_ride_event(_ride_event(LO, LO, PAD_LEAF, mn="0" * 16), no_block_data) == []
-        assert verify_ride_event(_ride_event(LO, LO, PAD_LEAF, mn="0" * 15 + "1"), no_block_data) == ["mn: a zero-length ride's nonce is 16 zeros (5.6)"]
-        assert verify_ride_event(_ride_event(LO, LO, PAD_LEAF, mn="0" * 16, mp=":"), no_block_data) == ["mp: a zero-length ride has nothing to open (5.6)"]
+    def test_a_zero_length_ride_is_invalid(self):
+        assert verify_ride_event(_ride_event(LO, LO, PAD_LEAF, mn="0" * 16), no_block_data) == ["B: equals from_height; there is no zero-length ride (5.6)"]
 
     def test_malformed_tags_are_rejected(self, golden):
         root, nonce, openings = golden
@@ -215,10 +212,19 @@ class TestGrandfathered:
     @pytest.mark.parametrize("ev", LISTED["rides"], ids=[e["id"][:12] for e in LISTED["rides"]])
     def test_listed_rides_are_accepted_without_block_data(self, ev):
         # includes a client-data-bug ride whose root does not match the chain:
-        # exempted by decision, its root and openings are not recomputed
+        # exempted by decision, its root and openings are not recomputed. The
+        # exemption covers the root and openings only, so the listed
+        # zero-length ride is invalid under 5.6 like any other.
         assert not any(t[0] == "mn" for t in ev["tags"])
         assert is_grandfathered(ev, GRANDFATHERED_V1_HYPERJUMPS)
-        assert verify_ride_event(ev, no_block_data) == []
+        tags = {t[0]: t[1] for t in ev["tags"]}
+        expected = ["B: equals from_height; there is no zero-length ride (5.6)"] if tags["from_height"] == tags["B"] else []
+        assert verify_ride_event(ev, no_block_data) == expected
+
+    def test_the_listed_zero_length_rides_are_in_the_fixture(self):
+        """5.6 names the three listed zero-length rides; all three are here and all three are invalid."""
+        zero = {e["id"][:8] for e in LISTED["rides"] if {t[0]: t[1] for t in e["tags"]}["from_height"] == {t[0]: t[1] for t in e["tags"]}["B"]}
+        assert zero == {"17f65f44", "331059b3", "d457ac3a"}
 
     def test_a_borrowed_id_is_not_listed(self):
         ev = json.loads(json.dumps(LISTED["rides"][1]))

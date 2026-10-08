@@ -696,6 +696,50 @@ def verify_sidestep_event(event: Dict[str, Any]) -> List[str]:
     return failures
 
 
+def verify_hop_event(event: Dict[str, Any], *, max_compute_height: int = DEFAULT_MAX_COMPUTE_HEIGHT) -> List[str]:
+    """Verification of a published hop event (8.7.1). Returns the failed
+    checks; empty means valid.
+
+    The proof is recomputed in full: the Cantor root of every axis at its LCA
+    height, the temporal axis from the terrain K of the destination and the
+    id named by the e previous tag, and their pairing (5.4 to 5.6). The id is
+    the actual previous event, whatever its action, so a hop after an action
+    the verifier skipped (8.9) is still fully checked.
+
+    Chain linkage (the c tag is the position the chain carries to this event)
+    and the NIP-01 signature need the chain and stay with the caller. A hop
+    taller than max_compute_height on any axis raises ValueError: no verdict
+    can be given about it without doing its work."""
+    tags = [t for t in (event.get("tags") or []) if isinstance(t, list) and len(t) >= 2]
+
+    def value(name: str) -> Optional[str]:
+        return next((t[1] for t in tags if t[0] == name), None)
+
+    if value("A") != "hop":
+        return ["A: not a hop"]
+    failures: List[str] = []
+    prev = _hex_bytes(next((t[1] for t in tags if t[0] == "e" and len(t) >= 4 and t[3] == "previous"), None), 32)
+    if prev is None:
+        failures.append("e previous: missing or not 32 bytes of lowercase hex")
+    points = []
+    for name in ("c", "C"):
+        raw = _hex_bytes(value(name), 32)
+        if raw is None:
+            failures.append(f"{name}: missing or not a 32-byte lowercase hex coordinate")
+        else:
+            points.append(coord_to_xyz(int.from_bytes(raw, "big")))
+    if _hex_bytes(value("proof"), 32) is None:
+        failures.append("proof: missing or not a 32-byte lowercase hex hash")
+    if failures:
+        return failures
+    assert prev is not None
+    (x1, y1, z1, _), (x2, y2, z2, plane) = points
+    proof = compute_hop_proof(x1, y1, z1, x2, y2, z2, plane=plane, previous_event_id_hex=prev.hex(), max_compute_height=max_compute_height)
+    if value("proof") != proof.proof_hash:
+        return ["proof: does not match the hop proof at this chain position (5.6)"]
+    return []
+
+
 @dataclass(frozen=True)
 class CoordPreview:
     """Preview data for a single coordinate in the movement visualizer."""

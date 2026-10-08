@@ -1,5 +1,5 @@
 {
- "source": "kind 3333 events listed in grandfathered-v2-sidesteps.txt and decks/grandfathered-v1-hyperjumps.txt (arkin0x/cyberspace 7f724d5), fetched from wss://cyberspace.nostr1.com on 2026-09-28",
+ "source": "kind 3333 events listed in grandfathered-v2-sidesteps.txt and decks/grandfathered-v1-hyperjumps.txt (arkin0x/cyberspace 7f724d5), fetched from wss://cyberspace.nostr1.com on 2026-09-28; 331059b3... and d457ac3a..., the other two listed zero-length rides, fetched from the same relay on 2026-10-06",
  "sidesteps": [
   {
    "kind": 3333,
@@ -360,6 +360,138 @@
    ],
    "content": "",
    "sig": "9adb65ea952e3628ff6d0c2a09111156e8bf3aa4fc6a084eab11615e1bf4a9aa65bf88d1e276f7c9eb6f015e64afb7f6f1089ac6f3aed5e6fb2a9baa835e2e09"
+  },
+  {
+   "kind": 3333,
+   "id": "331059b35b86754a9b9a0be15c3af1b89c7a1918081ac5df7ae7d90fdd39d694",
+   "pubkey": "68764942e13cdf4fa7f0b55fc77c3f95df3de2cc7f9b9ffa72e7e62fe6a2f080",
+   "created_at": 1790536711,
+   "tags": [
+    [
+     "A",
+     "hyperjump"
+    ],
+    [
+     "e",
+     "b9ba3ba4b2fababb2a6375184c9aae782ab98a8056c0c35d4282511bda9cd5d7",
+     "",
+     "genesis"
+    ],
+    [
+     "e",
+     "6c98e33191f30bccd5882f318326e59126d997f8e4cf2d7986b89f8f6ef411e8",
+     "",
+     "previous"
+    ],
+    [
+     "c",
+     "3b6db6db6db6db6db6db6cf4ca3e1e2dc0cee9126dbd7976ebd47b9d276ebbd6"
+    ],
+    [
+     "C",
+     "3b6db6db6db6db6db6db6cf4ca3e1e2dc0cee9126dbd7976ebd47b9d276ebbd6"
+    ],
+    [
+     "from_height",
+     "322541"
+    ],
+    [
+     "B",
+     "322541"
+    ],
+    [
+     "proof",
+     "0000000000000000000000000000000000000000000000000000000000000000"
+    ],
+    [
+     "mp",
+     ""
+    ],
+    [
+     "X",
+     "18014398473078977"
+    ],
+    [
+     "Y",
+     "18014398499894000"
+    ],
+    [
+     "Z",
+     "18014398543917903"
+    ],
+    [
+     "S",
+     "18014398473078977-18014398499894000-18014398543917903"
+    ]
+   ],
+   "content": "",
+   "sig": "a362c46d5eae4238e0da909b3da12f7ace6045083c5e0fc5fc3c57f3da1ef7a3d345e0f3910afadd1e79f7a14adae879bf1a616da49aea9629340c9dbf06ffc7"
+  },
+  {
+   "kind": 3333,
+   "id": "d457ac3a47ce93463c2f89869774e86bf7518ef79657cab6dd0fbc66993cb37d",
+   "pubkey": "68764942e13cdf4fa7f0b55fc77c3f95df3de2cc7f9b9ffa72e7e62fe6a2f080",
+   "created_at": 1790536751,
+   "tags": [
+    [
+     "A",
+     "hyperjump"
+    ],
+    [
+     "e",
+     "b9ba3ba4b2fababb2a6375184c9aae782ab98a8056c0c35d4282511bda9cd5d7",
+     "",
+     "genesis"
+    ],
+    [
+     "e",
+     "331059b35b86754a9b9a0be15c3af1b89c7a1918081ac5df7ae7d90fdd39d694",
+     "",
+     "previous"
+    ],
+    [
+     "c",
+     "3b6db6db6db6db6db6db6cf4ca3e1e2dc0cee9126dbd7976ebd47b9d276ebbd6"
+    ],
+    [
+     "C",
+     "3b6db6db6db6db6db6db6cf4ca3e1e2dc0cee9126dbd7976ebd47b9d276ebbd6"
+    ],
+    [
+     "from_height",
+     "322541"
+    ],
+    [
+     "B",
+     "322541"
+    ],
+    [
+     "proof",
+     "0000000000000000000000000000000000000000000000000000000000000000"
+    ],
+    [
+     "mp",
+     ""
+    ],
+    [
+     "X",
+     "18014398473078977"
+    ],
+    [
+     "Y",
+     "18014398499894000"
+    ],
+    [
+     "Z",
+     "18014398543917903"
+    ],
+    [
+     "S",
+     "18014398473078977-18014398499894000-18014398543917903"
+    ]
+   ],
+   "content": "",
+   "sig": "27fc1c167c41643b858573eb6846892aa2c0282de77dae8539d09528d21a684b2e23bc0b9ea0e56634616ee70b4c3c4cf39903048a574a85a194cab2a777d5e4"
   }
  ]
 }
