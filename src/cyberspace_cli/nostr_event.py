@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Any, Dict, List, Sequence
 
 from cyberspace_core.coords import coord_to_xyz
@@ -116,6 +117,38 @@ def make_hyperjump_event(
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
 
 
+# The bag's height tag (spec section 8.6). Uppercase since 2026-10-21: NIP-29
+# reads an `h` tag on an event of any kind as the group it is posted to, so a
+# NIP-29 relay refused bags that carried ["h", "<height>"]. `h` is read only on
+# events written before then (height_from_tags) and never written.
+HEIGHT_TAG = "H"
+LEGACY_HEIGHT_TAG = "h"
+_CANONICAL_HEIGHT = re.compile(r"(0|[1-9][0-9]*)")
+
+
+def height_from_tags(tags: Any) -> int | None:
+    """The height a bag's tags state (spec section 8.6), or None when they state none.
+
+    An event that carries any `H` tag is read by `H` alone, and its `h` tags
+    are ignored; an event without `H` is read by a legacy `h`. The tag read
+    must appear exactly once with a canonical decimal value (no sign, no
+    leading zeros except "0"); more than one, or a malformed value, and the
+    bag states no height. That does not make the bag invalid: the height tag
+    is optional, and the key that opens the bag says its height anyway.
+    """
+    if not isinstance(tags, list):
+        return None
+    rows = [t for t in tags if isinstance(t, list) and t]
+    name = HEIGHT_TAG if any(t[0] == HEIGHT_TAG for t in rows) else LEGACY_HEIGHT_TAG
+    found = [t for t in rows if t[0] == name]
+    if len(found) != 1:
+        return None
+    value = found[0][1] if len(found[0]) >= 2 else None
+    if not isinstance(value, str) or not _CANONICAL_HEIGHT.fullmatch(value):
+        return None
+    return int(value)
+
+
 def make_encrypted_content_event(
     *,
     pubkey_hex: str,
@@ -134,7 +167,7 @@ def make_encrypted_content_event(
         ["version", version],
     ]
     if height_hint is not None:
-        tags.append(["h", str(int(height_hint))])
+        tags.append([HEIGHT_TAG, str(int(height_hint))])
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content=content)
 
 

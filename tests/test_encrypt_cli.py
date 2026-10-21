@@ -59,6 +59,7 @@ class TestEncryptDecryptScanCLI(unittest.TestCase):
                 self.assertIsNotNone(encrypted_tag)
                 self.assertEqual(encrypted_tag[1], "aes-256-gcm")
                 self.assertEqual(_tag_value(event, "version")[1], "2")
+                self.assertIsNone(_tag_value(event, "H"))
                 self.assertIsNone(_tag_value(event, "h"))
 
                 enc_hint = runner.invoke(
@@ -79,7 +80,8 @@ class TestEncryptDecryptScanCLI(unittest.TestCase):
                 )
                 self.assertEqual(enc2.exit_code, 0, msg=enc2.output)
                 event2 = json.loads(enc2.output.strip().splitlines()[-1].strip())
-                self.assertEqual(_tag_value(event2, "h")[1], "4")
+                self.assertEqual(_tag_value(event2, "H")[1], "4")
+                self.assertIsNone(_tag_value(event2, "h"))
 
                 events_jsonl = os.path.join(td, "events.jsonl")
                 with open(events_jsonl, "w", encoding="utf-8") as f:

@@ -25,6 +25,7 @@ from cyberspace_cli.paths import hyperjump_cache_path
 from cyberspace_cli.helptext import HELP_TEXT
 from cyberspace_cli.nostr_event import (
     make_encrypted_content_event,
+    height_from_tags,
     make_hop_event,
     make_hyperjump_event,
     make_sidestep_event,
@@ -1403,7 +1404,7 @@ def encrypt(
     publish_height: bool = typer.Option(
         False,
         "--publish-height",
-        help="Publish h tag in the encrypted event (disabled by default).",
+        help="Publish the H (height) tag in the encrypted event (disabled by default).",
     ),
     hint: Optional[str] = typer.Option(
         None,
@@ -1464,13 +1465,13 @@ def decrypt(
         None,
         "--height",
         min=0,
-        help="Override height for key derivation. If omitted, uses h tag or scans 0..--max-height.",
+        help="Override height for key derivation. If omitted, tries the event's height tag (H, or a legacy h) first, then scans 0..--max-height.",
     ),
     max_height: int = typer.Option(
         DEFAULT_SCAN_MAX_HEIGHT,
         "--max-height",
         min=0,
-        help="Max height to scan when --height is omitted and event has no valid h tag.",
+        help="Max height to scan when --height is omitted and the event's height tag does not open it.",
     ),
     coord: Optional[str] = typer.Option(
         None,
@@ -1491,14 +1492,9 @@ def decrypt(
     if height is not None:
         candidate_heights = [height]
     else:
-        h_tag = _get_tag(event, "h")
-        if h_tag is not None:
-            try:
-                h_val = int(h_tag, 10)
-                if h_val >= 0:
-                    candidate_heights.append(h_val)
-            except ValueError:
-                pass
+        stated = height_from_tags(event.get("tags"))
+        if stated is not None:
+            candidate_heights.append(stated)
         candidate_heights.extend([h for h in range(0, max_height + 1) if h not in candidate_heights])
 
     chosen_height: Optional[int] = None
