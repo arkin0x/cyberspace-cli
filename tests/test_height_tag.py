@@ -14,7 +14,10 @@ from typer.testing import CliRunner
 from cyberspace_cli.cli import app
 from cyberspace_cli.nostr_event import height_from_tags, make_encrypted_content_event
 
-from test_encrypt_cli import _setup_min_state
+try:
+    from test_encrypt_cli import _setup_min_state
+except ImportError:  # run as tests.test_height_tag from the repo root
+    from tests.test_encrypt_cli import _setup_min_state
 
 BASE = [["d", "aa" * 32], ["encrypted", "aes-256-gcm", "Zm9v"], ["version", "2"]]
 
@@ -46,6 +49,10 @@ class TestHeightFromTags(unittest.TestCase):
         self.assertIsNone(height_from_tags(tags(["h", "7"], ["h", "7"])))
         for bad in ["", "+3", "-1", "03", "1.0", "x", " 4"]:
             self.assertIsNone(height_from_tags(tags(["H", bad])), bad)
+
+    def test_none_when_too_long_to_be_a_number(self) -> None:
+        self.assertIsNone(height_from_tags(tags(["H", "9" * 5000])))
+        self.assertIsNone(height_from_tags(tags(["h", "9" * 5000])))
 
 
 class TestWriter(unittest.TestCase):
@@ -105,9 +112,17 @@ class TestDecryptReadsTheHeightTag(unittest.TestCase):
         # A malformed H still wins, so the correct h is ignored and the scan finds nothing.
         self.assertEqual(self.decrypt_with(["H", "04"], ["h", "4"]).exit_code, 1)
 
+    def test_an_oversized_tag_falls_back_to_the_scan(self) -> None:
+        self.assertEqual(self.decrypt_with(["H", "9" * 5000]).exit_code, 1)
+        ev = {**self.event, "tags": [t for t in self.event["tags"] if t[0] != "H"] + [["H", "9" * 5000]]}
+        res = self.runner.invoke(app, ["decrypt", "--event-json", json.dumps(ev), "--max-height", "8"])
+        self.assertEqual(res.exit_code, 0, msg=res.output)
+        self.assertIn("height: 4", res.output)
+
     def test_neither_falls_back_to_the_scan(self) -> None:
         self.assertEqual(self.decrypt_with().exit_code, 1)
-        res = self.runner.invoke(app, ["decrypt", "--event-json", json.dumps({**self.event, "tags": [t for t in self.event["tags"] if t[0] != "H"]}), "--max-height", "8"])
+        bare = {**self.event, "tags": [t for t in self.event["tags"] if t[0] != "H"]}
+        res = self.runner.invoke(app, ["decrypt", "--event-json", json.dumps(bare), "--max-height", "8"])
         self.assertEqual(res.exit_code, 0, msg=res.output)
         self.assertIn("height: 4", res.output)
 

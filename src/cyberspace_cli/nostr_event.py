@@ -146,7 +146,12 @@ def height_from_tags(tags: Any) -> int | None:
     value = found[0][1] if len(found[0]) >= 2 else None
     if not isinstance(value, str) or not _CANONICAL_HEIGHT.fullmatch(value):
         return None
-    return int(value)
+    try:
+        return int(value)
+    except ValueError:
+        # Canonical but too long for int() (Python's digit limit): a value
+        # from an untrusted event that states no usable height.
+        return None
 
 
 def make_encrypted_content_event(
