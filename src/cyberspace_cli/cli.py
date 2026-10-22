@@ -396,7 +396,7 @@ def _require_hyperjump_system_state() -> Tuple[CyberspaceState, int]:
     current_height = _hyperjump_block_height_from_event(events[-1])
     if current_height is None:
         typer.echo(
-            "You are not currently on the hyperjump system. Perform a valid hyperjump first.",
+            "Your chain does not end on a hyperjump, so there is no block to step from (this CLI cannot ride yet).",
             err=True,
         )
         raise typer.Exit(code=2)
@@ -2427,7 +2427,7 @@ def move(
         help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
 ) -> None:
-    """Move locally by appending a hop, sidestep, or hyperjump event to the active chain.
+    """Move locally by appending a hop or sidestep event to the active chain (--hyperjump refuses: riding is not built yet).
 
     Hops taller than this machine's ceiling go to HOSAKA (cloud compute, paid in
     sats) unless cloud mode is off; see `cyberspace cloud --help`.
