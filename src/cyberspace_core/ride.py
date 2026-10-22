@@ -12,11 +12,11 @@ about one thirty-second of the ride, so a prover that skips blocks gains
 nothing by retrying until the samples miss them. The leaves and the root are
 unchanged from version 1; only the sample positions moved, from the root to G.
 
-This CLI does not build rides yet: its hyperjump is still the pre-v3 event,
-with no proof and no openings. This module is the construction and the
-Level 1 check of a ride's proof, locked to the spec's
-decks/hyperjump-reference.py, for when it does and for checking the rides
-other clients publish.
+This module is the construction and the Level 1 check of a ride's proof,
+locked to the spec's decks/hyperjump-reference.py. The CLI's ride event is
+cyberspace_cli.nostr_event.make_hyperjump_event; the CLI does not ride yet
+(no boarding, no station), so its move command refuses to, and this module
+checks the rides other clients publish.
 """
 
 from __future__ import annotations

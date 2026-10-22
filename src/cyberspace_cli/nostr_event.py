@@ -94,6 +94,9 @@ def make_spawn_event(*, pubkey_hex: str, created_at: int, coord_hex: str, kind: 
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
 
 
+_HEX32 = re.compile(r"[0-9a-f]{64}")
+
+
 def make_hyperjump_event(
     *,
     pubkey_hex: str,
@@ -102,16 +105,74 @@ def make_hyperjump_event(
     previous_event_id: str,
     prev_coord_hex: str,
     coord_hex: str,
-    to_height: str,
+    from_height: int,
+    to_height: int,
+    proof_hash_hex: str,
+    ride_openings_hex: str,
+    nonce_hex: str,
+    as_of: int | None = None,
     kind: int = 3333,
 ) -> Dict[str, Any]:
+    """Create a ride (kind 3333, A=hyperjump) per DECK-0001 5.2, ride openings version 2.
+
+    The tags are the ones the chain rules read on a ride (CYBERSPACE_V2 8.8),
+    in the order ONOSENDAI's and cyberspace-mcp's hyperjumpTemplate write
+    them: A, e genesis, e previous, c, C, from_height, B, as_of (only when
+    given), proof, mp, mn, then the sector tags of C.
+
+    Parameters
+    ----------
+    from_height : B_from, the block the ride departs from: the station on the
+        first ride after boarding (DECK-0001 4.2), the previous ride's B after that (4.3)
+    to_height : B_to, the destination block; C is its stop coordinate (section 1)
+    proof_hash_hex : the ride's Merkle root (5.4), 32 bytes of lowercase hex
+    ride_openings_hex : the mp value (5.5), as ride.encode_ride_openings writes it
+    nonce_hex : the re-roll nonce (5.5) as exactly 16 lowercase hex chars. Every
+        ride carries it (5.8); only the rides listed in
+        decks/grandfathered-v1-hyperjumps.txt were published without one.
+    as_of : the station set bound (4.2). Required on the first ride after
+        boarding and left out after that; which ride this is is the caller's call.
+
+    A zero-length ride (from_height equal to to_height) does not exist (5.6)
+    and is refused, as are an as_of below B or below from_height (4.2: the
+    station and the destination both lie within the bound), and ids,
+    coordinates or proof values that are not well formed (8.8).
+    """
+    for name, value in (("genesis_event_id", genesis_event_id), ("previous_event_id", previous_event_id),
+                        ("prev_coord_hex", prev_coord_hex), ("coord_hex", coord_hex)):
+        if not isinstance(value, str) or not _HEX32.fullmatch(value):
+            raise ValueError(f"{name} must be 64 lowercase hex characters")
+    for name, height in (("from_height", from_height), ("to_height", to_height), ("as_of", as_of)):
+        if height is not None and (isinstance(height, bool) or not isinstance(height, int) or height < 0):
+            raise ValueError(f"{name} must be a non-negative block height")
+    if from_height == to_height:
+        raise ValueError(f"a zero-length ride (block {to_height} to itself) does not exist (DECK-0001 5.6)")
+    if as_of is not None and as_of < max(from_height, to_height):
+        raise ValueError(
+            f"as_of ({as_of}) is below from_height ({from_height}) or B ({to_height}); "
+            "the station set bound covers the station and the destination (DECK-0001 4.2)"
+        )
+    if not isinstance(proof_hash_hex, str) or not _HEX32.fullmatch(proof_hash_hex):
+        raise ValueError("proof_hash_hex must be the ride's 32-byte Merkle root as 64 lowercase hex characters (DECK-0001 5.4)")
+    if not ride_openings_hex:
+        raise ValueError("ride_openings_hex must hold the ride's sampled openings (DECK-0001 5.5)")
+    if decode_nonce(nonce_hex) is None:
+        raise ValueError("nonce_hex must be exactly 16 lowercase hex characters (DECK-0001 5.2)")
     tags: List[List[str]] = [
         ["A", "hyperjump"],
         ["e", genesis_event_id, "", "genesis"],
         ["e", previous_event_id, "", "previous"],
         ["c", prev_coord_hex],
         ["C", coord_hex],
+        ["from_height", str(from_height)],
         ["B", str(to_height)],
+    ]
+    if as_of is not None:
+        tags.append(["as_of", str(as_of)])
+    tags += [
+        ["proof", proof_hash_hex],
+        ["mp", ride_openings_hex],
+        ["mn", nonce_hex],
     ]
     tags.extend(_sector_tags_from_coord_hex(coord_hex))
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")

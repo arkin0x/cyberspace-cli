@@ -27,7 +27,6 @@ from cyberspace_cli.nostr_event import (
     make_encrypted_content_event,
     height_from_tags,
     make_hop_event,
-    make_hyperjump_event,
     make_sidestep_event,
     make_spawn_event,
 )
@@ -397,7 +396,7 @@ def _require_hyperjump_system_state() -> Tuple[CyberspaceState, int]:
     current_height = _hyperjump_block_height_from_event(events[-1])
     if current_height is None:
         typer.echo(
-            "You are not currently on the hyperjump system. Perform a valid hyperjump first.",
+            "Your chain does not end on a hyperjump, so there is no block to step from (this CLI cannot ride yet).",
             err=True,
         )
         raise typer.Exit(code=2)
@@ -1722,6 +1721,25 @@ def hyperjump_show(
         _print_stop_distance(stop=stop, from_xyz=fxyz, from_label=f"0x{_coord_hex_from_xyz(parsed.x, parsed.y, parsed.z, parsed.plane)}", from_gps=fgps)
 
 
+def _refuse_to_ride() -> None:
+    """Exit 2 with nothing appended and nothing asked of a relay.
+
+    A ride is valid only after an enter-hyperspace or another ride
+    (DECK-0001 4.3), departs from the station or the previous ride's B, and
+    carries a proof over every block it passes (5.3 to 5.5). This CLI builds
+    none of that yet, and its chains only grow by its own moves, so any ride
+    it wrote would be invalid and would leave the chain invalid from it
+    (CYBERSPACE_V2 8.7.3). It refuses instead."""
+    typer.echo(
+        "This CLI cannot ride hyperspace yet: a ride (DECK-0001 v3) has to follow an enter-hyperspace "
+        "action, depart from the station (4.2) and carry a proof over every block it passes (5.3 to 5.5), "
+        "and this CLI builds none of those. A ride without them is invalid, and so would be every move "
+        "after it, so nothing was appended.",
+        err=True,
+    )
+    raise typer.Exit(code=2)
+
+
 @hyperjump_app.command("to")
 def hyperjump_to(
     blockheight: int = typer.Argument(
@@ -1755,10 +1773,12 @@ def hyperjump_to(
         25,
         "--hyperjump-query-limit",
         min=1,
-        help="Validation query limit used when publishing the hyperjump movement event.",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
 ) -> None:
-    """Move to (or view) a specific hyperjump block height."""
+    """View a specific hyperjump block height. Without --view it refuses to ride, like `move --hyperjump`."""
+    if not view:
+        _refuse_to_ride()
     resolved = _query_hyperjump_anchor_for_height(
         block_height=blockheight,
         relay=relay,
@@ -1770,25 +1790,6 @@ def hyperjump_to(
         raise typer.Exit(code=1)
 
     stop, ev = resolved
-    coord_hex = stop.coord_hex
-    if view:
-        _print_hyperjump_anchor(block_height=blockheight, stop=stop, event=ev)
-        return
-
-    # Action-creating commands are restricted to the hyperjump system.
-    _state, _current_height = _require_hyperjump_system_state()
-    move(
-        to=f"0x{coord_hex}",
-        by=None,
-        toward=None,
-        max_lca_height=None,
-        max_hops=0,
-        hyperjump=True,
-        hyperjump_relay=relay,
-        hyperjump_query_limit=hyperjump_query_limit,
-        exit_hyperjump=False,
-        hyperjump_height=blockheight,
-    )
     _print_hyperjump_anchor(block_height=blockheight, stop=stop, event=ev)
 
 
@@ -1820,10 +1821,12 @@ def hyperjump_next(
         25,
         "--hyperjump-query-limit",
         min=1,
-        help="Validation query limit used when publishing the hyperjump movement event.",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
 ) -> None:
-    """Move to (or view) the next hyperjump block."""
+    """View the next hyperjump block. Without --view it refuses to ride, like `move --hyperjump`."""
+    if not view:
+        _refuse_to_ride()
     _state, current_block_height = _require_hyperjump_system_state()
     target_block_height = current_block_height + 1
     resolved = _query_hyperjump_anchor_for_height(
@@ -1837,23 +1840,6 @@ def hyperjump_next(
         raise typer.Exit(code=1)
 
     stop, ev = resolved
-    coord_hex = stop.coord_hex
-    if view:
-        _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
-        return
-
-    move(
-        to=f"0x{coord_hex}",
-        by=None,
-        toward=None,
-        max_lca_height=None,
-        max_hops=0,
-        hyperjump=True,
-        hyperjump_relay=relay,
-        hyperjump_query_limit=hyperjump_query_limit,
-        exit_hyperjump=False,
-        hyperjump_height=target_block_height,
-    )
     _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
 
 
@@ -1885,10 +1871,12 @@ def hyperjump_prev(
         25,
         "--hyperjump-query-limit",
         min=1,
-        help="Validation query limit used when publishing the hyperjump movement event.",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
 ) -> None:
-    """Move to (or view) the previous hyperjump block."""
+    """View the previous hyperjump block. Without --view it refuses to ride, like `move --hyperjump`."""
+    if not view:
+        _refuse_to_ride()
     _state, current_block_height = _require_hyperjump_system_state()
     target_block_height = current_block_height - 1
     if target_block_height < 0:
@@ -1906,23 +1894,6 @@ def hyperjump_prev(
         raise typer.Exit(code=1)
 
     stop, ev = resolved
-    coord_hex = stop.coord_hex
-    if view:
-        _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
-        return
-
-    move(
-        to=f"0x{coord_hex}",
-        by=None,
-        toward=None,
-        max_lca_height=None,
-        max_hops=0,
-        hyperjump=True,
-        hyperjump_relay=relay,
-        hyperjump_query_limit=hyperjump_query_limit,
-        exit_hyperjump=False,
-        hyperjump_height=target_block_height,
-    )
     _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
 
 
@@ -2400,18 +2371,18 @@ def move(
     hyperjump: bool = typer.Option(
         False,
         "--hyperjump",
-        help="Publish a hyperjump movement event (A=hyperjump) after validating destination as a known hyperjump anchor.",
+        help="Ride hyperspace (A=hyperjump). Not built yet: refuses and appends nothing (DECK-0001 v3 needs a boarding, the station and a ride proof).",
     ),
     hyperjump_relay: str = typer.Option(
         DEFAULT_HYPERJUMP_RELAY,
         "--hyperjump-relay",
-        help="Relay URL used to validate hyperjump destinations.",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
     hyperjump_query_limit: int = typer.Option(
         25,
         "--hyperjump-query-limit",
         min=1,
-        help="Max anchor events to query when validating a hyperjump destination.",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
     sidestep: bool = typer.Option(
         False,
@@ -2453,10 +2424,10 @@ def move(
         None,
         "--hyperjump-height",
         hidden=True,
-        help="Block height of the hyperjump destination (lets validation query anchors by B instead of C).",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
 ) -> None:
-    """Move locally by appending a hop, sidestep, or hyperjump event to the active chain.
+    """Move locally by appending a hop or sidestep event to the active chain (--hyperjump refuses: riding is not built yet).
 
     Hops taller than this machine's ceiling go to HOSAKA (cloud compute, paid in
     sats) unless cloud mode is off; see `cyberspace cloud --help`.
@@ -2549,6 +2520,8 @@ def move(
     if hyperjump and exit_hyperjump:
         typer.echo("--exit-hyperjump cannot be combined with --hyperjump.", err=True)
         raise typer.Exit(code=2)
+    if hyperjump:
+        _refuse_to_ride()
 
     in_hyperjump_system = _hyperjump_block_height_from_event(events[-1]) is not None
     if in_hyperjump_system and not hyperjump and not exit_hyperjump:
@@ -2568,7 +2541,6 @@ def move(
         z2: int,
         plane2: int,
         max_compute_height: int,
-        hyperjump_to_height: Optional[str] = None,
         use_sidestep: bool = False,
     ):
         nonlocal x1, y1, z1, plane1, prev_event_id
@@ -2591,88 +2563,87 @@ def move(
         proof = None
         sidestep_proof = None
 
-        if hyperjump_to_height is None:
-            # Guard against absurd hops: LCA height drives O(2^h) compute.
-            hx = find_lca_height(x1, x2)
-            hy = find_lca_height(y1, y2)
-            hz = find_lca_height(z1, z2)
+        # Guard against absurd hops: LCA height drives O(2^h) compute.
+        hx = find_lca_height(x1, x2)
+        hy = find_lca_height(y1, y2)
+        hz = find_lca_height(z1, z2)
 
-            if use_sidestep:
-                # Sidestep: use Merkle proofs on all axes (no max_compute_height limit
-                # because streaming Merkle only needs O(h) memory, not O(2^h)).
-                try:
-                    sidestep_proof = compute_sidestep_proof(
-                        x1,
-                        y1,
-                        z1,
-                        x2,
-                        y2,
-                        z2,
-                        plane=plane2,
-                        previous_event_id_hex=prev_event_id,
-                    )
-                except ValueError as e:
-                    typer.echo(f"Failed to compute sidestep proof: {e}", err=True)
-                    raise typer.Exit(code=2)
-            elif max(hx, hy, hz) > max_compute_height and cloud_opts.enabled:
-                # Local first, cloud second, sidestep third: HOSAKA computes what
-                # this machine will not, and the result is verified before signing.
-                try:
-                    cloud_result = run_cloud_move(
-                        privkey_hex=state.privkey_hex,
-                        pubkey_hex=state.pubkey_hex,
-                        chain_label=label,
-                        opts=cloud_opts,
-                        x1=x1, y1=y1, z1=z1, x2=x2, y2=y2, z2=z2, plane2=plane2,
-                        previous_event_id=prev_event_id,
-                        local_ceiling=max_compute_height,
-                        echo=typer.echo,
-                        confirm=lambda q: typer.confirm(q, default=False),
-                    )
-                except CloudDeclined as e:
-                    typer.echo(f"Cloud hop not submitted: {e}", err=True)
-                    raise typer.Exit(code=2)
-                except CloudVerificationFailed as e:
-                    typer.echo("HOSAKA result failed verification; nothing was appended:", err=True)
-                    for f in e.failures:
-                        typer.echo(f"  - {f}", err=True)
-                    raise typer.Exit(code=3)
-                except CloudError as e:
-                    typer.echo(f"HOSAKA: {e}", err=True)
-                    raise typer.Exit(code=2)
-                except KeyboardInterrupt:
-                    raise typer.Exit(code=130)
-                if isinstance(cloud_result, CloudSidestep):
-                    sidestep_proof = cloud_result
-                else:
-                    proof = cloud_result
+        if use_sidestep:
+            # Sidestep: use Merkle proofs on all axes (no max_compute_height limit
+            # because streaming Merkle only needs O(h) memory, not O(2^h)).
+            try:
+                sidestep_proof = compute_sidestep_proof(
+                    x1,
+                    y1,
+                    z1,
+                    x2,
+                    y2,
+                    z2,
+                    plane=plane2,
+                    previous_event_id_hex=prev_event_id,
+                )
+            except ValueError as e:
+                typer.echo(f"Failed to compute sidestep proof: {e}", err=True)
+                raise typer.Exit(code=2)
+        elif max(hx, hy, hz) > max_compute_height and cloud_opts.enabled:
+            # Local first, cloud second, sidestep third: HOSAKA computes what
+            # this machine will not, and the result is verified before signing.
+            try:
+                cloud_result = run_cloud_move(
+                    privkey_hex=state.privkey_hex,
+                    pubkey_hex=state.pubkey_hex,
+                    chain_label=label,
+                    opts=cloud_opts,
+                    x1=x1, y1=y1, z1=z1, x2=x2, y2=y2, z2=z2, plane2=plane2,
+                    previous_event_id=prev_event_id,
+                    local_ceiling=max_compute_height,
+                    echo=typer.echo,
+                    confirm=lambda q: typer.confirm(q, default=False),
+                )
+            except CloudDeclined as e:
+                typer.echo(f"Cloud hop not submitted: {e}", err=True)
+                raise typer.Exit(code=2)
+            except CloudVerificationFailed as e:
+                typer.echo("HOSAKA result failed verification; nothing was appended:", err=True)
+                for f in e.failures:
+                    typer.echo(f"  - {f}", err=True)
+                raise typer.Exit(code=3)
+            except CloudError as e:
+                typer.echo(f"HOSAKA: {e}", err=True)
+                raise typer.Exit(code=2)
+            except KeyboardInterrupt:
+                raise typer.Exit(code=130)
+            if isinstance(cloud_result, CloudSidestep):
+                sidestep_proof = cloud_result
             else:
-                if max(hx, hy, hz) > max_compute_height:
-                    typer.echo(
-                        "Move is too large for a single hop. "
-                        f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
-                        f"limit={max_compute_height}. "
-                        "Use --sidestep for Merkle proof, raise --max-lca-height for an expensive Cantor hop, "
-                        "or enable HOSAKA cloud compute (`cyberspace cloud config --mode auto`).",
-                        err=True,
-                    )
-                    raise typer.Exit(code=2)
+                proof = cloud_result
+        else:
+            if max(hx, hy, hz) > max_compute_height:
+                typer.echo(
+                    "Move is too large for a single hop. "
+                    f"LCA heights: X={hx} Y={hy} Z={hz} (max={max(hx, hy, hz)}), "
+                    f"limit={max_compute_height}. "
+                    "Use --sidestep for Merkle proof, raise --max-lca-height for an expensive Cantor hop, "
+                    "or enable HOSAKA cloud compute (`cyberspace cloud config --mode auto`).",
+                    err=True,
+                )
+                raise typer.Exit(code=2)
 
-                try:
-                    proof = compute_hop_proof(
-                        x1,
-                        y1,
-                        z1,
-                        x2,
-                        y2,
-                        z2,
-                        plane=plane2,
-                        previous_event_id_hex=prev_event_id,
-                        max_compute_height=max_compute_height,
-                    )
-                except ValueError as e:
-                    typer.echo(f"Failed to compute movement proof: {e}", err=True)
-                    raise typer.Exit(code=2)
+            try:
+                proof = compute_hop_proof(
+                    x1,
+                    y1,
+                    z1,
+                    x2,
+                    y2,
+                    z2,
+                    plane=plane2,
+                    previous_event_id_hex=prev_event_id,
+                    max_compute_height=max_compute_height,
+                )
+            except ValueError as e:
+                typer.echo(f"Failed to compute movement proof: {e}", err=True)
+                raise typer.Exit(code=2)
 
         created_at = int(time.time())
         if sidestep_proof is not None:
@@ -2697,7 +2668,7 @@ def move(
                 nonce_hex=encode_nonce(sidestep_proof.nonce),
                 lca_heights=sidestep_proof.lca_heights,
             )
-        elif hyperjump_to_height is None:
+        else:
             movement_event = make_hop_event(
                 pubkey_hex=state.pubkey_hex,
                 created_at=created_at,
@@ -2706,16 +2677,6 @@ def move(
                 prev_coord_hex=state.coord_hex,
                 coord_hex=coord_hex,
                 proof_hash_hex=proof.proof_hash,
-            )
-        else:
-            movement_event = make_hyperjump_event(
-                pubkey_hex=state.pubkey_hex,
-                created_at=created_at,
-                genesis_event_id=genesis_id,
-                previous_event_id=prev_event_id,
-                prev_coord_hex=state.coord_hex,
-                coord_hex=coord_hex,
-                to_height=hyperjump_to_height,
             )
         chains.append_event(label, movement_event)
 
@@ -2739,14 +2700,6 @@ def move(
         elif proof is not None:
             typer.echo(f"proof: {proof.proof_hash}")
             typer.echo(f"terrain_k: {proof.terrain_k}")
-        else:
-            typer.echo(f"action: hyperjump")
-            typer.echo(f"B: {hyperjump_to_height}")
-            typer.echo(
-                "warning: DECK-0001 v3 ride semantics (enter-hyperspace, station, as_of, per-block ride proof + mp openings) "
-                "are not implemented yet; this event is the pre-v3 hyperjump shape and will not verify under v3.",
-                err=True,
-            )
         if cloud_obj is not None:
             typer.echo(f"source: HOSAKA cloud job {cloud_obj.job_id} ({(cloud_obj.cost_msats + 999) // 1000} sats)")
             if getattr(cloud_obj, "lookup_id", None):
@@ -2755,42 +2708,6 @@ def move(
 
         return sidestep_proof or proof
 
-    def _resolve_hyperjump_height_for_destination(*, x: int, y: int, z: int, plane: int) -> Optional[str]:
-        if not hyperjump:
-            return None
-        dest_coord_hex = _coord_hex_from_xyz(x, y, z, plane)
-        # Ports and v3 anchors are indexed by C. Legacy landfall anchors are not
-        # (their C is the merkle root), so a height hint lets us query by B and
-        # compare the derived stop coordinate instead.
-        if hyperjump_height is not None:
-            resolved = _query_hyperjump_anchor_for_height(
-                block_height=int(hyperjump_height),
-                relay=hyperjump_relay,
-                limit=hyperjump_query_limit,
-            )
-            if resolved is not None and resolved[0].coord_hex == dest_coord_hex:
-                return str(hyperjump_height)
-        anchors = _nak_req_events(
-            relay=hyperjump_relay,
-            kind=HYPERJUMP_KIND,
-            tags={"C": [dest_coord_hex]},
-            limit=hyperjump_query_limit,
-        )
-        for anchor in sorted(anchors, key=_anchor_rank_key, reverse=True):
-            stop = _stop_from_anchor(anchor)
-            if stop is None or stop.coord_hex != dest_coord_hex:
-                continue
-            b_tag = _get_tag(anchor, "B")
-            if not b_tag:
-                typer.echo("Matched hyperjump anchor event is missing required B tag.", err=True)
-                raise typer.Exit(code=2)
-            return b_tag
-        typer.echo(
-            f"Destination is not a known hyperjump coordinate on relay {hyperjump_relay}: 0x{dest_coord_hex}",
-            err=True,
-        )
-        raise typer.Exit(code=2)
-
     if toward is not None:
         try:
             target = parse_destination_xyz_or_coord(toward, default_plane=plane1)
@@ -2798,12 +2715,6 @@ def move(
             raise typer.BadParameter(str(e)) from e
 
         tx, ty, tz, target_plane = target.x, target.y, target.z, target.plane
-        hyperjump_to_height = _resolve_hyperjump_height_for_destination(
-            x=tx,
-            y=ty,
-            z=tz,
-            plane=target_plane,
-        )
 
         hops = 0
         try:
@@ -2821,14 +2732,12 @@ def move(
 
                 # If we've reached the target xyz but we're in the wrong plane, the last hop is a plane switch.
                 if (x1, y1, z1) == (tx, ty, tz) and plane1 != target_plane:
-                    final_hyperjump = hyperjump_to_height is not None
                     _do_single_hop(
                         x2=x1,
                         y2=y1,
                         z2=z1,
                         plane2=target_plane,
                         max_compute_height=effective_max_lca_height,
-                        hyperjump_to_height=hyperjump_to_height if final_hyperjump else None,
                         use_sidestep=sidestep,
                     )
                     hops += 1
@@ -2907,16 +2816,12 @@ def move(
                     )
 
                 # Intermediate hops can be in either plane; we keep the current plane until we need to switch.
-                final_hyperjump = bool(
-                    hyperjump_to_height is not None and (x2, y2, z2, plane1) == (tx, ty, tz, target_plane)
-                )
                 hop_proof = _do_single_hop(
                     x2=x2,
                     y2=y2,
                     z2=z2,
                     plane2=plane1,
                     max_compute_height=hop_limit,
-                    hyperjump_to_height=hyperjump_to_height if final_hyperjump else None,
                     use_sidestep=sidestep,
                 )
                 hops += 1
@@ -2939,12 +2844,6 @@ def move(
             dest = parse_destination_xyz_or_coord(to, default_plane=plane1)
         except ValueError as e:
             raise typer.BadParameter(str(e)) from e
-        hyperjump_to_height = _resolve_hyperjump_height_for_destination(
-            x=dest.x,
-            y=dest.y,
-            z=dest.z,
-            plane=dest.plane,
-        )
 
         _do_single_hop(
             x2=dest.x,
@@ -2952,7 +2851,6 @@ def move(
             z2=dest.z,
             plane2=dest.plane,
             max_compute_height=effective_max_lca_height,
-            hyperjump_to_height=hyperjump_to_height,
             use_sidestep=sidestep,
         )
         return
