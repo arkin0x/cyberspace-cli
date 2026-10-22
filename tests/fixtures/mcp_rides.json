@@ -1,0 +1,253 @@
+{
+ "source": "Built and signed by cyberspace-mcp 71707f9 (master): spawnTemplate, enterHyperspaceTemplate and hyperjumpTemplate in src/chain/builder.ts, signEvent in src/nostr/event.ts (which adds the client tag). Proofs from cyberspace_core.ride.prove_ride over the line of vectors/chain-rules-2026-09-28-virtual-brackets.json, key: that file's test_key. A first ride after boarding (station 2 within as_of 5, to block 4) and a later ride (4 to 6).",
+ "events": [
+  {
+   "id": "b78704435ac6744ed69c9e5b53af3fb73db201161d0280db784e4b0f204ac38b",
+   "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+   "created_at": 1790100001,
+   "kind": 3333,
+   "tags": [
+    [
+     "A",
+     "spawn"
+    ],
+    [
+     "C",
+     "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+    ],
+    [
+     "X",
+     "16651794195664918"
+    ],
+    [
+     "Y",
+     "24775930175555303"
+    ],
+    [
+     "Z",
+     "23529476586002063"
+    ],
+    [
+     "S",
+     "16651794195664918-24775930175555303-23529476586002063"
+    ],
+    [
+     "client",
+     "cyberspace-mcp"
+    ]
+   ],
+   "content": "",
+   "sig": "d120c6f58b78579beda2cd0f2c2fbc24c6791fe99250d6af8b3215ffbc55f33f53d6fa41be494c5219be9f1c05c1a2d1b505112388c5f3f7e9b4be81d07891e5"
+  },
+  {
+   "id": "14c9f834a2421bbd20078c00c5f6c5752b554ff3f8525d43b8e3d0ce7030d6e2",
+   "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+   "created_at": 1790100002,
+   "kind": 3333,
+   "tags": [
+    [
+     "A",
+     "enter-hyperspace"
+    ],
+    [
+     "e",
+     "b78704435ac6744ed69c9e5b53af3fb73db201161d0280db784e4b0f204ac38b",
+     "",
+     "genesis"
+    ],
+    [
+     "e",
+     "b78704435ac6744ed69c9e5b53af3fb73db201161d0280db784e4b0f204ac38b",
+     "",
+     "previous"
+    ],
+    [
+     "c",
+     "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+    ],
+    [
+     "C",
+     "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+    ],
+    [
+     "proof",
+     "7cbc990d42723d8db5103cb954cca39014593811fd7854bdec3210f0d48eb347"
+    ],
+    [
+     "X",
+     "16651794195664918"
+    ],
+    [
+     "Y",
+     "24775930175555303"
+    ],
+    [
+     "Z",
+     "23529476586002063"
+    ],
+    [
+     "S",
+     "16651794195664918-24775930175555303-23529476586002063"
+    ],
+    [
+     "client",
+     "cyberspace-mcp"
+    ]
+   ],
+   "content": "",
+   "sig": "c37f1fa2fcd39836eb389d4da3e2c6dd4bec767ce82a6aa930707753154c80a882b167e2b6c2a142b0bd4105a080a3d62b23e4ee43438a8ba662be3e7acf600d"
+  },
+  {
+   "id": "1bde6cb1d5215fe5ccba27ab501a16e10c1c526159610add1a6af4e58c362b19",
+   "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+   "created_at": 1790100003,
+   "kind": 3333,
+   "tags": [
+    [
+     "A",
+     "hyperjump"
+    ],
+    [
+     "e",
+     "b78704435ac6744ed69c9e5b53af3fb73db201161d0280db784e4b0f204ac38b",
+     "",
+     "genesis"
+    ],
+    [
+     "e",
+     "14c9f834a2421bbd20078c00c5f6c5752b554ff3f8525d43b8e3d0ce7030d6e2",
+     "",
+     "previous"
+    ],
+    [
+     "c",
+     "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf"
+    ],
+    [
+     "C",
+     "3219b3359ec8efc7b4ef0c395470fccbd8bb1783e51060d61cd18ac50bfa9579"
+    ],
+    [
+     "from_height",
+     "2"
+    ],
+    [
+     "B",
+     "4"
+    ],
+    [
+     "as_of",
+     "5"
+    ],
+    [
+     "proof",
+     "0e663de44c03a09965489d466521331bc08c7679aecdfbb3398b868d1cf49156"
+    ],
+    [
+     "mp",
+     "2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4:2440461d4e9ae2294efa7b706c6bbb3c32c45d18d20a623706cf94f7d53e6d24:bbb1f97cb1b54e7e53dba8311120161cdb10af080856af9edcb6893a4defb8e4"
+    ],
+    [
+     "mn",
+     "0000000000000000"
+    ],
+    [
+     "X",
+     "15521100556000563"
+    ],
+    [
+     "Y",
+     "1009864743285650"
+    ],
+    [
+     "Z",
+     "20547073643059638"
+    ],
+    [
+     "S",
+     "15521100556000563-1009864743285650-20547073643059638"
+    ],
+    [
+     "client",
+     "cyberspace-mcp"
+    ]
+   ],
+   "content": "",
+   "sig": "0b43a9e26695e1b3a2f9952501a39944cf388295d5ff044998bea6428b7197209fd21548a88b3df5a772cb41d90cdaadd81220ee6e514e8521e5dbe8f1a15bd4"
+  },
+  {
+   "id": "c644ebe8048fea73704c8e025641b0210735c5459884cfd031b3ebb7dd114b78",
+   "pubkey": "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318448b39baf",
+   "created_at": 1790100004,
+   "kind": 3333,
+   "tags": [
+    [
+     "A",
+     "hyperjump"
+    ],
+    [
+     "e",
+     "b78704435ac6744ed69c9e5b53af3fb73db201161d0280db784e4b0f204ac38b",
+     "",
+     "genesis"
+    ],
+    [
+     "e",
+     "1bde6cb1d5215fe5ccba27ab501a16e10c1c526159610add1a6af4e58c362b19",
+     "",
+     "previous"
+    ],
+    [
+     "c",
+     "3219b3359ec8efc7b4ef0c395470fccbd8bb1783e51060d61cd18ac50bfa9579"
+    ],
+    [
+     "C",
+     "73e16910c65f371bfed61e3d953925a286c34a1fd8aaf5644b0d318471adfdf3"
+    ],
+    [
+     "from_height",
+     "4"
+    ],
+    [
+     "B",
+     "6"
+    ],
+    [
+     "proof",
+     "1b8f950fe2f27f23289400afea05a41aeb69da3e457cfac6cd1ebcb882d36d4c"
+    ],
+    [
+     "mp",
+     "9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:7fb554477438f1a0b6783c173a708ec50179998dc5d6ca38e4b6db49182fad8b:9b9c74c01498a800d0a4c3ccc935f45f4692dfadc786f88e5bad50504720309a"
+    ],
+    [
+     "mn",
+     "0000000000000000"
+    ],
+    [
+     "X",
+     "16651794195664918"
+    ],
+    [
+     "Y",
+     "24775930175555303"
+    ],
+    [
+     "Z",
+     "23529476586002063"
+    ],
+    [
+     "S",
+     "16651794195664918-24775930175555303-23529476586002063"
+    ],
+    [
+     "client",
+     "cyberspace-mcp"
+    ]
+   ],
+   "content": "",
+   "sig": "cefcd4fdbda34e2d4bcde2cbeec81fb4b9dbc699accf2254e823a709940d1689a495d6a4ba11d3897cbd5c9a50c6b0e160a3cac35322f9090966ec4370c16f8d"
+  }
+ ]
+}

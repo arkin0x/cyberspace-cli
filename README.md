@@ -101,11 +101,9 @@ cyberspace move --to 0x2b50e88
 # --toward supports a target in a different plane: it will do a final plane-switch hop when xyz matches.
 # While running, it prints per-hop progress.
 cyberspace move --toward 0x2b50e88
-# Publish a hyperjump movement event (A=hyperjump) to a known hyperjump coord.
-cyberspace move --to 0x2b50e88 --hyperjump
-# Or approach with normal hops and use hyperjump for the final toward step.
-cyberspace move --toward 0x2b50e88 --hyperjump
-# If you're on the hyperjump system and want a normal hop, confirm with:
+# Riding hyperspace (DECK-0001 v3) is not built yet: `--hyperjump` refuses and appends nothing,
+# because a ride needs a boarding, the station and a proof over every block it passes.
+# If your chain ends on an older hyperjump and you want a normal hop, confirm with:
 cyberspace move --to x,y,z --exit-hyperjump
 
 # If no destination is provided, `cyberspace move` defaults to moving `--toward` the current target.
@@ -149,11 +147,10 @@ cyberspace hyperjump show 692065 --from 0x<coord256>
 # block source: relay anchors (default), mempool.space, or fully offline
 cyberspace hyperjump show 692065 --source mempool
 cyberspace hyperjump show 398 --block-hash <H> --merkle-root <M>
-cyberspace hyperjump to 940158
 cyberspace hyperjump to 940158 --view
-cyberspace hyperjump next
-cyberspace hyperjump prev
 cyberspace hyperjump next --view
+cyberspace hyperjump prev --view
+# without --view, to/next/prev refuse to ride for the same reason as `move --hyperjump`
 
 # open the built-in 3D visualizer (optional deps)
 cyberspace 3d

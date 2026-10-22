@@ -49,6 +49,9 @@ class TestHyperjumpCLI(unittest.TestCase):
         if in_hyperjump_system:
             hj_xyz = hyperjump_xyz if hyperjump_xyz is not None else start_xyz
             coord_hex = xyz_to_coord(hj_xyz[0], hj_xyz[1], hj_xyz[2], plane=1).to_bytes(32, "big").hex()
+            # A ride at the head of the chain, for the commands that read where
+            # it left the identity (its B and C). Its proof values are
+            # well-formed placeholders, not a proven ride.
             hj_event = make_hyperjump_event(
                 pubkey_hex=pubkey_hex,
                 created_at=1700000001,
@@ -56,7 +59,11 @@ class TestHyperjumpCLI(unittest.TestCase):
                 previous_event_id=genesis["id"],
                 prev_coord_hex=c0,
                 coord_hex=coord_hex,
-                to_height=hyperjump_height,
+                from_height=int(hyperjump_height) - 1,
+                to_height=int(hyperjump_height),
+                proof_hash_hex="ab" * 32,
+                ride_openings_hex="cd" * 32,
+                nonce_hex="0" * 16,
             )
             chains.append_event(label, hj_event)
 
@@ -73,148 +80,50 @@ class TestHyperjumpCLI(unittest.TestCase):
         )
         return label, c0, coord_hex
 
-    def test_move_hyperjump_publishes_hyperjump_event(self) -> None:
+    def _assert_move_hyperjump_refused(self, **dest) -> None:
+        """move --hyperjump appends nothing, leaves the position alone and asks no relay anything."""
         old_home = os.environ.get("CYBERSPACE_HOME")
         try:
             with self._with_tmp_home() as td:
                 os.environ["CYBERSPACE_HOME"] = td
-                label, c0, _coord_hex = self._setup_chain(in_hyperjump_system=False)
-                c1 = xyz_to_coord(101, 201, 302, plane=1).to_bytes(32, "big").hex()
-
-                anchor_json = (
-                    '{"kind":321,"id":"aa","tags":[["C","'
-                    + c1
-                    + '\"],[\"M\",\"' + c1 + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
-                )
-                with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(anchor_json)):
+                label, c0, _coord_hex = self._setup_chain(in_hyperjump_system=False, start_xyz=(15, 0, 0))
+                with patch("cyberspace_cli.cli.subprocess.run") as run:
                     buf = io.StringIO()
-                    with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-                        move(
-                            to=f"0x{c1}",
-                            by=None,
-                            toward=None,
-                            max_lca_height=20,
-                            max_hops=0,
-                            hyperjump=True,
-                            hyperjump_relay="wss://cyberspace.nostr1.com",
-                            hyperjump_query_limit=25,
-                            exit_hyperjump=False,
-                        )
-
+                    with self.assertRaises(typer.Exit) as ex:
+                        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+                            move(
+                                **dest,
+                                max_lca_height=4,
+                                max_hops=0,
+                                hyperjump=True,
+                                hyperjump_relay="wss://cyberspace.nostr1.com",
+                                hyperjump_query_limit=25,
+                                exit_hyperjump=False,
+                            )
+                self.assertEqual(ex.exception.exit_code, 2)
+                self.assertIn("cannot ride hyperspace yet", buf.getvalue())
+                run.assert_not_called()
+                self.assertEqual(chains.chain_length(label), 1)
                 st = load_state()
                 assert st is not None
-                self.assertEqual(st.coord_hex, c1)
-                self.assertEqual(chains.chain_length(label), 2)
-                last = chains.read_events(label)[-1]
-                tags = last.get("tags", [])
-                self.assertIn(["A", "hyperjump"], tags)
-                self.assertIn(["B", "940158"], tags)
-                self.assertFalse(any(t[0] == "proof" for t in tags if isinstance(t, list) and t))
+                self.assertEqual(st.coord_hex, c0)
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)
             else:
                 os.environ["CYBERSPACE_HOME"] = old_home
 
-    def test_move_hyperjump_fails_when_destination_not_anchor(self) -> None:
-        old_home = os.environ.get("CYBERSPACE_HOME")
-        try:
-            with self._with_tmp_home() as td:
-                os.environ["CYBERSPACE_HOME"] = td
-                label, _c0, _coord_hex = self._setup_chain(in_hyperjump_system=False)
-                c1 = xyz_to_coord(101, 201, 302, plane=1).to_bytes(32, "big").hex()
+    def test_move_to_hyperjump_refuses_and_appends_nothing(self) -> None:
+        # Before 2026-10-22 this appended a ride with no from_height, proof, mp or mn
+        # straight after the spawn: invalid under DECK-0001 4.3 and 5.2, so the chain was too.
+        c1 = xyz_to_coord(31, 0, 0, plane=1).to_bytes(32, "big").hex()
+        self._assert_move_hyperjump_refused(to=f"0x{c1}", by=None, toward=None)
 
-                with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc("")):
-                    with self.assertRaises(typer.Exit) as ex:
-                        move(
-                            to=f"0x{c1}",
-                            by=None,
-                            toward=None,
-                            max_lca_height=20,
-                            max_hops=0,
-                            hyperjump=True,
-                            hyperjump_relay="wss://cyberspace.nostr1.com",
-                            hyperjump_query_limit=25,
-                            exit_hyperjump=False,
-                        )
-                self.assertEqual(ex.exception.exit_code, 2)
-                self.assertEqual(chains.chain_length(label), 1)
-        finally:
-            if old_home is None:
-                os.environ.pop("CYBERSPACE_HOME", None)
-            else:
-                os.environ["CYBERSPACE_HOME"] = old_home
-
-    def test_move_toward_hyperjump_uses_normal_hops_then_final_hyperjump(self) -> None:
-        old_home = os.environ.get("CYBERSPACE_HOME")
-        try:
-            with self._with_tmp_home() as td:
-                os.environ["CYBERSPACE_HOME"] = td
-                label, _c0, _coord_hex = self._setup_chain(in_hyperjump_system=False, start_xyz=(15, 0, 0))
-                c_target = xyz_to_coord(31, 0, 0, plane=1).to_bytes(32, "big").hex()
-
-                anchor_json = (
-                    '{"kind":321,"id":"aa","tags":[["C","'
-                    + c_target
-                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
-                )
-                with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(anchor_json)):
-                    move(
-                        to=None,
-                        by=None,
-                        toward=f"0x{c_target}",
-                        max_lca_height=4,
-                        max_hops=0,
-                        hyperjump=True,
-                        hyperjump_relay="wss://cyberspace.nostr1.com",
-                        hyperjump_query_limit=25,
-                        exit_hyperjump=False,
-                    )
-
-                st = load_state()
-                assert st is not None
-                self.assertEqual(st.coord_hex, c_target)
-                self.assertEqual(chains.chain_length(label), 3)
-                events = chains.read_events(label)
-                action1 = next((t[1] for t in events[1].get("tags", []) if isinstance(t, list) and len(t) >= 2 and t[0] == "A"), "")
-                action2 = next((t[1] for t in events[2].get("tags", []) if isinstance(t, list) and len(t) >= 2 and t[0] == "A"), "")
-                self.assertEqual(action1, "hop")
-                self.assertEqual(action2, "hyperjump")
-                self.assertIn(["B", "940158"], events[2].get("tags", []))
-        finally:
-            if old_home is None:
-                os.environ.pop("CYBERSPACE_HOME", None)
-            else:
-                os.environ["CYBERSPACE_HOME"] = old_home
-
-    def test_move_toward_hyperjump_fails_when_destination_not_anchor(self) -> None:
-        old_home = os.environ.get("CYBERSPACE_HOME")
-        try:
-            with self._with_tmp_home() as td:
-                os.environ["CYBERSPACE_HOME"] = td
-                label, _c0, _coord_hex = self._setup_chain(in_hyperjump_system=False)
-                c_target = xyz_to_coord(101, 200, 300, plane=1).to_bytes(32, "big").hex()
-
-                with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc("")):
-                    with self.assertRaises(typer.Exit) as ex:
-                        move(
-                            to=None,
-                            by=None,
-                            toward=f"0x{c_target}",
-                            max_lca_height=20,
-                            max_hops=0,
-                            hyperjump=True,
-                            hyperjump_relay="wss://cyberspace.nostr1.com",
-                            hyperjump_query_limit=25,
-                            exit_hyperjump=False,
-                        )
-                self.assertEqual(ex.exception.exit_code, 2)
-                self.assertEqual(chains.chain_length(label), 1)
-        finally:
-            if old_home is None:
-                os.environ.pop("CYBERSPACE_HOME", None)
-            else:
-                os.environ["CYBERSPACE_HOME"] = old_home
+    def test_move_toward_hyperjump_refuses_before_any_hop(self) -> None:
+        # Hops then a ride from wherever they ended is not a DECK-0001 ride
+        # (a ride follows a boarding or a ride, 4.3), so no hop is spent on one.
+        c_target = xyz_to_coord(31, 0, 0, plane=1).to_bytes(32, "big").hex()
+        self._assert_move_hyperjump_refused(to=None, by=None, toward=f"0x{c_target}")
 
     def test_hyperjump_to_requires_hyperjump_system_for_action(self) -> None:
         runner = CliRunner()
@@ -293,7 +202,7 @@ class TestHyperjumpCLI(unittest.TestCase):
             else:
                 os.environ["CYBERSPACE_HOME"] = old_home
 
-    def test_hyperjump_next_publishes_hyperjump_event(self) -> None:
+    def test_hyperjump_next_refuses_to_ride(self) -> None:
         runner = CliRunner()
         old_home = os.environ.get("CYBERSPACE_HOME")
         try:
@@ -313,14 +222,12 @@ class TestHyperjumpCLI(unittest.TestCase):
                     side_effect=[self._mock_proc(out), self._mock_proc(out)],
                 ):
                     res = runner.invoke(app, ["hyperjump", "next"])
-                self.assertEqual(res.exit_code, 0, msg=res.output)
+                self.assertEqual(res.exit_code, 2, msg=res.output)
+                self.assertIn("cannot ride hyperspace yet", res.output)
                 st = load_state()
                 assert st is not None
-                self.assertEqual(st.coord_hex, c_target)
-                self.assertEqual(chains.chain_length(label), 3)
-                last = chains.read_events(label)[-1]
-                self.assertIn(["A", "hyperjump"], last.get("tags", []))
-                self.assertIn(["B", "940158"], last.get("tags", []))
+                self.assertEqual(st.coord_hex, _coord)
+                self.assertEqual(chains.chain_length(label), 2)
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)
@@ -379,7 +286,7 @@ class TestHyperjumpCLI(unittest.TestCase):
             else:
                 os.environ["CYBERSPACE_HOME"] = old_home
 
-    def test_hyperjump_to_publishes_hyperjump_event(self) -> None:
+    def test_hyperjump_to_refuses_to_ride(self) -> None:
         runner = CliRunner()
         old_home = os.environ.get("CYBERSPACE_HOME")
         try:
@@ -399,14 +306,12 @@ class TestHyperjumpCLI(unittest.TestCase):
                     side_effect=[self._mock_proc(out), self._mock_proc(out)],
                 ):
                     res = runner.invoke(app, ["hyperjump", "to", "940160"])
-                self.assertEqual(res.exit_code, 0, msg=res.output)
+                self.assertEqual(res.exit_code, 2, msg=res.output)
+                self.assertIn("cannot ride hyperspace yet", res.output)
                 st = load_state()
                 assert st is not None
-                self.assertEqual(st.coord_hex, c_target)
-                self.assertEqual(chains.chain_length(label), 3)
-                last = chains.read_events(label)[-1]
-                self.assertIn(["A", "hyperjump"], last.get("tags", []))
-                self.assertIn(["B", "940160"], last.get("tags", []))
+                self.assertEqual(st.coord_hex, _coord)
+                self.assertEqual(chains.chain_length(label), 2)
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)
