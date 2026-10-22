@@ -1,5 +1,5 @@
 {
- "source": "Built and signed by cyberspace-mcp 71707f9 (master): spawnTemplate, enterHyperspaceTemplate and hyperjumpTemplate in src/chain/builder.ts, signEvent in src/nostr/event.ts (which adds the client tag). Proofs from cyberspace_core.ride.prove_ride over the line of vectors/chain-rules-2026-09-28-virtual-brackets.json, key: that file's test_key. A first ride after boarding (station 2 within as_of 5, to block 4) and a later ride (4 to 6).",
+ "source": "Built and signed by cyberspace-mcp 71707f9 (master): spawnTemplate, enterHyperspaceTemplate and hyperjumpTemplate in src/chain/builder.ts, signEvent in src/nostr/event.ts (which adds the client tag), the ride proofs by computeRideLeaf and buildRideProof in src/hyperspace/ride.ts, over the line of vectors/chain-rules-2026-09-28-virtual-brackets.json; key: that file's test_key. A first ride after boarding (station 2 within as_of 5, to block 4) and a later ride (4 to 6).",
  "events": [
   {
    "id": "b78704435ac6744ed69c9e5b53af3fb73db201161d0280db784e4b0f204ac38b",
@@ -37,7 +37,7 @@
     ]
    ],
    "content": "",
-   "sig": "d120c6f58b78579beda2cd0f2c2fbc24c6791fe99250d6af8b3215ffbc55f33f53d6fa41be494c5219be9f1c05c1a2d1b505112388c5f3f7e9b4be81d07891e5"
+   "sig": "ebc73d89bccf1db051c414bdf9bc0cc5fa3ed4a7b979742c98caedbfb27618d0ee4fc6cf2ef9f5198a77db72bf17cebd55b86530c4df2a1c7e9fd5e78ffe4c81"
   },
   {
    "id": "14c9f834a2421bbd20078c00c5f6c5752b554ff3f8525d43b8e3d0ce7030d6e2",
@@ -95,7 +95,7 @@
     ]
    ],
    "content": "",
-   "sig": "c37f1fa2fcd39836eb389d4da3e2c6dd4bec767ce82a6aa930707753154c80a882b167e2b6c2a142b0bd4105a080a3d62b23e4ee43438a8ba662be3e7acf600d"
+   "sig": "9e45050e0fdfcac002266d15b41f40b311d09c184bce082b6f08ab7a0e57190ed89123d58b726e1a6696546cf0673251b4b2c82b8efc8a787a66f212c4b6618e"
   },
   {
    "id": "1bde6cb1d5215fe5ccba27ab501a16e10c1c526159610add1a6af4e58c362b19",
@@ -173,7 +173,7 @@
     ]
    ],
    "content": "",
-   "sig": "0b43a9e26695e1b3a2f9952501a39944cf388295d5ff044998bea6428b7197209fd21548a88b3df5a772cb41d90cdaadd81220ee6e514e8521e5dbe8f1a15bd4"
+   "sig": "0b12049b0d00f576989b64b572a37811f47cc43e293166cac4197e9f0526b56dfa230d7ffcaac82500489c132134ab49927cdf5d23e1bc43deebbc4bfea474e9"
   },
   {
    "id": "c644ebe8048fea73704c8e025641b0210735c5459884cfd031b3ebb7dd114b78",
@@ -247,7 +247,7 @@
     ]
    ],
    "content": "",
-   "sig": "cefcd4fdbda34e2d4bcde2cbeec81fb4b9dbc699accf2254e823a709940d1689a495d6a4ba11d3897cbd5c9a50c6b0e160a3cac35322f9090966ec4370c16f8d"
+   "sig": "103595b24cdfa542825b7128ecc9e4f649ad586a05bf276c7e86ab52584ae5ea06585a8b76a144b875c5c9e9130d8ff03c110544399b188a82497d6f11a9b552"
   }
  ]
 }

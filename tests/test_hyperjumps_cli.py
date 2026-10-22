@@ -125,30 +125,31 @@ class TestHyperjumpCLI(unittest.TestCase):
         c_target = xyz_to_coord(31, 0, 0, plane=1).to_bytes(32, "big").hex()
         self._assert_move_hyperjump_refused(to=None, by=None, toward=f"0x{c_target}")
 
-    def test_hyperjump_to_requires_hyperjump_system_for_action(self) -> None:
+    def test_hyperjump_to_next_prev_refuse_to_ride_before_asking_a_relay(self) -> None:
         runner = CliRunner()
         old_home = os.environ.get("CYBERSPACE_HOME")
         try:
-            with self._with_tmp_home() as td:
-                os.environ["CYBERSPACE_HOME"] = td
-                self._setup_chain(in_hyperjump_system=False)
-                c_target = xyz_to_coord(101, 199, 300, plane=1).to_bytes(32, "big").hex()
-                out = (
-                    '{"kind":321,"id":"'
-                    + ("ab" * 32)
-                    + '","created_at":1773171779,"tags":[["C","'
-                    + c_target
-                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
-                )
-                with patch("cyberspace_cli.cli.subprocess.run", return_value=self._mock_proc(out)):
-                    res = runner.invoke(app, ["hyperjump", "to", "940158"])
-                self.assertEqual(res.exit_code, 2)
-                self.assertIn("not currently on the hyperjump system", res.output)
+            for on_system in (False, True):
+                for args in (["to", "940160"], ["next"], ["prev"]):
+                    with self.subTest(on_system=on_system, args=args), self._with_tmp_home() as td:
+                        os.environ["CYBERSPACE_HOME"] = td
+                        label, _c0, coord = self._setup_chain(in_hyperjump_system=on_system, hyperjump_height="940157")
+                        length = chains.chain_length(label)
+                        with patch("cyberspace_cli.cli.subprocess.run") as run:
+                            res = runner.invoke(app, ["hyperjump", *args])
+                        self.assertEqual(res.exit_code, 2, msg=res.output)
+                        self.assertIn("cannot ride hyperspace yet", res.output)
+                        run.assert_not_called()
+                        self.assertEqual(chains.chain_length(label), length)
+                        st = load_state()
+                        assert st is not None
+                        self.assertEqual(st.coord_hex, coord)
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)
             else:
                 os.environ["CYBERSPACE_HOME"] = old_home
+
     def test_hyperjump_show_prints_anchor_off_hyperjump_system(self) -> None:
         runner = CliRunner()
         old_home = os.environ.get("CYBERSPACE_HOME")
@@ -202,38 +203,6 @@ class TestHyperjumpCLI(unittest.TestCase):
             else:
                 os.environ["CYBERSPACE_HOME"] = old_home
 
-    def test_hyperjump_next_refuses_to_ride(self) -> None:
-        runner = CliRunner()
-        old_home = os.environ.get("CYBERSPACE_HOME")
-        try:
-            with self._with_tmp_home() as td:
-                os.environ["CYBERSPACE_HOME"] = td
-                label, _c0, _coord = self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
-                c_target = xyz_to_coord(102, 200, 300, plane=1).to_bytes(32, "big").hex()
-                out = (
-                    '{"kind":321,"id":"'
-                    + ("ab" * 32)
-                    + '","created_at":1773171779,"tags":[["C","'
-                    + c_target
-                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940158"],["X","0"],["Y","0"],["Z","0"]]}\n'
-                )
-                with patch(
-                    "cyberspace_cli.cli.subprocess.run",
-                    side_effect=[self._mock_proc(out), self._mock_proc(out)],
-                ):
-                    res = runner.invoke(app, ["hyperjump", "next"])
-                self.assertEqual(res.exit_code, 2, msg=res.output)
-                self.assertIn("cannot ride hyperspace yet", res.output)
-                st = load_state()
-                assert st is not None
-                self.assertEqual(st.coord_hex, _coord)
-                self.assertEqual(chains.chain_length(label), 2)
-        finally:
-            if old_home is None:
-                os.environ.pop("CYBERSPACE_HOME", None)
-            else:
-                os.environ["CYBERSPACE_HOME"] = old_home
-
     def test_hyperjump_prev_view(self) -> None:
         runner = CliRunner()
         old_home = os.environ.get("CYBERSPACE_HOME")
@@ -280,38 +249,6 @@ class TestHyperjumpCLI(unittest.TestCase):
                 self.assertEqual(res.exit_code, 0, msg=res.output)
                 self.assertIn("hyperjump_block_height=940158", res.output)
                 self.assertIn(f"coord: 0x{c_target}", res.output)
-        finally:
-            if old_home is None:
-                os.environ.pop("CYBERSPACE_HOME", None)
-            else:
-                os.environ["CYBERSPACE_HOME"] = old_home
-
-    def test_hyperjump_to_refuses_to_ride(self) -> None:
-        runner = CliRunner()
-        old_home = os.environ.get("CYBERSPACE_HOME")
-        try:
-            with self._with_tmp_home() as td:
-                os.environ["CYBERSPACE_HOME"] = td
-                label, _c0, _coord = self._setup_chain(in_hyperjump_system=True, hyperjump_height="940157")
-                c_target = xyz_to_coord(105, 200, 300, plane=1).to_bytes(32, "big").hex()
-                out = (
-                    '{"kind":321,"id":"'
-                    + ("ab" * 32)
-                    + '","created_at":1773171779,"tags":[["C","'
-                    + c_target
-                    + '\"],[\"M\",\"' + c_target + '\"],[\"B\",\"940160"],["X","0"],["Y","0"],["Z","0"]]}\n'
-                )
-                with patch(
-                    "cyberspace_cli.cli.subprocess.run",
-                    side_effect=[self._mock_proc(out), self._mock_proc(out)],
-                ):
-                    res = runner.invoke(app, ["hyperjump", "to", "940160"])
-                self.assertEqual(res.exit_code, 2, msg=res.output)
-                self.assertIn("cannot ride hyperspace yet", res.output)
-                st = load_state()
-                assert st is not None
-                self.assertEqual(st.coord_hex, _coord)
-                self.assertEqual(chains.chain_length(label), 2)
         finally:
             if old_home is None:
                 os.environ.pop("CYBERSPACE_HOME", None)

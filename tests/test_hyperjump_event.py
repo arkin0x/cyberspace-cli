@@ -140,6 +140,11 @@ class TestTheBuilderRefuses:
         {"ride_openings_hex": ""},
         {"nonce_hex": "0123456789abcde"},
         {"nonce_hex": "0123456789ABCDEF"},
+        {"as_of": 4, "from_height": 5},         # the station lies within as_of (4.2)
+        {"genesis_event_id": "11" * 31},
+        {"previous_event_id": "GG" * 32},
+        {"prev_coord_hex": ""},
+        {"coord_hex": "44" * 33},
     ], ids=lambda c: next(iter(c)) + "=" + repr(next(iter(c.values()))))
     def test_input_that_would_make_an_invalid_ride(self, change):
         with pytest.raises(ValueError):
@@ -187,13 +192,18 @@ class TestInterop:
         assert event_id(built) == ride["id"]
 
     def test_cyberspace_mcp_rides_rebuild_and_verify(self):
-        """A chain built and signed by cyberspace-mcp's own templates
-        (tests/fixtures/mcp_rides.json). The CLI's builder rebuilds each ride
-        to the same id (the MCP's signEvent adds a client tag, which no rule
-        reads), and the CLI's verifier accepts the chain."""
+        """A chain built, proved and signed by cyberspace-mcp's own code
+        (tests/fixtures/mcp_rides.json). The CLI's prover reaches the same
+        root, openings and nonce, its builder rebuilds each ride to the same
+        id (the MCP's signEvent adds a client tag, which no rule reads), and
+        its verifier accepts the chain."""
         doc = json.loads((FIXTURES / "mcp_rides.json").read_text(encoding="utf-8"))
         events = doc["events"]
         for ride in events[2:]:
+            frm, to = int(_value(ride, "from_height")), int(_value(ride, "B"))
+            previous = next(t[1] for t in ride["tags"] if t[0] == "e" and t[3] == "previous")
+            root, nonce, openings = prove_ride(bytes.fromhex(previous), min(frm, to), max(frm, to), LINE.block_hash, workers=1)
+            assert [root.hex(), encode_ride_openings(openings), encode_nonce(nonce)] == [_value(ride, n) for n in ("proof", "mp", "mn")]
             built = self._rebuild(ride, _value(ride, "mn"))
             built["tags"].append(["client", "cyberspace-mcp"])
             assert built["tags"] == ride["tags"]

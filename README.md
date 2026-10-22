@@ -148,9 +148,8 @@ cyberspace hyperjump show 692065 --from 0x<coord256>
 cyberspace hyperjump show 692065 --source mempool
 cyberspace hyperjump show 398 --block-hash <H> --merkle-root <M>
 cyberspace hyperjump to 940158 --view
-cyberspace hyperjump next --view
-cyberspace hyperjump prev --view
-# without --view, to/next/prev refuse to ride for the same reason as `move --hyperjump`
+# next/prev --view step from the block an older hyperjump at the end of your chain left you at.
+# Without --view, to/next/prev refuse to ride, for the same reason as `move --hyperjump`.
 
 # open the built-in 3D visualizer (optional deps)
 cyberspace 3d

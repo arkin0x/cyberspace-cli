@@ -1721,6 +1721,25 @@ def hyperjump_show(
         _print_stop_distance(stop=stop, from_xyz=fxyz, from_label=f"0x{_coord_hex_from_xyz(parsed.x, parsed.y, parsed.z, parsed.plane)}", from_gps=fgps)
 
 
+def _refuse_to_ride() -> None:
+    """Exit 2 with nothing appended and nothing asked of a relay.
+
+    A ride is valid only after an enter-hyperspace or another ride
+    (DECK-0001 4.3), departs from the station or the previous ride's B, and
+    carries a proof over every block it passes (5.3 to 5.5). This CLI builds
+    none of that yet, and its chains only grow by its own moves, so any ride
+    it wrote would be invalid and would leave the chain invalid from it
+    (CYBERSPACE_V2 8.7.3). It refuses instead."""
+    typer.echo(
+        "This CLI cannot ride hyperspace yet: a ride (DECK-0001 v3) has to follow an enter-hyperspace "
+        "action, depart from the station (4.2) and carry a proof over every block it passes (5.3 to 5.5), "
+        "and this CLI builds none of those. A ride without them is invalid, and so would be every move "
+        "after it, so nothing was appended.",
+        err=True,
+    )
+    raise typer.Exit(code=2)
+
+
 @hyperjump_app.command("to")
 def hyperjump_to(
     blockheight: int = typer.Argument(
@@ -1754,10 +1773,12 @@ def hyperjump_to(
         25,
         "--hyperjump-query-limit",
         min=1,
-        help="Validation query limit used when publishing the hyperjump movement event.",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
 ) -> None:
     """View a specific hyperjump block height. Without --view it refuses to ride, like `move --hyperjump`."""
+    if not view:
+        _refuse_to_ride()
     resolved = _query_hyperjump_anchor_for_height(
         block_height=blockheight,
         relay=relay,
@@ -1769,25 +1790,6 @@ def hyperjump_to(
         raise typer.Exit(code=1)
 
     stop, ev = resolved
-    coord_hex = stop.coord_hex
-    if view:
-        _print_hyperjump_anchor(block_height=blockheight, stop=stop, event=ev)
-        return
-
-    # Action-creating commands are restricted to the hyperjump system.
-    _state, _current_height = _require_hyperjump_system_state()
-    move(
-        to=f"0x{coord_hex}",
-        by=None,
-        toward=None,
-        max_lca_height=None,
-        max_hops=0,
-        hyperjump=True,
-        hyperjump_relay=relay,
-        hyperjump_query_limit=hyperjump_query_limit,
-        exit_hyperjump=False,
-        hyperjump_height=blockheight,
-    )
     _print_hyperjump_anchor(block_height=blockheight, stop=stop, event=ev)
 
 
@@ -1819,10 +1821,12 @@ def hyperjump_next(
         25,
         "--hyperjump-query-limit",
         min=1,
-        help="Validation query limit used when publishing the hyperjump movement event.",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
 ) -> None:
     """View the next hyperjump block. Without --view it refuses to ride, like `move --hyperjump`."""
+    if not view:
+        _refuse_to_ride()
     _state, current_block_height = _require_hyperjump_system_state()
     target_block_height = current_block_height + 1
     resolved = _query_hyperjump_anchor_for_height(
@@ -1836,23 +1840,6 @@ def hyperjump_next(
         raise typer.Exit(code=1)
 
     stop, ev = resolved
-    coord_hex = stop.coord_hex
-    if view:
-        _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
-        return
-
-    move(
-        to=f"0x{coord_hex}",
-        by=None,
-        toward=None,
-        max_lca_height=None,
-        max_hops=0,
-        hyperjump=True,
-        hyperjump_relay=relay,
-        hyperjump_query_limit=hyperjump_query_limit,
-        exit_hyperjump=False,
-        hyperjump_height=target_block_height,
-    )
     _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
 
 
@@ -1884,10 +1871,12 @@ def hyperjump_prev(
         25,
         "--hyperjump-query-limit",
         min=1,
-        help="Validation query limit used when publishing the hyperjump movement event.",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
 ) -> None:
     """View the previous hyperjump block. Without --view it refuses to ride, like `move --hyperjump`."""
+    if not view:
+        _refuse_to_ride()
     _state, current_block_height = _require_hyperjump_system_state()
     target_block_height = current_block_height - 1
     if target_block_height < 0:
@@ -1905,23 +1894,6 @@ def hyperjump_prev(
         raise typer.Exit(code=1)
 
     stop, ev = resolved
-    coord_hex = stop.coord_hex
-    if view:
-        _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
-        return
-
-    move(
-        to=f"0x{coord_hex}",
-        by=None,
-        toward=None,
-        max_lca_height=None,
-        max_hops=0,
-        hyperjump=True,
-        hyperjump_relay=relay,
-        hyperjump_query_limit=hyperjump_query_limit,
-        exit_hyperjump=False,
-        hyperjump_height=target_block_height,
-    )
     _print_hyperjump_anchor(block_height=target_block_height, stop=stop, event=ev)
 
 
@@ -2404,13 +2376,13 @@ def move(
     hyperjump_relay: str = typer.Option(
         DEFAULT_HYPERJUMP_RELAY,
         "--hyperjump-relay",
-        help="Relay URL used to validate hyperjump destinations.",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
     hyperjump_query_limit: int = typer.Option(
         25,
         "--hyperjump-query-limit",
         min=1,
-        help="Max anchor events to query when validating a hyperjump destination.",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
     sidestep: bool = typer.Option(
         False,
@@ -2452,7 +2424,7 @@ def move(
         None,
         "--hyperjump-height",
         hidden=True,
-        help="Block height of the hyperjump destination (lets validation query anchors by B instead of C).",
+        help="Unused: riding is not built yet (kept so existing invocations still parse).",
     ),
 ) -> None:
     """Move locally by appending a hop, sidestep, or hyperjump event to the active chain.
@@ -2549,20 +2521,7 @@ def move(
         typer.echo("--exit-hyperjump cannot be combined with --hyperjump.", err=True)
         raise typer.Exit(code=2)
     if hyperjump:
-        # A ride is valid only after an enter-hyperspace or another ride
-        # (DECK-0001 4.3), departs from the station or the previous ride's B,
-        # and carries a proof over every block it passes (5.3 to 5.5). This
-        # CLI builds none of that yet, and its chains only grow by its own
-        # moves, so any ride it wrote here would be invalid and would leave
-        # the chain invalid from it (CYBERSPACE_V2 8.7.3). It refuses instead.
-        typer.echo(
-            "This CLI cannot ride hyperspace yet: a ride (DECK-0001 v3) has to follow an enter-hyperspace "
-            "action, depart from the station (4.2) and carry a proof over every block it passes (5.3 to 5.5), "
-            "and this CLI builds none of those. A ride without them is invalid, and so would be every move "
-            "after it, so nothing was appended.",
-            err=True,
-        )
-        raise typer.Exit(code=2)
+        _refuse_to_ride()
 
     in_hyperjump_system = _hyperjump_block_height_from_event(events[-1]) is not None
     if in_hyperjump_system and not hyperjump and not exit_hyperjump:

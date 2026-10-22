@@ -134,16 +134,25 @@ def make_hyperjump_event(
         boarding and left out after that; which ride this is is the caller's call.
 
     A zero-length ride (from_height equal to to_height) does not exist (5.6)
-    and is refused, as are an as_of below B (4.2) and malformed proof values.
+    and is refused, as are an as_of below B or below from_height (4.2: the
+    station and the destination both lie within the bound), and ids,
+    coordinates or proof values that are not well formed (8.8).
     """
+    for name, value in (("genesis_event_id", genesis_event_id), ("previous_event_id", previous_event_id),
+                        ("prev_coord_hex", prev_coord_hex), ("coord_hex", coord_hex)):
+        if not isinstance(value, str) or not _HEX32.fullmatch(value):
+            raise ValueError(f"{name} must be 64 lowercase hex characters")
     for name, height in (("from_height", from_height), ("to_height", to_height), ("as_of", as_of)):
         if height is not None and (isinstance(height, bool) or not isinstance(height, int) or height < 0):
             raise ValueError(f"{name} must be a non-negative block height")
     if from_height == to_height:
         raise ValueError(f"a zero-length ride (block {to_height} to itself) does not exist (DECK-0001 5.6)")
-    if as_of is not None and as_of < to_height:
-        raise ValueError(f"as_of ({as_of}) is below B ({to_height}); the station set bound covers the destination (DECK-0001 4.2)")
-    if not _HEX32.fullmatch(proof_hash_hex):
+    if as_of is not None and as_of < max(from_height, to_height):
+        raise ValueError(
+            f"as_of ({as_of}) is below from_height ({from_height}) or B ({to_height}); "
+            "the station set bound covers the station and the destination (DECK-0001 4.2)"
+        )
+    if not isinstance(proof_hash_hex, str) or not _HEX32.fullmatch(proof_hash_hex):
         raise ValueError("proof_hash_hex must be the ride's 32-byte Merkle root as 64 lowercase hex characters (DECK-0001 5.4)")
     if not ride_openings_hex:
         raise ValueError("ride_openings_hex must hold the ride's sampled openings (DECK-0001 5.5)")
