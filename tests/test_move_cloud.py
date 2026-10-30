@@ -36,7 +36,7 @@ from cyberspace_cli.nostr_event import make_spawn_event
 from cyberspace_cli.nostr_keys import pubkey_hex_from_privkey
 from cyberspace_cli.state import STATE_VERSION, CyberspaceState, save_state
 from cyberspace_core.coords import xyz_to_coord
-from cyberspace_core.movement import compute_hop_proof, compute_sidestep_proof, verify_sidestep_event
+from cyberspace_core.movement import compute_sidestep_proof, verify_hop_event, verify_sidestep_event
 
 PRIVKEY_HEX = "5a" * 32
 PUBKEY_HEX = pubkey_hex_from_privkey(bytes.fromhex(PRIVKEY_HEX))
@@ -174,8 +174,9 @@ class TestMoveCloud(unittest.TestCase):
         ev = events[-1]
         tags = {t[0]: t[1:] for t in ev["tags"]}
         self.assertEqual(tags["A"][0], "hop")
-        local = compute_hop_proof(x, y, z, x2, y, z, plane=0, previous_event_id_hex=genesis["id"], max_compute_height=12)
-        self.assertEqual(tags["proof"][0], local.proof_hash)
+        # Version 2 (residue openings): any nonce meeting the price verifies, so the hop is checked at Level 1.
+        self.assertEqual([t[0] for t in ev["tags"]].count("mp"), 1)
+        self.assertEqual(verify_hop_event(ev), [])
 
         rec = cloud_jobs.all_jobs()
         self.assertEqual(len(rec), 1)
@@ -203,8 +204,7 @@ class TestMoveCloud(unittest.TestCase):
         self.assertIn("lnbc-fake-1", r.output)          # the invoice was shown
         self.assertIn("Paid. Starting the job.", r.output)
         ev = chains.read_events(label)[-1]
-        local = compute_hop_proof(x, y, z, x2, y, z, plane=0, previous_event_id_hex=genesis["id"], max_compute_height=12)
-        self.assertEqual({t[0]: t[1:] for t in ev["tags"]}["proof"][0], local.proof_hash)
+        self.assertEqual(verify_hop_event(ev), [])
 
     def test_toward_crosses_a_tall_wall_with_a_cloud_sidestep(self):
         # Server hop cap 10: the h=14 boundary needs a sidestep, landing 1 gibson past the wall.

@@ -1,10 +1,24 @@
 #!/usr/bin/env python3
-"""Regenerate vectors/chain-rules-2026-09-28-virtual-brackets.json, the golden
-vectors for the chain rules of CYBERSPACE_V2.md section 8.12, revision
-2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and in
-two rounds on 2026-10-08 (arkin0x/cyberspace 1bf5694).
+"""Regenerate the golden vectors for the chain rules of CYBERSPACE_V2.md
+section 8.12, one file per revision:
 
     PYTHONPATH=src python scripts/gen_chain_vectors.py
+        vectors/chain-rules-2026-10-08-residue-openings.json, the current
+        revision (arkin0x/cyberspace 06c2873): every hop carries residue
+        openings (5.9 to 5.13), and a section of vectors for the hop tags and
+        the version 1 hop list.
+    PYTHONPATH=src python scripts/gen_chain_vectors.py --revision 2026-09-28-virtual-brackets
+        vectors/chain-rules-2026-09-28-virtual-brackets.json, the previous
+        revision with the rulings folded in on 2026-10-07 and in two rounds on
+        2026-10-08 (arkin0x/cyberspace 1bf5694): every hop is version 1.
+        This rewrites that file byte for byte as it was published, so its
+        "regenerate" field still shows the command without the flag, from
+        before there were two revisions.
+
+The two files share every vector of the previous revision, built the same
+way; under the current revision the hops carry seals, mn and mp instead of
+the 5.6 proof_hash, so their ids, and the ids of everything after them,
+differ.
 
 Every vector is a small synthetic chain of real, signed kind 3333 events and
 the verdict the chain rules give it. The verdict of each vector is written
@@ -24,6 +38,14 @@ What keeps the vectors cheap while every proof in them is real:
   ride leaf is a tree of height at most 10. Rides are one or two blocks long,
   so the re-roll price is one attempt (A = 1). An attempt is one height-16
   Cantor tree, about a second in Python, which makes rides the dearest part.
+- Under the current revision every hop proof has the smallest size there
+  is: m = 8 residues in one block, a Merkle depth of 0 (the seal is the one
+  leaf), a price of one attempt (A = 1), and an mp of 16 openings of 128
+  characters each. The spatial trees are height 1 and K is at most 3, except
+  for the hop inside a bracket (bracket-hop-inside), whose
+  destination in the game's region has K = 4, so h_max is at most 4; m stays
+  8 up to h_max = 7 and A stays 1 up to h_max = 6. Builder.hop asserts m, the
+  depth and A for every hop it writes.
 - Signatures use a zero auxiliary random value, so a rerun writes the same
   file byte for byte.
 """
@@ -37,15 +59,22 @@ from coincurve import PrivateKey
 
 from cyberspace_cli.nostr_event import _sector_tags_from_coord_hex, compute_event_id_hex
 from cyberspace_core.cantor import sha256
-from cyberspace_core.chain import CHAIN_RULES_REVISION, REASONS, verify_chain
+import argparse
+
+from cyberspace_core import residue
+from cyberspace_core.chain import CHAIN_RULES_REVISION, PREVIOUS_REVISION, REASONS_BY_REVISION, REVISIONS, verify_chain
 from cyberspace_core.coords import coord_to_xyz, xyz_to_coord
 from cyberspace_core.hyperspace import Line, enter_hyperspace_proof, stop_distance
 from cyberspace_core.movement import compute_hop_proof, compute_sidestep_proof, encode_nonce, encode_openings
 from cyberspace_core.ride import K_LINE, encode_ride_openings, line_terrain_k, prove_ride
 from cyberspace_core.terrain import terrain_k
 
-OUT = Path(__file__).resolve().parents[1] / "vectors" / f"chain-rules-{CHAIN_RULES_REVISION}.json"
-SPEC_COMMIT = "1bf5694f349241f60762145efad5019569e837e6"
+VECTORS = Path(__file__).resolve().parents[1] / "vectors"
+# The spec commit each revision's vectors were written against.
+SPEC_COMMIT = {
+    PREVIOUS_REVISION: "1bf5694f349241f60762145efad5019569e837e6",
+    CHAIN_RULES_REVISION: "06c287332651f99b75e609b7b098e165993750fd",
+}
 KEY_DOMAIN = b"CYBERSPACE_CHAIN_VECTORS_KEY"
 OTHER_KEY_DOMAIN = b"CYBERSPACE_CHAIN_VECTORS_OTHER_KEY"
 STOP_DOMAIN = b"CYBERSPACE_CHAIN_VECTORS_STOP"
@@ -128,10 +157,12 @@ Tags = List[List[str]]
 
 
 class Builder:
-    """Signed kind 3333 events by one key, created_at counting up from T0."""
+    """Signed kind 3333 events by one key, created_at counting up from T0.
+    Hops are version 2 under the current revision and version 1 under the
+    previous one."""
 
-    def __init__(self, sk: PrivateKey, line: Line, clock: Optional[List[int]] = None):
-        self.sk, self.line = sk, line
+    def __init__(self, sk: PrivateKey, line: Line, clock: Optional[List[int]] = None, revision: str = CHAIN_RULES_REVISION):
+        self.sk, self.line, self.revision = sk, line, revision
         self.pub = sk.public_key_xonly.format().hex()
         self.clock = clock if clock is not None else [T0]
 
@@ -171,10 +202,21 @@ class Builder:
         """A virtual action: its name, its links, and whatever tags the game gives it."""
         return self.sign([["A", name], ["e", genesis["id"], "", "genesis"], ["e", prev["id"], "", "previous"]] + (extra or []))
 
-    def hop(self, genesis: Dict, prev: Dict, c: str, C: str, seed: Optional[Dict] = None, **kw) -> Dict[str, Any]:
-        (x1, y1, z1, _), (x2, y2, z2, p2) = coord_to_xyz(int(c, 16)), coord_to_xyz(int(C, 16))
-        proof = compute_hop_proof(x1, y1, z1, x2, y2, z2, plane=p2, previous_event_id_hex=(seed or prev)["id"])
-        return self.link("hop", genesis, prev, c, C, [["proof", proof.proof_hash]], **kw)
+    def hop(self, genesis: Dict, prev: Dict, c: str, C: str, seed: Optional[Dict] = None, version: Optional[int] = None,
+            **kw) -> Dict[str, Any]:
+        """A hop whose proof is seeded by `seed` (default the previous event):
+        version 2 (proof, mn, mp) under the current revision, version 1 (the
+        5.6 proof_hash) under the previous revision or with version=1."""
+        if version is None:
+            version = 1 if self.revision == PREVIOUS_REVISION else 2
+        if version == 1:
+            (x1, y1, z1, _), (x2, y2, z2, p2) = coord_to_xyz(int(c, 16)), coord_to_xyz(int(C, 16))
+            proof = compute_hop_proof(x1, y1, z1, x2, y2, z2, plane=p2, previous_event_id_hex=(seed or prev)["id"])
+            return self.link("hop", genesis, prev, c, C, [["proof", proof.proof_hash]], **kw)
+        v2 = residue.prove_hop(bytes.fromhex((seed or prev)["id"]), int(c, 16), int(C, 16), workers=1)
+        g = v2.geometry
+        assert (g.m, g.depth, g.attempts) == (8, 0, 1), g
+        return self.link("hop", genesis, prev, c, C, [["proof", v2.proof], ["mn", v2.mn], ["mp", v2.mp]], **kw)
 
     def sidestep(self, genesis: Dict, prev: Dict, c: str, C: str, seed: Optional[Dict] = None) -> Dict[str, Any]:
         (x1, y1, z1, _), (x2, y2, z2, p2) = coord_to_xyz(int(c, 16)), coord_to_xyz(int(C, 16))
@@ -259,7 +301,7 @@ def valid(chain: List[Dict], position: str, open_bracket: Optional[Dict] = None,
 
 def invalid(chain: List[Dict], at: Optional[Dict], reason: str, position: Optional[str]) -> Dict[str, Any]:
     """`position` is the last valid position, where the frozen chain leaves the identity (3.2, 8.7.3)."""
-    assert reason in REASONS, reason
+    assert reason in REASONS_BY_REVISION[CHAIN_RULES_REVISION], reason
     return {
         "valid": False,
         "chain": [e["id"] for e in chain],
@@ -270,9 +312,11 @@ def invalid(chain: List[Dict], at: Optional[Dict], reason: str, position: Option
     }
 
 
-def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]:
-    b = Builder(sk, line)
-    o = Builder(other, line, b.clock)
+def build(sk: PrivateKey, other: PrivateKey, line: Line, revision: str, listed: List[str]) -> List[Dict[str, Any]]:
+    """The vectors of `revision`. Under the current revision, the ids of the
+    version 1 hops the vectors treat as listed (5.13) are appended to `listed`."""
+    b = Builder(sk, line, revision=revision)
+    o = Builder(other, line, b.clock, revision=revision)
     P = b.pub
     PX, PY, PZ = flip(P, dx=1), flip(P, dy=1), flip(P, dz=1)
     FAR_SECTOR = flip(P, dx=1 << 30)  # another sector, for wrong sector tags
@@ -1196,10 +1240,164 @@ def build(sk: PrivateKey, other: PrivateKey, line: Line) -> List[Dict[str, Any]]
         "copy of one event is not a fork.",
         [s, h1, dict(h1)], valid([s, h1], PX))
 
+    if revision == CHAIN_RULES_REVISION:
+        residue_openings_vectors(b, add, listed)
     return vectors
 
 
+def residue_openings_vectors(b: Builder, add: Callable, listed: List[str]) -> None:
+    """Revision 2026-10-08-residue-openings: hop proofs of version 2 (5.9 to
+    5.13, 8.4, 8.7.1, 8.8). Every hop above is version 2; these lock the hop
+    tags, Level 1 and the list of version 1 hops. `listed` collects the test
+    list: version 1 hops treated as listed in grandfathered-v1-hops.txt."""
+    P = b.pub
+    PX, PY = flip(P, dx=1), flip(P, dy=1)
+    PXY = flip(PX, dy=1)
+
+    def lst(event: Dict[str, Any]) -> Dict[str, Any]:
+        listed.append(event["id"])
+        return event
+
+    def mp_of(event: Dict[str, Any]) -> str:
+        return next(t[1] for t in event["tags"] if t[0] == "mp")
+
+    # ------------------------------------------------ version 1 hops (5.13)
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    h2 = b.hop(s, h1, PX, PXY, version=1)
+    h3 = b.hop(s, h2, PXY, flip(PXY, dz=1))
+    add("hop-version-1-unlisted", ["5.13", "8.4", "3.2"],
+        "A version 1 hop (its proof the 5.6 proof_hash of this very hop, no mn and no mp) whose id is not on the list. "
+        "This revision rejects it, so the chain is invalid from it and frozen at the hop before, and the valid version 2 "
+        "hop after it does not move the identity.",
+        [s, h1, h2, h3], invalid([s, h1, h2, h3], h2, "hop-proof", PX))
+
+    s = b.spawn()
+    h1 = lst(b.hop(s, s, P, PX, version=1))
+    h2 = b.hop(s, h1, PX, PXY)
+    add("hop-version-1-listed", ["5.13", "8.7.1 step 7"],
+        "A version 1 hop whose id is on the test list, then a version 2 hop seeded by its id. The listed hop's proof is "
+        "accepted and the chain goes on from it.",
+        [s, h1, h2], valid([s, h1, h2], PXY))
+
+    s = b.spawn()
+    h1 = lst(b.retag(b.hop(s, s, P, PX, version=1), set_value("proof", lambda v: "11" * 32)))
+    add("hop-version-1-listed-proof-not-recomputed", ["5.13", "8.7.1 step 7"],
+        "A listed version 1 hop whose proof is well formed but is not its proof_hash. A verifier accepts a listed hop's "
+        "proof without recomputing it, so the chain is valid. (Only audited hops are ever listed for real; the test list "
+        "names this one to show that the proof is not recomputed.)",
+        [s, h1], valid([s, h1], PX))
+
+    s = b.spawn()
+    h1 = b.hop(s, s, P, PX)
+    h2 = lst(b.retag(b.hop(s, h1, PX, PXY, version=1), set_value("c", lambda v: P)))
+    add("hop-version-1-listed-c-mismatch", ["5.13", "8.9 item 2"],
+        "A listed version 1 hop whose c is not the previous C. The list waives only the proof: continuity is checked as "
+        "for any other hop.",
+        [s, h1, h2], invalid([s, h1, h2], h2, "c-mismatch", PX))
+
+    s = b.spawn()
+    h1 = lst(b.retag(b.hop(s, s, P, PX, version=1), set_value("Y", lambda v: str(int(v) + 1))))
+    add("hop-version-1-listed-sector-tags-wrong", ["5.13", "8.4", "10"],
+        "A listed version 1 hop with a Y tag one sector off. The list waives only the proof: the sector tags are checked "
+        "as for any other hop.",
+        [s, h1], invalid([s, h1], h1, "sector-tags", P))
+
+    s = b.spawn()
+    h1 = lst(b.retag(b.hop(s, s, P, PX, version=1), duplicate("proof")))
+    add("hop-version-1-listed-two-proof-tags", ["5.13", "8.8"],
+        "A listed version 1 hop with its proof tag twice. The list waives the proof's recomputation, never the count and "
+        "form of the tags.",
+        [s, h1], invalid([s, h1], h1, "malformed", P))
+
+    def with_mn_mp(mp: str) -> Callable[[Tags], Tags]:
+        def change(tags: Tags) -> Tags:
+            i = next(i for i, t in enumerate(tags) if t[0] == "proof") + 1
+            return tags[:i] + [["mn", "00" * 8], ["mp", mp]] + tags[i:]
+        return change
+
+    s = b.spawn()
+    v2 = b.hop(s, s, P, PY)  # a version 2 proof of another move, for its openings
+    h1 = lst(b.retag(b.hop(s, s, P, PX, version=1), with_mn_mp(mp_of(v2))))
+    add("hop-version-1-listed-with-mn-mp", ["5.13", "8.8"],
+        "A listed version 1 hop that also carries mn and mp of the width its depth gives, taken from another hop. A listed "
+        "hop may carry them; they are read once each and checked for form, never against its proof: valid.",
+        [s, h1], valid([s, h1], PX))
+
+    s = b.spawn()
+    h1 = lst(b.retag(b.hop(s, s, P, PX, version=1), with_mn_mp(mp_of(v2)[:-2])))
+    add("hop-version-1-listed-mp-wrong-width", ["5.13", "8.4", "8.8"],
+        "A listed version 1 hop that carries mn and an mp two characters short of the 2048 its depth of 0 gives it. A "
+        "listed hop may lack mn and mp, but one it carries has the form of 8.4, so the hop is malformed.",
+        [s, h1], invalid([s, h1], h1, "malformed", P))
+
+    # ------------------------------------------------ the mn and mp tags (8.4, 8.8)
+    s = b.spawn()
+    h1 = b.retag(b.hop(s, s, P, PX), drop("mn"))
+    add("hop-mn-missing", ["8.4", "8.7.1 step 7"],
+        "A hop with a seal and openings but no mn tag, not listed. A missing mn or mp is a hop that does not verify at "
+        "Level 1, as a missing mn is on an unlisted sidestep.",
+        [s, h1], invalid([s, h1], h1, "hop-proof", P))
+
+    s = b.spawn()
+    h1 = b.retag(b.hop(s, s, P, PX), drop("mp"))
+    add("hop-mp-missing", ["8.4", "8.7.1 step 7"], "A hop with a seal and mn but no mp tag, not listed.",
+        [s, h1], invalid([s, h1], h1, "hop-proof", P))
+
+    for name in ("mn", "mp"):
+        s = b.spawn()
+        h1 = b.retag(b.hop(s, s, P, PX), duplicate(name))
+        add(f"hop-two-{name}-tags", ["8.4", "8.8"], f"A hop with its {name} tag twice, both copies equal: invalid.",
+            [s, h1], invalid([s, h1], h1, "malformed", P))
+
+    for name, change, why in (
+        ("mn-short", set_value("mn", lambda v: v[1:]), "an mn of 15 hex characters"),
+        ("mn-uppercase", set_value("mn", lambda v: "000000000000000A"), "the nonce 10 written as 000000000000000A, whose "
+         "lowercase form would verify (every nonce meets the price of these hops)"),
+        ("mp-short", set_value("mp", lambda v: v[:-2]), "an mp two characters short of 16 x 128"),
+        ("mp-long", set_value("mp", lambda v: v + "00"), "an mp two characters past 16 x 128"),
+        ("mp-uppercase", set_value("mp", lambda v: v.upper()), "its mp in uppercase hex"),
+    ):
+        s = b.spawn()
+        good = b.hop(s, s, P, PX)
+        h1 = b.retag(good, change)
+        assert h1["tags"] != good["tags"], name
+        add(f"hop-{name}", ["8.4", "8.8"], f"A hop with {why}: malformed.", [s, h1], invalid([s, h1], h1, "malformed", P))
+
+    # ------------------------------------------------ Level 1 (8.7.1, 5.11)
+    def flip_residue(mp: str) -> str:
+        # residue 0 of opening 0 is the first 16 characters (be64); flip its lowest bit
+        r = int(mp[:16], 16) ^ 1
+        return format(r, "016x") + mp[16:]
+
+    s = b.spawn()
+    h1 = b.retag(b.hop(s, s, P, PX), set_value("mp", flip_residue))
+    add("hop-residue-flipped", ["8.7.1 step 10", "5.11"],
+        "A hop whose first opened residue has its lowest bit flipped. It is no longer hop_n modulo its prime and its leaf "
+        "no longer hashes to the seal: invalid.",
+        [s, h1], invalid([s, h1], h1, "hop-proof", P))
+
+    s = b.spawn()
+    h1 = b.retag(b.hop(s, s, P, PX), set_value("proof", lambda v: v[:-1] + ("0" if v[-1] != "0" else "1")))
+    add("hop-seal-changed", ["8.7.1 step 10", "5.10"],
+        "A hop whose seal has its last hex digit changed and whose openings are its own. No opening climbs to that seal: "
+        "invalid.",
+        [s, h1], invalid([s, h1], h1, "hop-proof", P))
+
+    s = b.spawn()
+    h1 = b.retag(b.hop(s, s, P, PX), set_value("mn", lambda v: "0000000000000001"))
+    add("hop-any-nonce-at-the-smallest-size", ["5.10", "8.7.1 steps 8 to 10"],
+        "The prover's nonce is 0, and this hop carries nonce 1 with the same seal and openings. With A = 1 every nonce "
+        "meets the price, and with m = 8 the one block holds every residue, so every sample opens it whichever indices G "
+        "draws: the hop is valid. A verifier checks the price and the openings, not which nonce the prover found.",
+        [s, h1], valid([s, h1], PX))
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--revision", choices=REVISIONS, default=CHAIN_RULES_REVISION)
+    revision = parser.parse_args().revision
+    out = VECTORS / f"chain-rules-{revision}.json"
     j, sk, pub = test_key()
     other = PrivateKey(sha256(OTHER_KEY_DOMAIN))
     blocks = make_line(pub)
@@ -1209,25 +1407,35 @@ def main() -> None:
     # the tie-break vectors need stops 0 and 1 equally far from the spawn
     xyz = coord_to_xyz(int(pub, 16))[:3]
     assert stop_distance(xyz, line.stop(0).xyzp[:3]) == stop_distance(xyz, line.stop(1).xyzp[:3]) == 85
-    vectors = build(sk, other, line)
+    listed: List[str] = []
+    vectors = build(sk, other, line, revision, listed)
     names = [v["name"] for v in vectors]
     assert len(names) == len(set(names)), "vector names must be unique"
     for v in vectors:
-        got = verify_chain(v["events"], pubkey=pub, line=line).expected()
+        got = verify_chain(v["events"], pubkey=pub, line=line, revision=revision, listed_v1_hops=frozenset(listed)).expected()
         if got != v["expected"]:
             raise SystemExit(f"{v['name']}: the verifier says {json.dumps(got)}, the vector says {json.dumps(v['expected'])}")
+    previous_note = ("2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and in two rounds on 2026-10-08 (CYBERSPACE_V2.md 8.12): "
+                     "the first round clarified forks, signatures, sector tags and regions; the second made a fork fatal, made any A tag equal to spawn "
+                     "a spawn, made a spawn never a link, required every tag the chain rules read exactly once with a well-formed value, and fixed the "
+                     "network for chain validity as Bitcoin mainnet, always, so a net tag is never read (DECK-0001 1.4)")
+    if revision == PREVIOUS_REVISION:
+        note = previous_note
+        verify_with: Dict[str, Any] = {"identity": pub, "line": "line.blocks below"}
+    else:
+        note = ("2026-10-08-residue-openings (CYBERSPACE_V2.md 8.12): everything in " + previous_note + "; with hop proofs of version 2, "
+                "residue openings (5.9 to 5.13): every hop carries the seal in proof and its mn and mp tags, each read exactly once and checked "
+                "at Level 1 (8.4, 8.7.1, 8.8), and a version 1 hop is invalid unless its id is listed in grandfathered-v1-hops.txt")
+        verify_with = {"identity": pub, "line": "line.blocks below", "grandfathered_v1_hops": "grandfathered_v1_hops.ids below"}
     doc = {
         "name": "cyberspace chain rules golden vectors",
-        "chain_rules_revision": CHAIN_RULES_REVISION,
-        "revision_note": "2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and in two rounds on 2026-10-08 (CYBERSPACE_V2.md 8.12): "
-                         "the first round clarified forks, signatures, sector tags and regions; the second made a fork fatal, made any A tag equal to spawn "
-                         "a spawn, made a spawn never a link, required every tag the chain rules read exactly once with a well-formed value, and fixed the "
-                         "network for chain validity as Bitcoin mainnet, always, so a net tag is never read (DECK-0001 1.4)",
-        "spec": {"repository": "arkin0x/cyberspace", "commit": SPEC_COMMIT},
+        "chain_rules_revision": revision,
+        "revision_note": note,
+        "spec": {"repository": "arkin0x/cyberspace", "commit": SPEC_COMMIT[revision]},
         "generator": "scripts/gen_chain_vectors.py in arkin0x/cyberspace-cli",
         "regenerate": "PYTHONPATH=src python scripts/gen_chain_vectors.py",
         "format": "vectors/README.md",
-        "verify_with": {"identity": pub, "line": "line.blocks below"},
+        "verify_with": verify_with,
         "test_key": {
             "secret_key": sha256(KEY_DOMAIN + j.to_bytes(4, "big")).hex(),
             "pubkey": pub,
@@ -1241,13 +1449,19 @@ def main() -> None:
                            "Stop 2 is the station for an as_of bound of 2 to 5 and stop 6 for 6 or 7.",
             "blocks": blocks,
         },
-        "reasons": REASONS,
-        "vectors": vectors,
     }
-    OUT.parent.mkdir(parents=True, exist_ok=True)
+    if revision != PREVIOUS_REVISION:
+        doc["grandfathered_v1_hops"] = {
+            "description": "The test list: when the vectors run, a verifier uses these ids in place of grandfathered-v1-hops.txt, and at no "
+                           "other time. Each is a version 1 hop signed by the test key, which no real list contains.",
+            "ids": listed,
+        }
+    doc["reasons"] = REASONS_BY_REVISION[revision]
+    doc["vectors"] = vectors
+    out.parent.mkdir(parents=True, exist_ok=True)
     # ASCII with escapes, so a vector can carry a lone surrogate, which has no UTF-8 encoding.
-    OUT.write_text(json.dumps(doc, indent=1, ensure_ascii=True) + "\n", encoding="utf-8")
-    print(f"wrote {len(vectors)} vectors to {OUT}")
+    out.write_text(json.dumps(doc, indent=1, ensure_ascii=True) + "\n", encoding="utf-8")
+    print(f"wrote {len(vectors)} vectors to {out}")
 
 
 if __name__ == "__main__":
