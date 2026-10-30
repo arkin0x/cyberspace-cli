@@ -16,6 +16,8 @@ import threading
 import time
 import unittest
 
+import pytest
+
 try:
     import uvicorn
     import hosaka_api.main as api_main
@@ -135,6 +137,9 @@ def _setup_cli(td: str, x: int, y: int, z: int, api_url: str, max_lca: int = 16,
     return label, genesis
 
 
+# The local HOSAKA listens on 127.0.0.1; the network guard (conftest.py)
+# allows loopback only for tests that opt in.
+@pytest.mark.allow_loopback
 @unittest.skipUnless(HAVE_API, "hosaka-api not importable in this environment")
 class TestMoveCloud(unittest.TestCase):
     def setUp(self):
