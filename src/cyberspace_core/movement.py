@@ -768,10 +768,14 @@ def verify_hop_event(
     cyberspace_core.grandfathered. See verify_hop_tags for the rest."""
     from cyberspace_core.grandfathered import GRANDFATHERED_V1_HOPS, event_id_of
 
+    listed = GRANDFATHERED_V1_HOPS if listed is None else listed
+    claimed = event.get("id")
+    # Hash the event only when its id is on the list: that is the only case the id decides.
+    event_id = event_id_of(event) if isinstance(claimed, str) and claimed in listed else None
     return verify_hop_tags(
         event.get("tags"),
-        event_id=event_id_of(event),
-        listed=GRANDFATHERED_V1_HOPS if listed is None else listed,
+        event_id=event_id,
+        listed=listed,
         all_failures=all_failures,
         max_verify_height=max_verify_height,
         workers=workers,

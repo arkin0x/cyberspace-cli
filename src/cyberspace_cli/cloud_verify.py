@@ -34,7 +34,8 @@ from cyberspace_core.movement import (
     find_lca_height,
     verify_sidestep_openings,
 )
-from cyberspace_core.residue import verify_hop_proof
+from cyberspace_core.movement import MAX_VERIFY_HEIGHT
+from cyberspace_core.residue import HopTooTall, is_lower_hex, verify_hop_proof
 from cyberspace_core.terrain import terrain_k
 
 V2_HOP_FIELDS = ("seal", "mn", "mp")
@@ -87,6 +88,33 @@ def _temporal(previous_event_id_hex: str, k: int) -> int:
     return compute_subtree_cantor(t_base, k, max_compute_height=TEMPORAL_MAX_COMPUTE_HEIGHT)
 
 
+def _as_int(value: Any) -> Optional[int]:
+    """A small non-negative integer field: a JSON number, or its canonical decimal string."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 0 <= value < 1 << 32 else None
+    if isinstance(value, str) and len(value) <= 10 and value.isascii() and value.isdigit() and (value == "0" or value[0] != "0"):
+        return int(value)
+    return None
+
+
+def _envelope_failures(name: str, env: Any) -> List[str]:
+    """An envelope is {public_proof, secret_key?}: 32-byte lowercase hex, and
+    public_proof = sha256(secret_key) when the key is given."""
+    if not isinstance(env, dict):
+        return [f"{name}: envelope missing or not an object"]
+    if not is_lower_hex(env.get("public_proof"), 64):
+        return [f"{name}: public_proof is not 32 bytes of lowercase hex"]
+    key = env.get("secret_key")
+    if key:
+        if not is_lower_hex(key, 64):
+            return [f"{name}: secret_key is not 32 bytes of lowercase hex"]
+        if sha256(bytes.fromhex(key)).hex() != env["public_proof"]:
+            return [f"{name}: public_proof is not sha256(secret_key)"]
+    return []
+
+
 def _heights(x1, y1, z1, x2, y2, z2) -> Tuple[int, int, int]:
     return find_lca_height(x1, x2), find_lca_height(y1, y2), find_lca_height(z1, z2)
 
@@ -106,22 +134,17 @@ def verify_cloud_hop(
     hx, hy, hz = _heights(x1, y1, z1, x2, y2, z2)
 
     for name in ("hop_n", "region_n", "cantor_x", "cantor_y", "cantor_z", "cantor_t"):
-        env = result.get(name)
-        if not isinstance(env, dict) or not env.get("public_proof"):
-            failures.append(f"{name}: envelope missing")
-            continue
-        if env.get("secret_key") and sha256(bytes.fromhex(env["secret_key"])).hex() != env["public_proof"]:
-            failures.append(f"{name}: public_proof is not sha256(secret_key)")
+        failures += _envelope_failures(name, result.get(name))
     if failures:
         return failures
 
     k = terrain_k(x=x2, y=y2, z=z2, plane=plane)
-    if int(result.get("K", -1)) != k:
-        failures.append(f"K: server {result.get('K')} but terrain gives {k}")
+    if _as_int(result.get("K")) != k:
+        failures.append(f"K: server {result.get('K')!r} but terrain gives {k}")
     if result["cantor_t"]["public_proof"] != _dsha_hex(_temporal(previous_event_id_hex, k)):
         failures.append("cantor_t: does not match the temporal root for this previous_event_id and K")
 
-    if int(result.get("max_height", -1)) != max(hx, hy, hz):
+    if _as_int(result.get("max_height")) != max(hx, hy, hz):
         failures.append(f"max_height: server {result.get('max_height')} but axes give {max(hx, hy, hz)}")
 
     for axis, v1, v2, h in (("x", x1, x2, hx), ("y", y1, y2, hy), ("z", z1, z2, hz)):
@@ -155,27 +178,30 @@ def _verify_cloud_hop_v2(
     for name in V2_HOP_FIELDS:
         if name not in result:
             failures.append(f"{name}: missing from a version 2 result (it carries {', '.join(n for n in V2_HOP_FIELDS if n in result)})")
-    env = result.get("region_n")
-    if isinstance(env, dict) and env.get("secret_key") and sha256(bytes.fromhex(env["secret_key"])).hex() != env.get("public_proof"):
-        failures.append("region_n: public_proof is not sha256(secret_key)")
+    if "region_n" in result:
+        failures += _envelope_failures("region_n", result["region_n"])
     k = terrain_k(x=x2, y=y2, z=z2, plane=plane)
-    if "K" in result and int(result["K"]) != k:
-        failures.append(f"K: server {result.get('K')} but terrain gives {k}")
+    if "K" in result and _as_int(result["K"]) != k:
+        failures.append(f"K: server {result.get('K')!r} but terrain gives {k}")
     if failures:
         return failures
     # Level 1 (5.11): the source plane does not enter the geometry, only x, y, z.
-    found = verify_hop_proof(
-        bytes.fromhex(previous_event_id_hex),
-        xyz_to_coord(x1, y1, z1, plane=plane),
-        xyz_to_coord(x2, y2, z2, plane=plane),
-        result["seal"], result["mn"], result["mp"],
-    )
+    try:
+        found = verify_hop_proof(
+            bytes.fromhex(previous_event_id_hex),
+            xyz_to_coord(x1, y1, z1, plane=plane),
+            xyz_to_coord(x2, y2, z2, plane=plane),
+            result["seal"], result["mn"], result["mp"],
+            max_height=MAX_VERIFY_HEIGHT,
+        )
+    except HopTooTall as e:
+        return [f"Level 1: not checked, {e}; the result is refused"]
     return [f"Level 1: {f}" for f in found]
 
 
 def cloud_hop_from_result(job: Dict[str, Any], x1, y1, z1, x2, y2, z2, *, plane: int = 0) -> CloudHop:
     result = job["result"]
-    region = result.get("region_n") or {}
+    region = result.get("region_n") if isinstance(result.get("region_n"), dict) else {}
     v2 = is_v2_hop_result(result)
     return CloudHop(
         proof=result["seal"] if v2 else result["hop_n"]["public_proof"],

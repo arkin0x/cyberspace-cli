@@ -35,7 +35,7 @@ from cyberspace_cli.hosaka import (
     wait_for_job,
     wait_for_settlement,
 )
-from cyberspace_core.movement import find_lca_height
+from cyberspace_core.movement import MAX_VERIFY_HEIGHT, find_lca_height
 
 
 class CloudDeclined(Exception):
@@ -167,6 +167,14 @@ def run_cloud_move(
     limits = client.limits()
     heights = (find_lca_height(x1, x2), find_lca_height(y1, y2), find_lca_height(z1, z2))
     action = decide_action(heights, limits)
+    if action == "hop" and max(heights) > MAX_VERIFY_HEIGHT:
+        # Level 1 of a version 2 hop costs about 2^h per opened residue; above the
+        # ceiling the result could not be checked in reasonable time after payment.
+        raise CloudDeclined(
+            f"a cloud hop at height {max(heights)} is above this CLI's verification ceiling "
+            f"(h{MAX_VERIFY_HEIGHT}): its result could not be checked here, so nothing was quoted or paid. "
+            "Use --toward, which walks boundary by boundary, or --sidestep."
+        )
 
     if action == "sidestep":
         for name, a, b in (("X", x1, x2), ("Y", y1, y2), ("Z", z1, z2)):
@@ -250,15 +258,25 @@ def finish_cloud_job(
     """Verify a completed job and turn it into a proof object; record the outcome."""
     action = record["action"]
     result = done.get("result") or {}
-    if action == "hop":
-        failures = verify_cloud_hop(result, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id, local_ceiling=local_ceiling)
-    else:
-        failures = verify_cloud_sidestep(result, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id)
-    if failures:
+    obj: Optional[Union[CloudHop, CloudSidestep]] = None
+    try:
+        if not isinstance(result, dict):
+            failures = [f"result: not an object ({type(result).__name__})"]
+        elif action == "hop":
+            failures = verify_cloud_hop(result, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id, local_ceiling=local_ceiling)
+        else:
+            failures = verify_cloud_sidestep(result, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id)
+        if not failures:
+            if action == "hop":
+                obj = cloud_hop_from_result(done, x1, y1, z1, x2, y2, z2, plane=plane2)
+            else:
+                obj = cloud_sidestep_from_result(done, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id)
+    except (ValueError, TypeError, KeyError, AttributeError, IndexError) as e:
+        # A result of the wrong shape is a failed check, never a traceback and never an append.
+        failures = [f"result: malformed ({type(e).__name__}: {e})"]
+    if failures or obj is None:
         cloud_jobs.update(record["job_id"], state="rejected", failures=failures)
         raise CloudVerificationFailed(failures)
     cloud_jobs.update(record["job_id"], state="verified")
     echo(f"Verified cloud {action} ({len(failures)} failed checks).")
-    if action == "hop":
-        return cloud_hop_from_result(done, x1, y1, z1, x2, y2, z2, plane=plane2)
-    return cloud_sidestep_from_result(done, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id)
+    return obj

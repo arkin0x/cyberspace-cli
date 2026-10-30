@@ -26,6 +26,11 @@ SIDESTEPS = "grandfathered-v2-sidesteps.txt"
 RIDES = "decks/grandfathered-v1-hyperjumps.txt"
 OUT = Path(__file__).resolve().parents[1] / "src" / "cyberspace_core" / "grandfathered.py"
 EVENT_ID = re.compile(r"[0-9a-f]{64}")
+# cyberspace-core's scripts/grandfathered.mjs and parseGrandfatheredList read a
+# listed line with /^([0-9a-f]{64})(?:[ \t](.*))?$/, whose "." matches no line
+# terminator, so they reject these in commentary; this parser does the same.
+# (CR is rejected anywhere in the file, comment lines included.)
+JS_LINE_TERMINATORS = ("\u2028", "\u2029")
 
 
 def parse_list(text: str) -> List[Tuple[str, str]]:
@@ -51,6 +56,8 @@ def parse_list(text: str) -> List[Tuple[str, str]]:
         head, rest = line[:64], line[64:]
         if not EVENT_ID.fullmatch(head) or (rest and rest[0] not in " \t"):
             raise ValueError(f"line {number}: {line[:70]!r} does not start with a 64-character lowercase hex event id")
+        if any(c in rest for c in JS_LINE_TERMINATORS):
+            raise ValueError(f"line {number}: U+2028 or U+2029 in the commentary (a line break to JavaScript)")
         if head in seen:
             raise ValueError(f"line {number}: duplicate event id {head}")
         seen.add(head)
@@ -105,19 +112,26 @@ GRANDFATHERED_V1_HYPERJUMPS: FrozenSet[str] = {_frozenset(rides)}
 
 
 def event_id_of(event: Dict[str, Any]) -> Optional[str]:
-    \"\"\"The event's id if it is the NIP-01 hash of the event itself, else None.\"\"\"
+    \"\"\"The event's id if it is the NIP-01 hash of the event itself, else None.
+    An event that cannot be serialized (a lone surrogate in its content, a
+    value JSON cannot hold) has no valid id.\"\"\"
     event_id = event.get("id")
     if not isinstance(event_id, str):
         return None
     payload = [0, event.get("pubkey"), event.get("created_at"), event.get("kind"), event.get("tags"), event.get("content")]
-    serialized = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    try:
+        serialized = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError):
+        return None
     return event_id if hashlib.sha256(serialized).hexdigest() == event_id else None
 
 
 def is_grandfathered(event: Dict[str, Any], listed: FrozenSet[str]) -> bool:
     \"\"\"Whether the event is on the list: its id is listed and is the NIP-01
-    hash of the event itself, so a listed id pasted onto other content is not.\"\"\"
-    return event.get("id") in listed and event_id_of(event) is not None
+    hash of the event itself, so a listed id pasted onto other content is not.
+    The event is hashed only when its id is listed.\"\"\"
+    event_id = event.get("id")
+    return isinstance(event_id, str) and event_id in listed and event_id_of(event) is not None
 '''
 
 

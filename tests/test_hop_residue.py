@@ -582,19 +582,12 @@ class TestCloudVersion2:
 
 class TestMoveCommand:
     """The move command's own hops: version 2, each read tag once, accepted by
-    this verifier and by the spec's reference. The cloud is off and every
-    socket connection fails the test, so nothing reaches HOSAKA."""
+    this verifier and by the spec's reference. The cloud is off, and the
+    network guard of tests/conftest.py fails the test on any connection."""
 
     def test_move_to_and_toward_write_verifiable_version_2_hops(self, tmp_path, monkeypatch):
         import contextlib
         import io
-        import socket
-
-        def no_network(*args, **kwargs):
-            raise AssertionError(f"network access from a test: {args[1:] or kwargs}")
-
-        monkeypatch.setattr(socket.socket, "connect", no_network)
-        monkeypatch.setattr(socket, "create_connection", no_network)
 
         from cyberspace_cli import chains
         from cyberspace_cli.cli import move
@@ -651,3 +644,140 @@ class TestCloudVersion1StillWorks:
                             proof_hex=hop.proof, nonce_hex=hop.mn, openings_hex=hop.mp)
         assert not any(t[0] in ("mn", "mp") for t in ev["tags"])
         assert verify_hop_event_v1(ev) == []
+
+
+
+class TestCloudHardening:
+    """Review of #29: a cloud hop too tall to verify is refused before any quote
+    or payment, and a junk result is a list of failures, never a traceback or an append."""
+
+    XYZ = (1000, 2000, 3000, 1000 + (1 << 9), 2000, 3001)
+
+    def _v2(self):
+        x1, y1, z1, x2, y2, z2 = self.XYZ
+        prev = bytes(range(32))
+        proof = R.prove_hop(prev, xyz_to_coord(x1, y1, z1), xyz_to_coord(x2, y2, z2), workers=1)
+        return {"seal": proof.proof, "mn": proof.mn, "mp": proof.mp, "K": proof.terrain_k}, prev.hex()
+
+    def test_a_hop_above_the_verification_ceiling_is_refused_before_the_quote(self, monkeypatch):
+        from cyberspace_cli import cloud_move
+        from cyberspace_cli.hosaka import Limits
+        from cyberspace_core.movement import MAX_VERIFY_HEIGHT
+
+        calls = []
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def limits(self):
+                calls.append("limits")
+                return Limits(max_hop_height=40, max_sidestep_height=40, hop_min_msats=0, deposit_min_msats=0,
+                              deposit_max_msats=0, invoice_ttl_seconds=3600)
+
+            def __getattr__(self, name):  # quote, submit, anything that could cost money
+                raise AssertionError(f"{name} called for a hop that should have been refused")
+
+        monkeypatch.setattr(cloud_move, "HosakaClient", FakeClient)
+        h = MAX_VERIFY_HEIGHT + 1
+        with pytest.raises(cloud_move.CloudDeclined, match="verification ceiling"):
+            cloud_move.run_cloud_move(
+                privkey_hex="22" * 32, pubkey_hex=PUB, chain_label="t", opts=cloud_move.CloudOptions(mode="auto", api_url="http://unused"),
+                x1=0, y1=0, z1=0, x2=(1 << (h - 1)), y2=0, z2=0, plane2=0, previous_event_id="ab" * 32, local_ceiling=16,
+                echo=lambda s: None, confirm=lambda q: True,
+            )
+        assert calls == ["limits"]
+
+    def test_a_result_too_tall_to_verify_is_a_failure(self, monkeypatch):
+        import cyberspace_cli.cloud_verify as cloud_verify
+
+        res, prev = self._v2()
+        monkeypatch.setattr(cloud_verify, "MAX_VERIFY_HEIGHT", 8)
+        failures = verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex=prev, local_ceiling=8)
+        assert failures and "not checked" in failures[0]
+
+    @pytest.mark.parametrize("mutate", [
+        lambda r: dict(r, K="abc"), lambda r: dict(r, K=None), lambda r: dict(r, K=True), lambda r: dict(r, K=[7]),
+        lambda r: dict(r, region_n="x"), lambda r: dict(r, region_n={"public_proof": "00" * 32, "secret_key": "zz"}),
+        lambda r: dict(r, region_n={"public_proof": 5}), lambda r: dict(r, seal=["x"]), lambda r: dict(r, mp=None),
+    ], ids=["K-str", "K-none", "K-bool", "K-list", "region-str", "region-key-not-hex", "region-proof-int", "seal-list", "mp-none"])
+    def test_junk_version_2_results_are_failures(self, mutate):
+        res, prev = self._v2()
+        assert verify_cloud_hop(mutate(res), *self.XYZ, plane=0, previous_event_id_hex=prev, local_ceiling=8)
+
+    @pytest.mark.parametrize("field,value", [("K", "abc"), ("max_height", "x"), ("max_height", None), ("region_n", "x"),
+                                             ("cantor_x", {"public_proof": "00" * 32, "secret_key": "zz"}), ("hop_n", {"public_proof": None})])
+    def test_junk_version_1_results_are_failures(self, field, value):
+        from cyberspace_core.cantor import int_to_bytes_be_min, sha256
+
+        x1, y1, z1, x2, y2, z2 = self.XYZ
+        prev = "ab" * 32
+        proof = compute_hop_proof(x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=prev, max_compute_height=12)
+
+        def env(n):
+            secret = sha256(int_to_bytes_be_min(n))
+            return {"public_proof": sha256(secret).hex(), "secret_key": secret.hex()}
+
+        res = {"hop_n": env(proof.hop_n), "region_n": env(proof.region_n), "cantor_x": env(proof.cantor_x),
+               "cantor_y": env(proof.cantor_y), "cantor_z": env(proof.cantor_z), "cantor_t": env(proof.cantor_t),
+               "K": proof.terrain_k, "max_height": 11}
+        assert verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex=prev, local_ceiling=12) == []
+        assert verify_cloud_hop(dict(res, **{field: value}), *self.XYZ, plane=0, previous_event_id_hex=prev, local_ceiling=12)
+
+    @pytest.mark.parametrize("action,result", [("hop", ["not", "an", "object"]), ("hop", {"seal": "ab" * 32, "mn": "0" * 16, "mp": "0", "region_n": 7}),
+                                               ("sidestep", {"lca_heights": [1, 0, 0], "mn": "0" * 16, "bases": ["junk", 0, 0]}),
+                                               ("sidestep", {"lca_heights": "x"})])
+    def test_finish_cloud_job_rejects_junk_and_never_returns_a_proof(self, action, result, tmp_path, monkeypatch):
+        from cyberspace_cli import cloud_jobs
+        from cyberspace_cli.cloud_move import CloudVerificationFailed, finish_cloud_job
+
+        monkeypatch.setenv("CYBERSPACE_HOME", str(tmp_path))
+        cloud_jobs.record({"job_id": "j", "action": action, "state": "computing"})
+        with pytest.raises(CloudVerificationFailed):
+            finish_cloud_job({"job_id": "j", "action": action}, {"id": "j", "result": result}, *self.XYZ,
+                             plane2=0, previous_event_id="ab" * 32, local_ceiling=8, echo=lambda s: None)
+        assert cloud_jobs.get("j")["state"] == "rejected"
+
+
+class TestUnserializableEvents:
+    """Review of #29: an event the NIP-01 serialization cannot encode gets failures, not an exception."""
+
+    def _event(self, **kw):
+        ev = json.loads('{"id":"' + "ab" * 32 + '","pubkey":"' + "11" * 32 + '","created_at":1,"kind":3333,"tags":[["A","hop"]],"content":"\\ud800","sig":""}')
+        ev.update(kw)
+        return ev
+
+    def test_lone_surrogate(self, monkeypatch):
+        ev = self._event()
+        assert grandfathered.event_id_of(ev) is None
+        assert isinstance(verify_hop_event(ev), list) and verify_hop_event(ev)
+        monkeypatch.setattr(grandfathered, "GRANDFATHERED_V1_HOPS", frozenset({ev["id"]}))
+        assert verify_hop_event(ev)  # listed id, but no valid id: not listed
+
+    def test_ids_of_the_wrong_type(self):
+        for bad in (["x"], {"a": 1}, None, 7):
+            ev = self._event(id=bad)
+            assert grandfathered.event_id_of(ev) is None
+            assert grandfathered.is_grandfathered(ev, grandfathered.GRANDFATHERED_V2_SIDESTEPS) is False
+            assert isinstance(verify_hop_event(ev), list)
+
+    def test_unlisted_ids_are_never_hashed(self, monkeypatch):
+        def boom(event):
+            raise AssertionError("hashed an unlisted event")
+
+        monkeypatch.setattr(grandfathered, "event_id_of", boom)
+        assert verify_hop_event(_event(VERIFIER[0])) == []
+
+
+class TestListLineTerminators:
+    """As cyberspace-core's grandfathered.mjs reads a listed line: no U+2028 or U+2029 in the commentary."""
+
+    I = "ab" * 32
+
+    @pytest.mark.parametrize("ch", ["\u2028", "\u2029"])
+    def test_rejected_in_commentary(self, ch):
+        with pytest.raises(ValueError):
+            GEN.parse_list(f"{self.I} a{ch}b\n")
+
+    def test_accepted_where_javascript_accepts_them(self):
+        assert GEN.parse_list(f"# a\u2028b\n{self.I} nel\u0085ok\n") == [(self.I, "nel\u0085ok")]

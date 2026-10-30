@@ -86,16 +86,23 @@ GRANDFATHERED_V1_HYPERJUMPS: FrozenSet[str] = frozenset({
 
 
 def event_id_of(event: Dict[str, Any]) -> Optional[str]:
-    """The event's id if it is the NIP-01 hash of the event itself, else None."""
+    """The event's id if it is the NIP-01 hash of the event itself, else None.
+    An event that cannot be serialized (a lone surrogate in its content, a
+    value JSON cannot hold) has no valid id."""
     event_id = event.get("id")
     if not isinstance(event_id, str):
         return None
     payload = [0, event.get("pubkey"), event.get("created_at"), event.get("kind"), event.get("tags"), event.get("content")]
-    serialized = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    try:
+        serialized = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError):
+        return None
     return event_id if hashlib.sha256(serialized).hexdigest() == event_id else None
 
 
 def is_grandfathered(event: Dict[str, Any], listed: FrozenSet[str]) -> bool:
     """Whether the event is on the list: its id is listed and is the NIP-01
-    hash of the event itself, so a listed id pasted onto other content is not."""
-    return event.get("id") in listed and event_id_of(event) is not None
+    hash of the event itself, so a listed id pasted onto other content is not.
+    The event is hashed only when its id is listed."""
+    event_id = event.get("id")
+    return isinstance(event_id, str) and event_id in listed and event_id_of(event) is not None
