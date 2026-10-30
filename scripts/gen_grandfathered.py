@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Regenerate src/cyberspace_core/grandfathered.py from the spec repository.
 
-CYBERSPACE_V2.md section 6.16 and DECK-0001 section 5.8 name, by event id, the
-old-format sidesteps and rides that a verifier accepts without re-checking
-their roots and openings. A verifier embeds the ids rather than fetching them
-at runtime. The lists may grow once more, in a final census after the
+CYBERSPACE_V2.md sections 5.13 and 6.16 and DECK-0001 section 5.8 name, by
+event id, the old-format hops, sidesteps and rides that a verifier accepts
+without re-checking their proofs. A verifier embeds the ids rather than
+fetching them at runtime. The lists grow in the censuses taken after the
 reference clients start publishing the new formats; rerun this then:
 
     python scripts/gen_grandfathered.py --spec /path/to/cyberspace --ref origin/master
@@ -21,25 +21,43 @@ import subprocess
 from pathlib import Path
 from typing import List, Tuple
 
+HOPS = "grandfathered-v1-hops.txt"
 SIDESTEPS = "grandfathered-v2-sidesteps.txt"
 RIDES = "decks/grandfathered-v1-hyperjumps.txt"
 OUT = Path(__file__).resolve().parents[1] / "src" / "cyberspace_core" / "grandfathered.py"
 EVENT_ID = re.compile(r"[0-9a-f]{64}")
+# cyberspace-core's scripts/grandfathered.mjs and parseGrandfatheredList read a
+# listed line with /^([0-9a-f]{64})(?:[ \t](.*))?$/, whose "." matches no line
+# terminator, so they reject these in commentary; this parser does the same.
+# (CR is rejected anywhere in the file, comment lines included.)
+JS_LINE_TERMINATORS = ("\u2028", "\u2029")
 
 
 def parse_list(text: str) -> List[Tuple[str, str]]:
-    """(event id, commentary) for every entry, in file order. Lines starting
-    with # are comments; every other non-empty line starts with a 64-character
-    lowercase hex event id, and anything after the id is commentary."""
+    """(event id, commentary) for every entry, in file order (5.13, 6.16).
+
+    A line that is empty or starts with # names nothing. Every other line
+    starts with a 64-character lowercase hex event id, followed by the end of
+    the line or by a space or tab and commentary. The parse is strict, because
+    a list that two readers parse differently exempts different events: a
+    carriage return anywhere, a line that starts with whitespace (so an
+    indented # is not a comment, and a whitespace-only line is not empty), an
+    id of any other form or followed directly by another character, and an id
+    listed twice are all errors."""
+    if "\r" in text:
+        raise ValueError("carriage return in the list; its lines end with LF only")
     out: List[Tuple[str, str]] = []
     seen = set()
-    for number, line in enumerate(text.splitlines(), 1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
+    for number, line in enumerate(text.split("\n"), 1):
+        if line == "" or line.startswith("#"):
             continue
-        head, _, rest = stripped.partition(" ")
-        if not EVENT_ID.fullmatch(head):
-            raise ValueError(f"line {number}: {head[:70]!r} is not a 64-character lowercase hex event id")
+        if line[0].isspace():
+            raise ValueError(f"line {number}: starts with whitespace (an indented # is not a comment; a whitespace-only line is not empty)")
+        head, rest = line[:64], line[64:]
+        if not EVENT_ID.fullmatch(head) or (rest and rest[0] not in " \t"):
+            raise ValueError(f"line {number}: {line[:70]!r} does not start with a 64-character lowercase hex event id")
+        if any(c in rest for c in JS_LINE_TERMINATORS):
+            raise ValueError(f"line {number}: U+2028 or U+2029 in the commentary (a line break to JavaScript)")
         if head in seen:
             raise ValueError(f"line {number}: duplicate event id {head}")
         seen.add(head)
@@ -48,57 +66,72 @@ def parse_list(text: str) -> List[Tuple[str, str]]:
 
 
 def _git(spec: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(spec), *args], check=True, capture_output=True, text=True).stdout
+    # bytes, not text=True: text mode would turn CRLF into LF and hide a CR from parse_list
+    return subprocess.run(["git", "-C", str(spec), *args], check=True, capture_output=True).stdout.decode("utf-8")
 
 
-def _entries(entries: List[Tuple[str, str]]) -> str:
-    return "\n".join(f'    "{eid}",  # {note}' if note else f'    "{eid}",' for eid, note in entries)
+def _frozenset(entries: List[Tuple[str, str]]) -> str:
+    if not entries:
+        return "frozenset()"
+    lines = "\n".join(f'    "{eid}",  # {note}' if note else f'    "{eid}",' for eid, note in entries)
+    return "frozenset({\n" + lines + "\n})"
 
 
-def render(commit: str, sidesteps: List[Tuple[str, str]], rides: List[Tuple[str, str]]) -> str:
-    return f'''"""The exemption lists of CYBERSPACE_V2.md section 6.16 and DECK-0001 section 5.8.
+def render(commit: str, hops: List[Tuple[str, str]], sidesteps: List[Tuple[str, str]], rides: List[Tuple[str, str]]) -> str:
+    return f'''\"\"\"The exemption lists of CYBERSPACE_V2.md sections 5.13 and 6.16 and DECK-0001 section 5.8.
 
 Generated by scripts/gen_grandfathered.py; do not edit by hand. Regenerate with
 
     python scripts/gen_grandfathered.py --spec /path/to/cyberspace --ref origin/master
 
 Source: arkin0x/cyberspace at {commit}
+  {HOPS} ({len(hops)} ids): version 1 hops (no mn and no mp tag)
   {SIDESTEPS} ({len(sidesteps)} ids): version 2 sidesteps (no mn tag)
   {RIDES} ({len(rides)} ids): rides without an mn tag
 
-A listed event's roots and openings are accepted without re-checking them
-(each was audited at Level 2 before it was listed); everything else about it
-is checked as for any other event. An old-format event that is not listed is
-invalid. The exemption is by event id, and an id is only as good as the event
-it hashes, so is_grandfathered recomputes the id (NIP-01) before looking it up.
-"""
+A listed event's proof is accepted without re-checking it (each was audited
+before it was listed); everything else about it is checked as for any other
+event. An old-format event that is not listed is invalid. The exemption is by
+event id, and an id is only as good as the event it hashes, so is_grandfathered
+recomputes the id (NIP-01) before looking it up.
+\"\"\"
 
 from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, Dict, FrozenSet
+from typing import Any, Dict, FrozenSet, Optional
 
 SPEC_COMMIT = "{commit}"
 
-GRANDFATHERED_V2_SIDESTEPS: FrozenSet[str] = frozenset({{
-{_entries(sidesteps)}
-}})
+GRANDFATHERED_V1_HOPS: FrozenSet[str] = {_frozenset(hops)}
 
-GRANDFATHERED_V1_HYPERJUMPS: FrozenSet[str] = frozenset({{
-{_entries(rides)}
-}})
+GRANDFATHERED_V2_SIDESTEPS: FrozenSet[str] = {_frozenset(sidesteps)}
+
+GRANDFATHERED_V1_HYPERJUMPS: FrozenSet[str] = {_frozenset(rides)}
+
+
+def event_id_of(event: Dict[str, Any]) -> Optional[str]:
+    \"\"\"The event's id if it is the NIP-01 hash of the event itself, else None.
+    An event that cannot be serialized (a lone surrogate in its content, a
+    value JSON cannot hold) has no valid id.\"\"\"
+    event_id = event.get("id")
+    if not isinstance(event_id, str):
+        return None
+    payload = [0, event.get("pubkey"), event.get("created_at"), event.get("kind"), event.get("tags"), event.get("content")]
+    try:
+        serialized = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    except (TypeError, ValueError, UnicodeEncodeError):
+        return None
+    return event_id if hashlib.sha256(serialized).hexdigest() == event_id else None
 
 
 def is_grandfathered(event: Dict[str, Any], listed: FrozenSet[str]) -> bool:
-    """Whether the event is on the list: its id is listed and is the NIP-01
-    hash of the event itself, so a listed id pasted onto other content is not."""
+    \"\"\"Whether the event is on the list: its id is listed and is the NIP-01
+    hash of the event itself, so a listed id pasted onto other content is not.
+    The event is hashed only when its id is listed.\"\"\"
     event_id = event.get("id")
-    if event_id not in listed:
-        return False
-    payload = [0, event.get("pubkey"), event.get("created_at"), event.get("kind"), event.get("tags"), event.get("content")]
-    serialized = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(serialized).hexdigest() == event_id
+    return isinstance(event_id, str) and event_id in listed and event_id_of(event) is not None
 '''
 
 
@@ -110,10 +143,11 @@ def main() -> None:
     args = parser.parse_args()
 
     commit = _git(args.spec, "rev-parse", f"{args.ref}^{{commit}}").strip()
+    hops = parse_list(_git(args.spec, "show", f"{commit}:{HOPS}"))
     sidesteps = parse_list(_git(args.spec, "show", f"{commit}:{SIDESTEPS}"))
     rides = parse_list(_git(args.spec, "show", f"{commit}:{RIDES}"))
-    args.out.write_text(render(commit, sidesteps, rides))
-    print(f"{args.out}: {len(sidesteps)} sidesteps, {len(rides)} rides, from {commit}")
+    args.out.write_text(render(commit, hops, sidesteps, rides))
+    print(f"{args.out}: {len(hops)} hops, {len(sidesteps)} sidesteps, {len(rides)} rides, from {commit}")
 
 
 if __name__ == "__main__":

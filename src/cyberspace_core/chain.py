@@ -82,7 +82,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from cyberspace_core.coords import AXIS_BITS, coord_to_xyz
 from cyberspace_core.hyperspace import Line, verify_enter_hyperspace_event
-from cyberspace_core.movement import DEFAULT_MAX_COMPUTE_HEIGHT, decode_nonce, verify_hop_event, verify_sidestep_event
+from cyberspace_core.movement import DEFAULT_MAX_COMPUTE_HEIGHT, decode_nonce, verify_hop_event_v1, verify_sidestep_event
 from cyberspace_core.ride import verify_ride_event
 from cyberspace_core.sector import coord_to_sector_id
 
@@ -552,7 +552,8 @@ class _Walk:
             bad = _require(event, (("proof", _is_hex32),))
             if bad:
                 return bad
-            failures = verify_hop_event(event, max_compute_height=self.max_compute_height)
+            # Revision 2026-09-28-virtual-brackets: a hop's proof is the 5.6 proof_hash.
+            failures = verify_hop_event_v1(event, max_compute_height=self.max_compute_height)
             if failures:
                 return "hop-proof", "; ".join(failures)
         elif action == "sidestep":

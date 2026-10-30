@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from cyberspace_core.coords import coord_to_xyz
 from cyberspace_core.movement import decode_nonce
+from cyberspace_core.residue import is_lower_hex
 
 
 def _sha256_hex(b: bytes) -> str:
@@ -245,17 +246,37 @@ def make_hop_event(
     previous_event_id: str,
     prev_coord_hex: str,
     coord_hex: str,
-    proof_hash_hex: str,
+    proof_hex: str,
+    nonce_hex: Optional[str] = None,
+    openings_hex: Optional[str] = None,
     kind: int = 3333,
 ) -> Dict[str, Any]:
+    """Create a hop movement event (kind 3333, A=hop, CYBERSPACE_V2 8.4).
+
+    Version 2 (residue openings, 5.10): proof_hex is the seal, nonce_hex the
+    re-roll nonce (the mn tag, 16 lowercase hex characters) and openings_hex
+    the 16 openings (the mp tag), written in that order after the proof, each
+    exactly once. Without nonce_hex and openings_hex the event is a version 1
+    hop whose proof is the 5.6 proof_hash: what a HOSAKA result carries until
+    HOSAKA switches to version 2."""
+    if not is_lower_hex(proof_hex, 64):
+        raise ValueError("proof_hex must be 64 lowercase hex characters (CYBERSPACE_V2 8.4)")
+    if (nonce_hex is None) != (openings_hex is None):
+        raise ValueError("a version 2 hop carries both mn and mp; a version 1 hop carries neither")
     tags: List[List[str]] = [
         ["A", "hop"],
         ["e", genesis_event_id, "", "genesis"],
         ["e", previous_event_id, "", "previous"],
         ["c", prev_coord_hex],
         ["C", coord_hex],
-        ["proof", proof_hash_hex],
+        ["proof", proof_hex],
     ]
+    if nonce_hex is not None and openings_hex is not None:
+        if not is_lower_hex(nonce_hex, 16):
+            raise ValueError("nonce_hex must be exactly 16 lowercase hex characters (CYBERSPACE_V2 8.4)")
+        if not openings_hex or not is_lower_hex(openings_hex, len(openings_hex)):
+            raise ValueError("openings_hex must be non-empty lowercase hex (CYBERSPACE_V2 8.4)")
+        tags += [["mn", nonce_hex], ["mp", openings_hex]]
     tags.extend(_sector_tags_from_coord_hex(coord_hex))
     return new_event(pubkey_hex=pubkey_hex, created_at=created_at, kind=kind, tags=tags, content="")
 

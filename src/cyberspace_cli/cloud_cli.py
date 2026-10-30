@@ -14,7 +14,7 @@ import typer
 
 from cyberspace_cli import chains, cloud_jobs
 from cyberspace_cli.cloud_move import CloudOptions, CloudVerificationFailed, finish_cloud_job, format_quote, decide_action
-from cyberspace_cli.cloud_verify import CloudSidestep
+from cyberspace_cli.cloud_verify import CloudHop, CloudSidestep
 from cyberspace_cli.config import CLOUD_MODES, load_config, save_config
 from cyberspace_cli.hosaka import CloudError, CloudJobFailed, HosakaClient, coord, wait_for_job, wait_for_settlement
 from cyberspace_cli.nostr_event import make_hop_event, make_sidestep_event
@@ -197,7 +197,12 @@ def cloud_status(job_id: str, api_url: Optional[str] = typer.Option(None, "--api
     if rec:
         typer.echo(f"local: {rec.get('state')}  chain={rec.get('chain_label')}  event={rec.get('event_id', '')}")
     res = job.get("result") or {}
-    if job.get("status") == "completed" and "hop_n" in res:
+    if job.get("status") == "completed" and "seal" in res:
+        typer.echo(f"seal: {res['seal']}  mn: {res.get('mn')}")
+        if res.get("region_n"):
+            typer.echo(f"lookup_id: {res['region_n'].get('public_proof')}")
+            typer.echo(f"location_decryption_key: {res['region_n'].get('secret_key')}")
+    elif job.get("status") == "completed" and "hop_n" in res:
         typer.echo(f"proof_hash: {res['hop_n']['public_proof']}")
         typer.echo(f"lookup_id: {res['region_n']['public_proof']}")
         typer.echo(f"location_decryption_key: {res['region_n'].get('secret_key')}")
@@ -277,7 +282,7 @@ def cloud_resume(job_id: str, api_url: Optional[str] = typer.Option(None, "--api
         ev = make_hop_event(
             pubkey_hex=st.pubkey_hex, created_at=created_at, genesis_event_id=events[0]["id"],
             previous_event_id=rec["previous_event_id"], prev_coord_hex=st.coord_hex, coord_hex=coord_hex,
-            proof_hash_hex=obj.proof_hash,
+            proof_hex=obj.proof, nonce_hex=obj.mn, openings_hex=obj.mp,
         )
     chains.append_event(label, ev)
     st.coord_hex = coord_hex
@@ -285,4 +290,4 @@ def cloud_resume(job_id: str, api_url: Optional[str] = typer.Option(None, "--api
     cloud_jobs.update(job_id, state="appended", event_id=ev["id"])
     typer.echo(f"Moved. chain={label} len={chains.chain_length(label)}")
     typer.echo(f"coord: 0x{coord_hex}")
-    typer.echo(f"proof: {obj.proof_hash}")
+    typer.echo(f"proof: {obj.proof if isinstance(obj, CloudHop) else obj.proof_hash}")
