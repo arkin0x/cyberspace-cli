@@ -14,7 +14,8 @@ freeze the chain at the hop before it. HOSAKA switches to version 2 at once
 (no result carries both shapes), so there is nothing to fall back to.
 run_cloud_move also refuses before quoting when the limits do not report
 hop_proof_version 2, so a version 1 result reaches this check only from a
-job that straddled the switch, and HOSAKA refunds such a job.
+job that straddled the switch. Such a job is eligible for a refund, which
+the HOSAKA operator runs after checking that nothing was published.
 
 Sidesteps: full Level 1 verification per CYBERSPACE_V2 6.11, all O(h),
 with the re-roll nonce read from the result's mn field (16 lowercase hex
@@ -50,17 +51,20 @@ HOP_PROOF_VERSION = 2
 def straddling_v1_hop(result: Any, job_id: Optional[str]) -> Optional[str]:
     """The refusal for a hop job that finished in the version 1 shape (hop_n
     and none of seal, mn and mp), else None. Only a job that straddled
-    HOSAKA's switch to version 2 can do that. It is refused, never signed, and
-    HOSAKA refunds it to the HOSAKA balance (the owner's default for a
-    straddling job, as ONOSENDAI's straddlingV1Hop does)."""
+    HOSAKA's switch to version 2 can do that. It is refused and never signed,
+    and the job is eligible for a refund to the HOSAKA balance, which the
+    HOSAKA operator runs with a helper after checking that nothing was
+    published; nothing here or on HOSAKA refunds it automatically. Refusing
+    is the recommended default for a straddling job, pending the owner's
+    ruling, and it matches ONOSENDAI's straddlingV1Hop."""
     if not isinstance(result, dict) or "hop_n" not in result or any(name in result for name in V2_HOP_FIELDS):
         return None
     job = f"job {job_id}" if job_id else "this job"
     return (
         f"HOSAKA finished this hop ({job}) in the old proof format, version 1 (hop_n, with no seal, mn or mp). "
         "Chain rules revision 2026-10-08-residue-openings rejects a version 1 hop unless it is listed in "
-        "grandfathered-v1-hops.txt, and a hop signed now never is (CYBERSPACE_V2 5.13), so the result is refused, "
-        "nothing is signed or appended, and you did not move. HOSAKA will refund the job to your HOSAKA balance."
+        "grandfathered-v1-hops.txt, and a hop signed now never is (CYBERSPACE_V2 5.13), so the result is refused. "
+        "Nothing was signed and you did not move. This job is eligible for a refund to your HOSAKA balance."
     )
 
 

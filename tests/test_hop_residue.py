@@ -645,8 +645,9 @@ class TestCloudVersion1IsRefused:
 
         res = _version_1_result(*self.XYZ, "ab" * 32)
         words = straddling_v1_hop(res, "job-1234567890")
-        assert words and "grandfathered-v1-hops.txt" in words and "nothing is signed or appended" in words
-        assert "HOSAKA will refund the job" in words and "job-1234567890" in words
+        assert words and "grandfathered-v1-hops.txt" in words and "Nothing was signed and you did not move." in words
+        assert "eligible for a refund to your HOSAKA balance" in words and "job-1234567890" in words
+        assert "will refund" not in words  # the operator runs refunds; the CLI promises none
         assert verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex="ab" * 32, job_id="job-1234567890") == [words]
 
     def test_only_a_version_1_hop_result_is_straddling(self):
