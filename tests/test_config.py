@@ -55,6 +55,10 @@ class TestConfig(unittest.TestCase):
                 # Set a tiny default max_lca_height so a moderately-large hop is rejected.
                 cfg = CyberspaceConfig.default()
                 cfg.default_max_lca_height = 1
+                # Cloud mode defaults to auto, which would ask the production
+                # HOSAKA to compute the hop. This test is about the local
+                # ceiling, so keep the plain refusal and stay off the network.
+                cfg.cloud_mode = "off"
                 save_config(cfg)
 
                 label = "t"
