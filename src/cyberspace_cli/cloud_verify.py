@@ -7,14 +7,14 @@ from the coordinates and the previous event id, then the 16 opened residues
 and their paths. Nothing is taken from the server.
 
 A version 1 result (hop_n and the Cantor envelopes, no seal, mn or mp) is
-refused outright. It would become a version 1 hop, which chain rules
-revision 2026-10-08-residue-openings rejects unless its id is on
+refused outright (straddling_v1_hop). It would become a version 1 hop, which
+chain rules revision 2026-10-08-residue-openings rejects unless its id is on
 grandfathered-v1-hops.txt, and a hop signed now never is: signing it would
 freeze the chain at the hop before it. HOSAKA switches to version 2 at once
 (no result carries both shapes), so there is nothing to fall back to.
 run_cloud_move also refuses before quoting when the limits do not report
 hop_proof_version 2, so a version 1 result reaches this check only from a
-job that straddled the switch.
+job that straddled the switch, and HOSAKA refunds such a job.
 
 Sidesteps: full Level 1 verification per CYBERSPACE_V2 6.11, all O(h),
 with the re-roll nonce read from the result's mn field (16 lowercase hex
@@ -46,13 +46,22 @@ V2_HOP_FIELDS = ("seal", "mn", "mp")
 # The hop proof version HOSAKA must serve (GET /api/v1/limits hop_proof_version).
 HOP_PROOF_VERSION = 2
 
-VERSION_1_RESULT = (
-    "HOSAKA returned a version 1 hop result (hop_n, with no seal, mn or mp). Under chain rules revision "
-    "2026-10-08-residue-openings a version 1 hop is invalid unless it is listed in grandfathered-v1-hops.txt, "
-    "and a hop signed now never is, so signing it would freeze this chain at its current head (CYBERSPACE_V2 5.13). "
-    "The result is refused and nothing is appended. HOSAKA has not switched to hop proof version 2 for this job; "
-    "move within the local ceiling (--max-lca-height, --toward) or try again once it has."
-)
+
+def straddling_v1_hop(result: Any, job_id: Optional[str]) -> Optional[str]:
+    """The refusal for a hop job that finished in the version 1 shape (hop_n
+    and none of seal, mn and mp), else None. Only a job that straddled
+    HOSAKA's switch to version 2 can do that. It is refused, never signed, and
+    HOSAKA refunds it to the HOSAKA balance (the owner's default for a
+    straddling job, as ONOSENDAI's straddlingV1Hop does)."""
+    if not isinstance(result, dict) or "hop_n" not in result or any(name in result for name in V2_HOP_FIELDS):
+        return None
+    job = f"job {job_id}" if job_id else "this job"
+    return (
+        f"HOSAKA finished this hop ({job}) in the old proof format, version 1 (hop_n, with no seal, mn or mp). "
+        "Chain rules revision 2026-10-08-residue-openings rejects a version 1 hop unless it is listed in "
+        "grandfathered-v1-hops.txt, and a hop signed now never is (CYBERSPACE_V2 5.13), so the result is refused, "
+        "nothing is signed or appended, and you did not move. HOSAKA will refund the job to your HOSAKA balance."
+    )
 
 
 @dataclass
@@ -140,12 +149,14 @@ def verify_cloud_hop(
     *,
     plane: int,
     previous_event_id_hex: str,
+    job_id: Optional[str] = None,
 ) -> List[str]:
-    """Level 1 of a cloud hop result before it is signed. A result with
-    hop_n and none of seal, mn and mp is a version 1 result and is refused
-    (VERSION_1_RESULT); any other result missing one of them is a failed check."""
-    if "hop_n" in result and not any(name in result for name in V2_HOP_FIELDS):
-        return [VERSION_1_RESULT]
+    """Level 1 of a cloud hop result before it is signed. A version 1 result
+    is refused with straddling_v1_hop's words; any other result missing one
+    of seal, mn and mp is a failed check."""
+    refusal = straddling_v1_hop(result, job_id)
+    if refusal:
+        return [refusal]
     failures: List[str] = []
     for name in V2_HOP_FIELDS:
         if name not in result:
@@ -172,8 +183,8 @@ def verify_cloud_hop(
 
 
 def cloud_hop_from_result(job: Dict[str, Any], x1, y1, z1, x2, y2, z2, *, plane: int = 0) -> CloudHop:
-    result = job["result"]
     """The proof object of a result that verify_cloud_hop accepted."""
+    result = job["result"]
     region = result.get("region_n") if isinstance(result.get("region_n"), dict) else {}
     return CloudHop(
         proof=result["seal"],

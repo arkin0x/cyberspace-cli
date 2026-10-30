@@ -272,7 +272,8 @@ def finish_cloud_job(
         if not isinstance(result, dict):
             failures = [f"result: not an object ({type(result).__name__})"]
         elif action == "hop":
-            failures = verify_cloud_hop(result, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id)
+            failures = verify_cloud_hop(result, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id,
+                                        job_id=record.get("job_id"))
         else:
             failures = verify_cloud_sidestep(result, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id)
         if not failures:

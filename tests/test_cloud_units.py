@@ -177,12 +177,13 @@ class TestVerifierAgainstOracles(unittest.TestCase):
     def test_a_version_1_hop_result_is_refused(self):
         """Chain rules revision 2026-10-08-residue-openings: even a correct version 1 result would sign an invalid
         hop, so it is refused outright. Version 2 results: tests/test_hop_residue.py TestCloudVersion2."""
-        from cyberspace_cli.cloud_verify import VERSION_1_RESULT
+        from cyberspace_cli.cloud_verify import straddling_v1_hop
 
         x1, y1, z1 = 1000, 2000, 3000
         x2, y2, z2 = 1000 + (1 << 9), 2000, 3001
         res, _ = self._hop_result(x1, y1, z1, x2, y2, z2)
-        self.assertEqual(verify_cloud_hop(res, x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=PREV), [VERSION_1_RESULT])
+        self.assertEqual(verify_cloud_hop(res, x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=PREV),
+                         [straddling_v1_hop(res, None)])
 
     def test_sidestep_accepts_reference_and_rejects_mutations(self):
         x1, y1, z1 = (1 << 20) + 5, 44, 44

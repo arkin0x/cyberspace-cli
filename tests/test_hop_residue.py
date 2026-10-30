@@ -641,45 +641,54 @@ class TestCloudVersion1IsRefused:
     XYZ = (1000, 2000, 3000, 1000 + (1 << 9), 2000, 3001)
 
     def test_a_version_1_result_is_refused_with_the_reason(self):
-        from cyberspace_cli.cloud_verify import VERSION_1_RESULT
+        from cyberspace_cli.cloud_verify import straddling_v1_hop
 
         res = _version_1_result(*self.XYZ, "ab" * 32)
-        assert verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex="ab" * 32) == [VERSION_1_RESULT]
-        assert "grandfathered-v1-hops.txt" in VERSION_1_RESULT and "nothing is appended" in VERSION_1_RESULT
+        words = straddling_v1_hop(res, "job-1234567890")
+        assert words and "grandfathered-v1-hops.txt" in words and "nothing is signed or appended" in words
+        assert "HOSAKA will refund the job" in words and "job-1234567890" in words
+        assert verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex="ab" * 32, job_id="job-1234567890") == [words]
+
+    def test_only_a_version_1_hop_result_is_straddling(self):
+        from cyberspace_cli.cloud_verify import straddling_v1_hop
+
+        res = _version_1_result(*self.XYZ, "ab" * 32)
+        assert straddling_v1_hop(dict(res, seal="ab" * 32), "j") is None  # a partial version 2 result: failed checks instead
+        assert straddling_v1_hop({"seal": "ab" * 32, "mn": "0" * 16, "mp": "00"}, "j") is None
+        for junk in ({}, None, ["hop_n"], "hop_n"):
+            assert straddling_v1_hop(junk, "j") is None
+        assert "this job" in straddling_v1_hop(res, None)
 
     @pytest.mark.parametrize("field,value", [("K", "abc"), ("max_height", "x"), ("max_height", None), ("region_n", "x"),
                                              ("cantor_x", {"public_proof": "00" * 32, "secret_key": "zz"}), ("hop_n", {"public_proof": None})])
     def test_every_version_1_shape_is_refused_whatever_it_holds(self, field, value):
-        from cyberspace_cli.cloud_verify import VERSION_1_RESULT
+        from cyberspace_cli.cloud_verify import straddling_v1_hop
 
-        res = _version_1_result(*self.XYZ, "ab" * 32)
-        assert verify_cloud_hop(dict(res, **{field: value}), *self.XYZ, plane=0, previous_event_id_hex="ab" * 32) == [VERSION_1_RESULT]
+        res = dict(_version_1_result(*self.XYZ, "ab" * 32), **{field: value})
+        assert verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex="ab" * 32) == [straddling_v1_hop(res, None)]
 
     def test_an_empty_result_is_a_failure_not_a_version_1_result(self):
-        from cyberspace_cli.cloud_verify import VERSION_1_RESULT
-
         failures = verify_cloud_hop({}, *self.XYZ, plane=0, previous_event_id_hex="ab" * 32)
-        assert failures and VERSION_1_RESULT not in failures and all("missing" in f for f in failures)
+        assert failures and not any("refund" in f for f in failures) and all("missing" in f for f in failures)
 
     def test_a_partial_version_2_result_is_a_failure_not_a_version_1_result(self):
-        from cyberspace_cli.cloud_verify import VERSION_1_RESULT
-
         res = _version_1_result(*self.XYZ, "ab" * 32, seal="ab" * 32)
         failures = verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex="ab" * 32)
-        assert failures and VERSION_1_RESULT not in failures and any(f.startswith("mn") for f in failures)
+        assert failures and not any("refund" in f for f in failures) and any(f.startswith("mn") for f in failures)
 
-    def test_finish_cloud_job_records_the_refusal(self, tmp_path, monkeypatch):
+    def test_finish_cloud_job_records_the_refusal_with_the_job(self, tmp_path, monkeypatch):
         from cyberspace_cli import cloud_jobs
         from cyberspace_cli.cloud_move import CloudVerificationFailed, finish_cloud_job
-        from cyberspace_cli.cloud_verify import VERSION_1_RESULT
+        from cyberspace_cli.cloud_verify import straddling_v1_hop
 
         monkeypatch.setenv("CYBERSPACE_HOME", str(tmp_path))
-        cloud_jobs.record({"job_id": "j", "action": "hop", "state": "computing"})
+        res = _version_1_result(*self.XYZ, "ab" * 32)
+        cloud_jobs.record({"job_id": "j-straddle", "action": "hop", "state": "computing"})
         with pytest.raises(CloudVerificationFailed) as e:
-            finish_cloud_job({"job_id": "j", "action": "hop"}, {"id": "j", "result": _version_1_result(*self.XYZ, "ab" * 32)},
+            finish_cloud_job({"job_id": "j-straddle", "action": "hop"}, {"id": "j-straddle", "result": res},
                              *self.XYZ, plane2=0, previous_event_id="ab" * 32, echo=lambda s: None)
-        assert e.value.failures == [VERSION_1_RESULT]
-        assert cloud_jobs.get("j")["state"] == "rejected"
+        assert e.value.failures == [straddling_v1_hop(res, "j-straddle")]
+        assert cloud_jobs.get("j-straddle")["state"] == "rejected"
 
     @pytest.mark.parametrize("version", [None, 1, "2", True])
     def test_a_hosaka_without_hop_proof_version_2_is_not_quoted(self, version, monkeypatch):

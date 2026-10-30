@@ -1251,15 +1251,12 @@ def residue_openings_vectors(b: Builder, add: Callable, listed: List[str]) -> No
     tags, Level 1 and the list of version 1 hops. `listed` collects the test
     list: version 1 hops treated as listed in grandfathered-v1-hops.txt."""
     P = b.pub
-    PX, PY = flip(P, dx=1), flip(P, dy=1)
+    PX = flip(P, dx=1)
     PXY = flip(PX, dy=1)
 
     def lst(event: Dict[str, Any]) -> Dict[str, Any]:
         listed.append(event["id"])
         return event
-
-    def mp_of(event: Dict[str, Any]) -> str:
-        return next(t[1] for t in event["tags"] if t[0] == "mp")
 
     # ------------------------------------------------ version 1 hops (5.13)
     s = b.spawn()
@@ -1310,26 +1307,8 @@ def residue_openings_vectors(b: Builder, add: Callable, listed: List[str]) -> No
         "form of the tags.",
         [s, h1], invalid([s, h1], h1, "malformed", P))
 
-    def with_mn_mp(mp: str) -> Callable[[Tags], Tags]:
-        def change(tags: Tags) -> Tags:
-            i = next(i for i, t in enumerate(tags) if t[0] == "proof") + 1
-            return tags[:i] + [["mn", "00" * 8], ["mp", mp]] + tags[i:]
-        return change
-
-    s = b.spawn()
-    v2 = b.hop(s, s, P, PY)  # a version 2 proof of another move, for its openings
-    h1 = lst(b.retag(b.hop(s, s, P, PX, version=1), with_mn_mp(mp_of(v2))))
-    add("hop-version-1-listed-with-mn-mp", ["5.13", "8.8"],
-        "A listed version 1 hop that also carries mn and mp of the width its depth gives, taken from another hop. A listed "
-        "hop may carry them; they are read once each and checked for form, never against its proof: valid.",
-        [s, h1], valid([s, h1], PX))
-
-    s = b.spawn()
-    h1 = lst(b.retag(b.hop(s, s, P, PX, version=1), with_mn_mp(mp_of(v2)[:-2])))
-    add("hop-version-1-listed-mp-wrong-width", ["5.13", "8.4", "8.8"],
-        "A listed version 1 hop that carries mn and an mp two characters short of the 2048 its depth of 0 gives it. A "
-        "listed hop may lack mn and mp, but one it carries has the form of 8.4, so the hop is malformed.",
-        [s, h1], invalid([s, h1], h1, "malformed", P))
+    # No listed hop here carries mn or mp: the census lists only version 1 hops,
+    # which carry neither (5.13), so no real list can ever name such a hop.
 
     # ------------------------------------------------ the mn and mp tags (8.4, 8.8)
     s = b.spawn()
