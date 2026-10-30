@@ -397,7 +397,7 @@ def _load_generator():
 
 class TestGrandfathered:
     def test_the_embedded_list(self):
-        assert SPEC_COMMIT == "787cda3bd7c76fbe618b9b72e30ecafa19f05434"
+        assert SPEC_COMMIT == "06c287332651f99b75e609b7b098e165993750fd"
         assert len(GRANDFATHERED_V2_SIDESTEPS) == 36
         assert all(len(i) == 64 and all(c in "0123456789abcdef" for c in i) for i in GRANDFATHERED_V2_SIDESTEPS)
         assert "393b58f707d94d31b3aa11a1326b46e54f9b14ae2864989bbcbe2a210aa76458" in GRANDFATHERED_V2_SIDESTEPS
@@ -434,10 +434,11 @@ class TestGrandfathered:
             gen.parse_list(a.upper() + "\n")
         with pytest.raises(ValueError):
             gen.parse_list(f"{a}\n{a} again\n")
-        rendered = gen.render("f" * 40, [(a, "note")], [(b, "")])
+        rendered = gen.render("f" * 40, [], [(a, "note")], [(b, "")])
         namespace: dict = {}
         exec(compile(rendered, "grandfathered.py", "exec"), namespace)
         assert namespace["GRANDFATHERED_V2_SIDESTEPS"] == frozenset({a}) and namespace["GRANDFATHERED_V1_HYPERJUMPS"] == frozenset({b})
+        assert namespace["GRANDFATHERED_V1_HOPS"] == frozenset()
         assert namespace["SPEC_COMMIT"] == "f" * 40
 
 

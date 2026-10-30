@@ -187,7 +187,7 @@ class TestVectors(unittest.TestCase):
             previous_event_id=spawn["id"],
             prev_coord_hex=coord0,
             coord_hex=coord1,
-            proof_hash_hex="ab" * 32,
+            proof_hex="ab" * 32,
         )
         self.assertEqual(hop["id"], "4cda3483928f30e4c3dfd85cb71401f0a439601ef923e19cba57ca86853cc75e")
 

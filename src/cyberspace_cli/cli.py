@@ -81,7 +81,6 @@ from cyberspace_core.location_encryption import (
 )
 from cyberspace_core.movement import (
     compute_axis_cantor,
-    compute_hop_proof,
     compute_movement_proof_xyz,
     compute_sidestep_proof,
     encode_nonce,
@@ -89,6 +88,7 @@ from cyberspace_core.movement import (
     find_lca_height,
 )
 from cyberspace_core.movement_debug import axis_cantor_debug
+from cyberspace_core.residue import prove_hop
 
 app = typer.Typer(no_args_is_help=True)
 chain_app = typer.Typer(no_args_is_help=True)
@@ -2630,16 +2630,11 @@ def move(
                 raise typer.Exit(code=2)
 
             try:
-                proof = compute_hop_proof(
-                    x1,
-                    y1,
-                    z1,
-                    x2,
-                    y2,
-                    z2,
-                    plane=plane2,
-                    previous_event_id_hex=prev_event_id,
-                    max_compute_height=max_compute_height,
+                # Version 2 of the hop proof: residue openings (CYBERSPACE_V2 5.9 to 5.11).
+                proof = prove_hop(
+                    bytes.fromhex(prev_event_id),
+                    xyz_to_coord(x1, y1, z1, plane=plane1),
+                    xyz_to_coord(x2, y2, z2, plane=plane2),
                 )
             except ValueError as e:
                 typer.echo(f"Failed to compute movement proof: {e}", err=True)
@@ -2676,7 +2671,9 @@ def move(
                 previous_event_id=prev_event_id,
                 prev_coord_hex=state.coord_hex,
                 coord_hex=coord_hex,
-                proof_hash_hex=proof.proof_hash,
+                proof_hex=proof.proof,
+                nonce_hex=proof.mn,
+                openings_hex=proof.mp,
             )
         chains.append_event(label, movement_event)
 
@@ -2698,7 +2695,7 @@ def move(
             typer.echo(f"terrain_k: {sidestep_proof.terrain_k}")
             typer.echo(f"lca_heights: X={sidestep_proof.lca_heights[0]} Y={sidestep_proof.lca_heights[1]} Z={sidestep_proof.lca_heights[2]}")
         elif proof is not None:
-            typer.echo(f"proof: {proof.proof_hash}")
+            typer.echo(f"proof: {proof.proof}")
             typer.echo(f"terrain_k: {proof.terrain_k}")
         if cloud_obj is not None:
             typer.echo(f"source: HOSAKA cloud job {cloud_obj.job_id} ({(cloud_obj.cost_msats + 999) // 1000} sats)")

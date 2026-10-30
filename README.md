@@ -6,7 +6,7 @@ This repo is intentionally separate from the current research/prototype code und
 ## What this CLI does (today)
 - Creates/loads an identity (Nostr Schnorr keypair) and spawn event
 - Creates and manages **local movement chains** (multiple labeled chains, status/history, JSON export)
-- Computes and stores **v2 movement proofs** (per-axis Cantor tree) in hop events
+- Computes and stores **hop proofs, version 2** (residue openings of the Cantor trees, CYBERSPACE_V2 5.9 to 5.11: the seal in `proof`, the re-roll nonce in `mn`, 16 openings in `mp`) in hop events, and verifies hops at Level 1
 - Supports movement workflows: `move --by`, `move --to`, `move --toward`, plane switching, and target-driven movement
 - **Interactive terminal visualization** (`move viz`) for planning movements with LCA heights, terrain difficulty, and compute time estimates
 - Supports DECK-0001 hyperjump tooling: nearest/show/to/next/prev queries plus hyperjump movement-event creation
@@ -196,9 +196,12 @@ cloud compute service, to compute the proof. Local first, cloud second,
 sidestep third: if the height is within HOSAKA's hop cap you buy a hop; if it
 is taller than that but within the sidestep cap you buy a sidestep, which
 lands exactly 1 gibson past the wall (so use `--toward`, which walks boundary
-by boundary). The CLI never trusts the result blindly: terrain K, the temporal
-root, trivial axes, any axis within the local ceiling and every envelope hash
-are recomputed here for hops, and sidesteps get full Level 1 verification
+by boundary). The CLI never trusts the result blindly: a version 2 hop result
+(its `seal`, `mn` and `mp` fields) is verified at Level 1, the 16 opened
+residues recomputed here from the coordinates and the previous event id; a
+version 1 result (until HOSAKA switches) has terrain K, the temporal root,
+trivial axes, any axis within the local ceiling and every envelope hash
+recomputed; and sidesteps get full Level 1 verification
 (the re-roll price from the result's `mn` nonce, the destination's path and
 the eight sampled paths drawn from G, region_m, proof hash). A result that
 fails any check is never appended.

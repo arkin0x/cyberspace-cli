@@ -5,7 +5,7 @@ import sys
 from dataclasses import dataclass, field
 from functools import partial
 
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from cyberspace_core.cantor import cantor_pair, int_to_bytes_be_min, sha256, sha256_int_hex
 from cyberspace_core.coords import AXIS_BITS, AXIS_MAX, coord_to_xyz
@@ -696,9 +696,15 @@ def verify_sidestep_event(event: Dict[str, Any]) -> List[str]:
     return failures
 
 
-def verify_hop_event(event: Dict[str, Any], *, max_compute_height: int = DEFAULT_MAX_COMPUTE_HEIGHT) -> List[str]:
-    """Verification of a published hop event (8.7.1). Returns the failed
-    checks; empty means valid.
+def verify_hop_event_v1(event: Dict[str, Any], *, max_compute_height: int = DEFAULT_MAX_COMPUTE_HEIGHT) -> List[str]:
+    """Version 1 verification of a published hop event, as chain rules
+    revision 2026-09-28-virtual-brackets define it. Returns the failed checks;
+    empty means valid.
+
+    The resolver of cyberspace_core.chain still implements that revision and
+    calls this; it moves to verify_hop_event (residue openings, revision
+    2026-10-08-residue-openings) together with CHAIN_RULES_REVISION and the
+    regenerated chain-rules vectors. Nothing else should call it.
 
     The proof is recomputed in full: the Cantor root of every axis at its LCA
     height, the temporal axis from the terrain K of the destination and the
@@ -738,6 +744,118 @@ def verify_hop_event(event: Dict[str, Any], *, max_compute_height: int = DEFAULT
     if value("proof") != proof.proof_hash:
         return ["proof: does not match the hop proof at this chain position (5.6)"]
     return []
+
+
+# Level 1 of a hop costs about 2^h_max per opened residue; above this height
+# verify_hop_event raises instead of giving a verdict (residue.HopTooTall).
+MAX_VERIFY_HEIGHT = 32
+
+
+def verify_hop_event(
+    event: Dict[str, Any],
+    *,
+    listed: Optional[FrozenSet[str]] = None,
+    all_failures: bool = False,
+    max_verify_height: int = MAX_VERIFY_HEIGHT,
+    workers: Optional[int] = None,
+) -> List[str]:
+    """Level 1 verification of a published hop event (8.7.1, residue openings).
+    Returns the failed checks; empty means valid.
+
+    The exemption of 5.13 is by event id, so the event's id must be present
+    and be the NIP-01 hash of the event; otherwise it is not on any list.
+    `listed` defaults to grandfathered-v1-hops.txt as embedded in
+    cyberspace_core.grandfathered. See verify_hop_tags for the rest."""
+    from cyberspace_core.grandfathered import GRANDFATHERED_V1_HOPS, event_id_of
+
+    return verify_hop_tags(
+        event.get("tags"),
+        event_id=event_id_of(event),
+        listed=GRANDFATHERED_V1_HOPS if listed is None else listed,
+        all_failures=all_failures,
+        max_verify_height=max_verify_height,
+        workers=workers,
+    )
+
+
+def verify_hop_tags(
+    tags: Any,
+    *,
+    event_id: Optional[str],
+    listed: FrozenSet[str],
+    all_failures: bool = False,
+    max_verify_height: int = MAX_VERIFY_HEIGHT,
+    workers: Optional[int] = None,
+) -> List[str]:
+    """8.7.1 on a hop's tags. event_id is required: the id the caller vouches
+    for (verify_hop_event passes it only when it is the event's NIP-01 hash),
+    or None, which no list contains.
+
+    Steps 1 to 6 derive the geometry from c, C and e previous. Step 7: a hop
+    whose id is listed has its proof accepted as 32-byte lowercase hex without
+    steps 8 to 11, and MAY lack mn and mp; when it carries either, the tag
+    appears once in its 8.4 form, and is never checked against the proof
+    (5.13, 8.8). Any other hop carries proof, mn and mp exactly once each and
+    is checked at Level 1 (residue.verify_hop_proof): stopping at the first
+    failure by default, or reporting every one with all_failures.
+
+    Chain linkage (c is the position the chain carries to this event), the
+    count and form of the tags other than proof, mn and mp, the sector tags and
+    the NIP-01 signature need the chain and stay with the caller. A hop taller
+    than max_verify_height that passes form and price raises
+    residue.HopTooTall (a ValueError): no verdict without doing its work."""
+    from cyberspace_core import residue
+
+    rows = [t for t in (tags if isinstance(tags, list) else []) if isinstance(t, list) and t]
+
+    def value(name: str) -> Optional[str]:
+        return next((t[1] for t in rows if t[0] == name and len(t) >= 2), None)
+
+    def once(name: str) -> Tuple[int, Optional[str]]:
+        found = [t for t in rows if t[0] == name]
+        return len(found), (found[0][1] if len(found) == 1 and len(found[0]) >= 2 else None)
+
+    if value("A") != "hop":
+        return ["A: not a hop"]
+    failures: List[str] = []
+    prev = _hex_bytes(next((t[1] for t in rows if t[0] == "e" and len(t) >= 4 and t[3] == "previous"), None), 32)
+    if prev is None:
+        failures.append("e previous: missing or not 32 bytes of lowercase hex")
+    coords = []
+    for name in ("c", "C"):
+        raw = _hex_bytes(value(name), 32)
+        if raw is None:
+            failures.append(f"{name}: missing or not a 32-byte lowercase hex coordinate")
+        else:
+            coords.append(int.from_bytes(raw, "big"))
+    counts = {name: once(name) for name in ("proof", "mn", "mp")}
+    for name, (n, _) in counts.items():
+        if n > 1:
+            failures.append(f"{name}: appears {n} times; a tag the chain rules read appears exactly once (8.8)")
+    if failures:
+        return failures
+    assert prev is not None
+    src, dst = coords
+    geometry = residue.hop_geometry(prev, src, dst)
+    (n_proof, proof), (n_mn, mn), (n_mp, mp) = counts["proof"], counts["mn"], counts["mp"]
+
+    if event_id is not None and event_id in listed:
+        # 5.13: the listed hop's proof (its 5.6 proof_hash) is taken as audited.
+        if _hex_bytes(proof, 32) is None:
+            failures.append("proof: missing or not a 32-byte lowercase hex hash")
+        if n_mn and not residue.is_lower_hex(mn, 16):
+            failures.append("mn: not a nonce of exactly 16 lowercase hex characters (8.4)")
+        if n_mp and not residue.is_lower_hex(mp, residue.mp_length(geometry.depth)):
+            failures.append(f"mp: not exactly {residue.mp_length(geometry.depth)} lowercase hex characters, the 16 openings at depth {geometry.depth} (8.4)")
+        return failures
+
+    if n_proof and not n_mn and not n_mp:
+        return ["proof: a version 1 hop (no mn and no mp tag) not listed in grandfathered-v1-hops.txt (5.13)"]
+    found = residue.verify_hop_proof(
+        prev, src, dst, proof, mn, mp,
+        all_failures=all_failures, workers=workers, max_height=max_verify_height,
+    )
+    return [str(f) for f in found]
 
 
 @dataclass(frozen=True)

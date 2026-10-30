@@ -260,5 +260,5 @@ def finish_cloud_job(
     cloud_jobs.update(record["job_id"], state="verified")
     echo(f"Verified cloud {action} ({len(failures)} failed checks).")
     if action == "hop":
-        return cloud_hop_from_result(done, x1, y1, z1, x2, y2, z2)
+        return cloud_hop_from_result(done, x1, y1, z1, x2, y2, z2, plane=plane2)
     return cloud_sidestep_from_result(done, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id)

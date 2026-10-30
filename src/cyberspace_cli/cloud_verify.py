@@ -1,9 +1,17 @@
 """Check a HOSAKA result before it becomes a signed movement event.
 
-Hops: the cloud root itself is operator trust (it is the work we paid not to
-do), but everything around it is cheap to recompute: terrain K, the temporal
-root, trivial axes, any axis within the local ceiling, and the envelope
-hashes. Sidesteps: full Level 1 verification per CYBERSPACE_V2 6.11, all O(h),
+Hops, version 2 (residue openings, CYBERSPACE_V2 5.9 to 5.11): a result that
+carries any of the flat fields seal, mn and mp is a version 2 result, and is
+checked at Level 1 exactly as a verifier will check the published event: the
+geometry, K and the price derived here from the coordinates and the previous
+event id, then the 16 opened residues and their paths. Nothing is taken from
+the server. HOSAKA switches to version 2 at once (no result carries both
+shapes), so the shape is detected by the presence of those fields.
+
+Hops, version 1 (until HOSAKA ships version 2): the cloud root itself is
+operator trust (it is the work we paid not to do), but everything around it
+is cheap to recompute: terrain K, the temporal root, trivial axes, any axis
+within the local ceiling, and the envelope hashes. Sidesteps: full Level 1 verification per CYBERSPACE_V2 6.11, all O(h),
 with the re-roll nonce read from the result's mn field (16 lowercase hex
 characters, exactly as the event's mn tag).
 
@@ -13,9 +21,10 @@ Every function returns the list of failed checks. Empty means append.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from cyberspace_core.cantor import cantor_pair, int_to_bytes_be_min, sha256
+from cyberspace_core.coords import xyz_to_coord
 from cyberspace_core.movement import (
     AXIS_BITS,
     TEMPORAL_MAX_COMPUTE_HEIGHT,
@@ -25,20 +34,26 @@ from cyberspace_core.movement import (
     find_lca_height,
     verify_sidestep_openings,
 )
+from cyberspace_core.residue import verify_hop_proof
 from cyberspace_core.terrain import terrain_k
+
+V2_HOP_FIELDS = ("seal", "mn", "mp")
 
 
 @dataclass
 class CloudHop:
-    """What the move command needs from a completed cloud hop."""
+    """What the move command needs from a completed cloud hop: the proof, mn
+    and mp tag values (mn and mp None for a version 1 result)."""
 
-    proof_hash: str
+    proof: str
     terrain_k: int
     lookup_id: str
     location_decryption_key: str
     job_id: str
     cost_msats: int
     lca_heights: Tuple[int, int, int]
+    mn: Optional[str] = None
+    mp: Optional[str] = None
     source: str = "cloud"
 
 
@@ -85,6 +100,8 @@ def verify_cloud_hop(
     previous_event_id_hex: str,
     local_ceiling: int,
 ) -> List[str]:
+    if is_v2_hop_result(result):
+        return _verify_cloud_hop_v2(result, x1, y1, z1, x2, y2, z2, plane=plane, previous_event_id_hex=previous_event_id_hex)
     failures: List[str] = []
     hx, hy, hz = _heights(x1, y1, z1, x2, y2, z2)
 
@@ -122,13 +139,51 @@ def verify_cloud_hop(
     return failures
 
 
-def cloud_hop_from_result(job: Dict[str, Any], x1, y1, z1, x2, y2, z2) -> CloudHop:
+def is_v2_hop_result(result: Dict[str, Any]) -> bool:
+    return any(name in result for name in V2_HOP_FIELDS)
+
+
+def _verify_cloud_hop_v2(
+    result: Dict[str, Any],
+    x1: int, y1: int, z1: int,
+    x2: int, y2: int, z2: int,
+    *,
+    plane: int,
+    previous_event_id_hex: str,
+) -> List[str]:
+    failures: List[str] = []
+    for name in V2_HOP_FIELDS:
+        if name not in result:
+            failures.append(f"{name}: missing from a version 2 result (it carries {', '.join(n for n in V2_HOP_FIELDS if n in result)})")
+    env = result.get("region_n")
+    if isinstance(env, dict) and env.get("secret_key") and sha256(bytes.fromhex(env["secret_key"])).hex() != env.get("public_proof"):
+        failures.append("region_n: public_proof is not sha256(secret_key)")
+    k = terrain_k(x=x2, y=y2, z=z2, plane=plane)
+    if "K" in result and int(result["K"]) != k:
+        failures.append(f"K: server {result.get('K')} but terrain gives {k}")
+    if failures:
+        return failures
+    # Level 1 (5.11): the source plane does not enter the geometry, only x, y, z.
+    found = verify_hop_proof(
+        bytes.fromhex(previous_event_id_hex),
+        xyz_to_coord(x1, y1, z1, plane=plane),
+        xyz_to_coord(x2, y2, z2, plane=plane),
+        result["seal"], result["mn"], result["mp"],
+    )
+    return [f"Level 1: {f}" for f in found]
+
+
+def cloud_hop_from_result(job: Dict[str, Any], x1, y1, z1, x2, y2, z2, *, plane: int = 0) -> CloudHop:
     result = job["result"]
+    region = result.get("region_n") or {}
+    v2 = is_v2_hop_result(result)
     return CloudHop(
-        proof_hash=result["hop_n"]["public_proof"],
-        terrain_k=int(result["K"]),
-        lookup_id=result["region_n"]["public_proof"],
-        location_decryption_key=result["region_n"].get("secret_key", ""),
+        proof=result["seal"] if v2 else result["hop_n"]["public_proof"],
+        mn=result["mn"] if v2 else None,
+        mp=result["mp"] if v2 else None,
+        terrain_k=terrain_k(x=x2, y=y2, z=z2, plane=plane),  # any server K was checked against this
+        lookup_id=region.get("public_proof", ""),
+        location_decryption_key=region.get("secret_key", "") or "",
         job_id=job["id"],
         cost_msats=int(job.get("cost_msats") or 0),
         lca_heights=_heights(x1, y1, z1, x2, y2, z2),
