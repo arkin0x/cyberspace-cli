@@ -18,6 +18,7 @@ from typing import Callable, Dict, Optional, Tuple, Union
 
 from cyberspace_cli import cloud_jobs
 from cyberspace_cli.cloud_verify import (
+    HOP_PROOF_VERSION,
     CloudHop,
     CloudSidestep,
     cloud_hop_from_result,
@@ -158,7 +159,6 @@ def run_cloud_move(
     x2: int, y2: int, z2: int,
     plane2: int,
     previous_event_id: str,
-    local_ceiling: int,
     echo: Echo,
     confirm: Confirm,
     sleep: Callable[[float], None] = time.sleep,
@@ -167,6 +167,16 @@ def run_cloud_move(
     limits = client.limits()
     heights = (find_lca_height(x1, x2), find_lca_height(y1, y2), find_lca_height(z1, z2))
     action = decide_action(heights, limits)
+    if action == "hop" and limits.hop_proof_version != HOP_PROOF_VERSION:
+        # 5.13: a version 1 hop signed now is invalid, so a HOSAKA that would
+        # return one is not worth paying; its result would be refused anyway.
+        raise CloudDeclined(
+            f"HOSAKA does not serve hop proof version {HOP_PROOF_VERSION} yet (its limits report "
+            f"hop_proof_version {limits.hop_proof_version if limits.hop_proof_version is not None else 'none'}). "
+            "A version 1 hop signed now is invalid under chain rules revision 2026-10-08-residue-openings "
+            "(CYBERSPACE_V2 5.13), so nothing was quoted or paid. Move within the local ceiling "
+            "(--max-lca-height, --toward) or try again once HOSAKA has switched."
+        )
     if action == "hop" and max(heights) > MAX_VERIFY_HEIGHT:
         # Level 1 of a version 2 hop costs about 2^h per opened residue; above the
         # ceiling the result could not be checked in reasonable time after payment.
@@ -241,7 +251,7 @@ def run_cloud_move(
         echo(f"\nInterrupted. The job is safe on the server; finish it with: cyberspace cloud resume {job['id']}")
         raise
 
-    return finish_cloud_job(record, done, x1, y1, z1, x2, y2, z2, plane2=plane2, previous_event_id=previous_event_id, local_ceiling=local_ceiling, echo=echo)
+    return finish_cloud_job(record, done, x1, y1, z1, x2, y2, z2, plane2=plane2, previous_event_id=previous_event_id, echo=echo)
 
 
 def finish_cloud_job(
@@ -252,7 +262,6 @@ def finish_cloud_job(
     *,
     plane2: int,
     previous_event_id: str,
-    local_ceiling: int,
     echo: Echo,
 ) -> Union[CloudHop, CloudSidestep]:
     """Verify a completed job and turn it into a proof object; record the outcome."""
@@ -263,7 +272,8 @@ def finish_cloud_job(
         if not isinstance(result, dict):
             failures = [f"result: not an object ({type(result).__name__})"]
         elif action == "hop":
-            failures = verify_cloud_hop(result, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id, local_ceiling=local_ceiling)
+            failures = verify_cloud_hop(result, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id,
+                                        job_id=record.get("job_id"))
         else:
             failures = verify_cloud_sidestep(result, x1, y1, z1, x2, y2, z2, plane=plane2, previous_event_id_hex=previous_event_id)
         if not failures:

@@ -1,17 +1,23 @@
 """Check a HOSAKA result before it becomes a signed movement event.
 
-Hops, version 2 (residue openings, CYBERSPACE_V2 5.9 to 5.11): a result that
-carries any of the flat fields seal, mn and mp is a version 2 result, and is
-checked at Level 1 exactly as a verifier will check the published event: the
-geometry, K and the price derived here from the coordinates and the previous
-event id, then the 16 opened residues and their paths. Nothing is taken from
-the server. HOSAKA switches to version 2 at once (no result carries both
-shapes), so the shape is detected by the presence of those fields.
+Hops (residue openings, CYBERSPACE_V2 5.9 to 5.11): a result carries the
+flat fields seal, mn and mp, and is checked at Level 1 exactly as a verifier
+will check the published event: the geometry, K and the price derived here
+from the coordinates and the previous event id, then the 16 opened residues
+and their paths. Nothing is taken from the server.
 
-Hops, version 1 (until HOSAKA ships version 2): the cloud root itself is
-operator trust (it is the work we paid not to do), but everything around it
-is cheap to recompute: terrain K, the temporal root, trivial axes, any axis
-within the local ceiling, and the envelope hashes. Sidesteps: full Level 1 verification per CYBERSPACE_V2 6.11, all O(h),
+A version 1 result (hop_n and the Cantor envelopes, no seal, mn or mp) is
+refused outright (straddling_v1_hop). It would become a version 1 hop, which
+chain rules revision 2026-10-08-residue-openings rejects unless its id is on
+grandfathered-v1-hops.txt, and a hop signed now never is: signing it would
+freeze the chain at the hop before it. HOSAKA switches to version 2 at once
+(no result carries both shapes), so there is nothing to fall back to.
+run_cloud_move also refuses before quoting when the limits do not report
+hop_proof_version 2, so a version 1 result reaches this check only from a
+job that straddled the switch. Such a job is eligible for a refund, which
+the HOSAKA operator runs after checking that nothing was published.
+
+Sidesteps: full Level 1 verification per CYBERSPACE_V2 6.11, all O(h),
 with the re-roll nonce read from the result's mn field (16 lowercase hex
 characters, exactly as the event's mn tag).
 
@@ -28,7 +34,6 @@ from cyberspace_core.coords import xyz_to_coord
 from cyberspace_core.movement import (
     AXIS_BITS,
     TEMPORAL_MAX_COMPUTE_HEIGHT,
-    compute_axis_cantor,
     compute_subtree_cantor,
     decode_nonce,
     find_lca_height,
@@ -39,22 +44,44 @@ from cyberspace_core.residue import HopTooTall, is_lower_hex, verify_hop_proof
 from cyberspace_core.terrain import terrain_k
 
 V2_HOP_FIELDS = ("seal", "mn", "mp")
+# The hop proof version HOSAKA must serve (GET /api/v1/limits hop_proof_version).
+HOP_PROOF_VERSION = 2
+
+
+def straddling_v1_hop(result: Any, job_id: Optional[str]) -> Optional[str]:
+    """The refusal for a hop job that finished in the version 1 shape (hop_n
+    and none of seal, mn and mp), else None. Only a job that straddled
+    HOSAKA's switch to version 2 can do that. It is refused and never signed,
+    and the job is eligible for a refund to the HOSAKA balance, which the
+    HOSAKA operator runs with a helper after checking that nothing was
+    published; nothing here or on HOSAKA refunds it automatically. Refusing
+    is the recommended default for a straddling job, pending the owner's
+    ruling, and it matches ONOSENDAI's straddlingV1Hop."""
+    if not isinstance(result, dict) or "hop_n" not in result or any(name in result for name in V2_HOP_FIELDS):
+        return None
+    job = f"job {job_id}" if job_id else "this job"
+    return (
+        f"HOSAKA finished this hop ({job}) in the old proof format, version 1 (hop_n, with no seal, mn or mp). "
+        "Chain rules revision 2026-10-08-residue-openings rejects a version 1 hop unless it is listed in "
+        "grandfathered-v1-hops.txt, and a hop signed now never is (CYBERSPACE_V2 5.13), so the result is refused. "
+        "Nothing was signed and you did not move. This job is eligible for a refund to your HOSAKA balance."
+    )
 
 
 @dataclass
 class CloudHop:
-    """What the move command needs from a completed cloud hop: the proof, mn
-    and mp tag values (mn and mp None for a version 1 result)."""
+    """What the move command needs from a completed cloud hop: the proof
+    (the seal), mn and mp tag values."""
 
     proof: str
+    mn: str
+    mp: str
     terrain_k: int
     lookup_id: str
     location_decryption_key: str
     job_id: str
     cost_msats: int
     lca_heights: Tuple[int, int, int]
-    mn: Optional[str] = None
-    mp: Optional[str] = None
     source: str = "cloud"
 
 
@@ -126,58 +153,18 @@ def verify_cloud_hop(
     *,
     plane: int,
     previous_event_id_hex: str,
-    local_ceiling: int,
+    job_id: Optional[str] = None,
 ) -> List[str]:
-    if is_v2_hop_result(result):
-        return _verify_cloud_hop_v2(result, x1, y1, z1, x2, y2, z2, plane=plane, previous_event_id_hex=previous_event_id_hex)
-    failures: List[str] = []
-    hx, hy, hz = _heights(x1, y1, z1, x2, y2, z2)
-
-    for name in ("hop_n", "region_n", "cantor_x", "cantor_y", "cantor_z", "cantor_t"):
-        failures += _envelope_failures(name, result.get(name))
-    if failures:
-        return failures
-
-    k = terrain_k(x=x2, y=y2, z=z2, plane=plane)
-    if _as_int(result.get("K")) != k:
-        failures.append(f"K: server {result.get('K')!r} but terrain gives {k}")
-    if result["cantor_t"]["public_proof"] != _dsha_hex(_temporal(previous_event_id_hex, k)):
-        failures.append("cantor_t: does not match the temporal root for this previous_event_id and K")
-
-    if _as_int(result.get("max_height")) != max(hx, hy, hz):
-        failures.append(f"max_height: server {result.get('max_height')} but axes give {max(hx, hy, hz)}")
-
-    for axis, v1, v2, h in (("x", x1, x2, hx), ("y", y1, y2, hy), ("z", z1, z2, hz)):
-        env = result[f"cantor_{axis}"]
-        if h == 0:
-            if env["public_proof"] != _dsha_hex(v2):
-                failures.append(f"cantor_{axis}: trivial axis root is not the coordinate")
-        elif h <= local_ceiling:
-            local_root = compute_axis_cantor(v1, v2, max_compute_height=h)
-            if env["public_proof"] != _dsha_hex(local_root):
-                failures.append(f"cantor_{axis}: h={h} root differs from the local recomputation")
-
-    if len(str(result["hop_n"]["public_proof"])) != 64:
-        failures.append("hop_n: public_proof is not 32 bytes of hex")
-    return failures
-
-
-def is_v2_hop_result(result: Dict[str, Any]) -> bool:
-    return any(name in result for name in V2_HOP_FIELDS)
-
-
-def _verify_cloud_hop_v2(
-    result: Dict[str, Any],
-    x1: int, y1: int, z1: int,
-    x2: int, y2: int, z2: int,
-    *,
-    plane: int,
-    previous_event_id_hex: str,
-) -> List[str]:
+    """Level 1 of a cloud hop result before it is signed. A version 1 result
+    is refused with straddling_v1_hop's words; any other result missing one
+    of seal, mn and mp is a failed check."""
+    refusal = straddling_v1_hop(result, job_id)
+    if refusal:
+        return [refusal]
     failures: List[str] = []
     for name in V2_HOP_FIELDS:
         if name not in result:
-            failures.append(f"{name}: missing from a version 2 result (it carries {', '.join(n for n in V2_HOP_FIELDS if n in result)})")
+            failures.append(f"{name}: missing from the result (it carries {', '.join(n for n in V2_HOP_FIELDS if n in result) or 'none of seal, mn and mp'})")
     if "region_n" in result:
         failures += _envelope_failures("region_n", result["region_n"])
     k = terrain_k(x=x2, y=y2, z=z2, plane=plane)
@@ -200,13 +187,13 @@ def _verify_cloud_hop_v2(
 
 
 def cloud_hop_from_result(job: Dict[str, Any], x1, y1, z1, x2, y2, z2, *, plane: int = 0) -> CloudHop:
+    """The proof object of a result that verify_cloud_hop accepted."""
     result = job["result"]
     region = result.get("region_n") if isinstance(result.get("region_n"), dict) else {}
-    v2 = is_v2_hop_result(result)
     return CloudHop(
-        proof=result["seal"] if v2 else result["hop_n"]["public_proof"],
-        mn=result["mn"] if v2 else None,
-        mp=result["mp"] if v2 else None,
+        proof=result["seal"],
+        mn=result["mn"],
+        mp=result["mp"],
         terrain_k=terrain_k(x=x2, y=y2, z=z2, plane=plane),  # any server K was checked against this
         lookup_id=region.get("public_proof", ""),
         location_decryption_key=region.get("secret_key", "") or "",

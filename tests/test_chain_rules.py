@@ -1,14 +1,23 @@
-"""The chain rules of CYBERSPACE_V2 section 8.12, revision
-2026-09-28-virtual-brackets with the rulings of 2026-10-07 and 2026-10-08:
-authentic events only and active chain resolution (8.7.3), frozen chains at
-their last valid position (3.2), one A tag (8.8), skipping actions a verifier
-does not recognize (8.9), opaque virtual brackets (8.11), sector tags (10)
-and the DECK-0001 ride rules, each locked by the golden vectors in
-vectors/chain-rules-2026-09-28-virtual-brackets.json, which the TypeScript
-ports load too. Regenerate them with scripts/gen_chain_vectors.py."""
+"""The chain rules of CYBERSPACE_V2 section 8.12, locked by one golden
+vector file per revision, which the other ports load too:
+
+- vectors/chain-rules-2026-10-08-residue-openings.json, the current revision:
+  hop proofs of version 2, residue openings (5.9 to 5.13), with the version 1
+  hops on its own test list standing in for grandfathered-v1-hops.txt;
+- vectors/chain-rules-2026-09-28-virtual-brackets.json, the previous
+  revision with the rulings of 2026-10-07 and 2026-10-08, whose hops are
+  version 1, checked with verify_chain(revision=PREVIOUS_REVISION).
+
+Both lock authentic events only and active chain resolution (8.7.3), frozen
+chains at their last valid position (3.2), one A tag (8.8), skipping actions
+a verifier does not recognize (8.9), opaque virtual brackets (8.11), sector
+tags (10) and the DECK-0001 ride rules. Regenerate them with
+scripts/gen_chain_vectors.py (add --revision 2026-09-28-virtual-brackets for
+the previous file)."""
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from hashlib import sha256
 from pathlib import Path
@@ -18,7 +27,10 @@ from coincurve import PrivateKey
 
 from cyberspace_core.chain import (
     CHAIN_RULES_REVISION,
+    PREVIOUS_REVISION,
     REASONS,
+    REASONS_BY_REVISION,
+    REVISIONS,
     LineRequired,
     event_id,
     Region,
@@ -31,51 +43,158 @@ from cyberspace_core.chain import (
 from cyberspace_core.coords import xyz_to_coord
 from cyberspace_core.hyperspace import Line
 
-VECTORS_PATH = Path(__file__).resolve().parents[1] / "vectors" / f"chain-rules-{CHAIN_RULES_REVISION}.json"
-DOC = json.loads(VECTORS_PATH.read_text(encoding="utf-8"))
+ROOT = Path(__file__).resolve().parents[1]
+DOCS = {r: json.loads((ROOT / "vectors" / f"chain-rules-{r}.json").read_text(encoding="utf-8")) for r in REVISIONS}
+DOC = DOCS[CHAIN_RULES_REVISION]
 PUBKEY = DOC["verify_with"]["identity"]
 LINE = Line.from_blocks(DOC["line"]["blocks"])
 BY_NAME = {v["name"]: v for v in DOC["vectors"]}
+OLD_BY_NAME = {v["name"]: v for v in DOCS[PREVIOUS_REVISION]["vectors"]}
+# The test list of the current file, in place of grandfathered-v1-hops.txt when the vectors run.
+LISTED = frozenset(DOC["grandfathered_v1_hops"]["ids"])
+LISTED_BY_REVISION = {CHAIN_RULES_REVISION: LISTED, PREVIOUS_REVISION: None}
 
 
 def _has_ride(vector) -> bool:
     return any(t[:2] == ["A", "hyperjump"] for ev in vector["events"] for t in ev["tags"])
 
 
-@pytest.mark.parametrize("vector", DOC["vectors"], ids=[v["name"] for v in DOC["vectors"]])
-def test_vector(vector):
-    verdict = verify_chain(vector["events"], pubkey=PUBKEY, line=LINE)
+def _cases(only=lambda v: True):
+    return [pytest.param(r, v, id=f"{r}:{v['name']}") for r in REVISIONS for v in DOCS[r]["vectors"] if only(v)]
+
+
+def _verify(revision, events):
+    return verify_chain(events, pubkey=PUBKEY, line=LINE, revision=revision, listed_v1_hops=LISTED_BY_REVISION[revision])
+
+
+@pytest.mark.parametrize("revision,vector", _cases())
+def test_vector(revision, vector):
+    verdict = _verify(revision, vector["events"])
     assert verdict.expected() == vector["expected"], verdict.detail
-    assert verdict.revision == CHAIN_RULES_REVISION
+    assert verdict.revision == revision
 
 
-@pytest.mark.parametrize("vector", [v for v in DOC["vectors"] if not _has_ride(v)], ids=lambda v: v["name"])
-def test_vector_in_any_order(vector):
+@pytest.mark.parametrize("revision,vector", _cases(lambda v: not _has_ride(v)))
+def test_vector_in_any_order(revision, vector):
     """Relays return events in no particular order, and 8.7.3 resolves them the same way whatever the order."""
-    verdict = verify_chain(list(reversed(vector["events"])), pubkey=PUBKEY, line=LINE)
+    verdict = _verify(revision, list(reversed(vector["events"])))
     assert verdict.expected() == vector["expected"]
 
 
-class TestTheFile:
-    def test_revision_and_reasons(self):
-        assert DOC["chain_rules_revision"] == CHAIN_RULES_REVISION == "2026-09-28-virtual-brackets"
-        assert DOC["test_key"]["pubkey"] == PUBKEY
-        assert DOC["reasons"] == REASONS
-        assert {v["expected"].get("reason") for v in DOC["vectors"]} - {None} == set(REASONS)
+class TestTheFiles:
+    @pytest.mark.parametrize("revision", REVISIONS)
+    def test_revision_and_reasons(self, revision):
+        doc = DOCS[revision]
+        assert doc["chain_rules_revision"] == revision
+        assert doc["test_key"] == DOC["test_key"] and doc["test_key"]["pubkey"] == PUBKEY
+        assert doc["line"] == DOC["line"]
+        assert doc["reasons"] == REASONS_BY_REVISION[revision]
+        assert {v["expected"].get("reason") for v in doc["vectors"]} - {None} == set(doc["reasons"])
+
+    def test_the_current_revision(self):
+        assert CHAIN_RULES_REVISION == "2026-10-08-residue-openings" and PREVIOUS_REVISION == "2026-09-28-virtual-brackets"
+        assert REASONS == REASONS_BY_REVISION[CHAIN_RULES_REVISION]
+        assert set(REASONS) == set(REASONS_BY_REVISION[PREVIOUS_REVISION])
+        assert DOC["spec"]["commit"] == "06c287332651f99b75e609b7b098e165993750fd"
 
     def test_line(self):
         for block in DOC["line"]["blocks"]:
             assert LINE.stop(block["height"]).coord_hex == block["coord"]
         assert [LINE.station(PUBKEY, bound) for bound in range(8)][2:] == [2, 2, 2, 2, 6, 6]
 
-    def test_no_open_questions_remain(self):
+    @pytest.mark.parametrize("revision", REVISIONS)
+    def test_no_open_questions_remain(self, revision):
         """The rulings of 2026-10-07 and 2026-10-08 answered every reading the first vectors left open."""
-        assert not [v["name"] for v in DOC["vectors"] if "open_question" in v]
+        assert not [v["name"] for v in DOCS[revision]["vectors"] if "open_question" in v]
 
-    def test_every_invalid_verdict_names_a_position(self):
-        for v in DOC["vectors"]:
+    @pytest.mark.parametrize("revision", REVISIONS)
+    def test_every_invalid_verdict_names_a_position(self, revision):
+        for v in DOCS[revision]["vectors"]:
             if not v["expected"]["valid"] and v["expected"]["reason"] != "no-spawn":
                 assert v["expected"]["position"], v["name"]
+
+
+def _hops(event_list):
+    """The events whose one A tag is hop."""
+    return [e for e in event_list if isinstance(e.get("tags"), list)
+            and [t[1:2] for t in e["tags"] if isinstance(t, list) and t[:1] == ["A"]] == [["hop"]]]
+
+
+def _tag(event, name):
+    return next(t[1] for t in event["tags"] if t[0] == name)
+
+
+class TestResidueOpenings:
+    """What the current revision changed: hop proofs of version 2 (5.9 to 5.13)."""
+
+    def test_only_the_previous_revision_changed(self):
+        """Every vector of the previous revision is in the current file under the same name, with the same verdict
+        apart from event ids: the same validity, reason, index, position and chain length."""
+        def shape(v):
+            e = v["expected"]
+            return (e["valid"], e.get("reason"), e.get("invalid_index"), e["position"], len(e["chain"]),
+                    len(e.get("skipped", [])), e.get("open_bracket") is None)
+
+        assert set(OLD_BY_NAME) <= set(BY_NAME)
+        assert {n: shape(v) for n, v in OLD_BY_NAME.items()} == {n: shape(BY_NAME[n]) for n in OLD_BY_NAME}
+
+    def test_every_authentic_hop_is_version_2_unless_the_vector_says_otherwise(self):
+        """Hops carry proof, mn and mp; the exceptions are the listed version 1 hops, and the vectors named
+        hop-version-1-unlisted, hop-mn-missing and hop-mp-missing."""
+        for v in DOC["vectors"]:
+            for e in _hops(v["events"]):
+                if not is_authentic(e, PUBKEY) or e["id"] in LISTED:
+                    continue
+                names = [t[0] for t in e["tags"]]
+                if v["name"] in ("hop-version-1-unlisted", "hop-mn-missing", "hop-mp-missing") and e["id"] == v["expected"]["invalid_at"]:
+                    continue
+                assert "mn" in names and "mp" in names, v["name"]
+
+    def test_every_hop_on_a_valid_chain_verifies_with_the_spec_reference(self):
+        """An oracle independent of this verifier: the spec's hop-residue-reference.py (tests/fixtures, pinned in
+        tests/test_hop_residue.py) checks every unlisted hop that a valid vector's chain carries."""
+        spec = importlib.util.spec_from_file_location("hop_residue_reference", ROOT / "tests" / "fixtures" / "hop-residue-reference.py")
+        ref = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ref)  # type: ignore[union-attr]
+        checked = 0
+        for v in DOC["vectors"]:
+            if not v["expected"]["valid"]:
+                continue
+            by_id = {e["id"]: e for e in v["events"]}
+            for e in _hops([by_id[i] for i in v["expected"]["chain"]]):
+                if e["id"] in LISTED:
+                    continue
+                prev = next(t[1] for t in e["tags"] if t[0] == "e" and t[3] == "previous")
+                assert ref.verify_hop(bytes.fromhex(prev), int(_tag(e, "c"), 16), int(_tag(e, "C"), 16),
+                                      _tag(e, "proof"), _tag(e, "mn"), _tag(e, "mp")), v["name"]
+                checked += 1
+        assert checked == 28  # every unlisted hop on the chain of a valid vector
+
+    def test_the_previous_revisions_vectors_are_not_vectors_of_this_one(self):
+        """8.12: a verifier of this revision rejects the unlisted version 1 hops of the previous file, and a verifier
+        of the previous revision rejects the version 2 hops of the current one."""
+        for revision, vector in ((CHAIN_RULES_REVISION, OLD_BY_NAME["bracket-valid-then-hop"]),
+                                 (PREVIOUS_REVISION, BY_NAME["bracket-valid-then-hop"])):
+            verdict = verify_chain(vector["events"], pubkey=PUBKEY, revision=revision)
+            assert (verdict.valid, verdict.reason, verdict.invalid_index) == (False, "hop-proof", 1)
+
+    def test_without_the_test_list_a_listed_hop_is_an_unlisted_one(self):
+        """The embedded grandfathered-v1-hops.txt is empty until the census, so the vectors need their own list."""
+        vector = BY_NAME["hop-version-1-listed"]
+        verdict = verify_chain(vector["events"], pubkey=PUBKEY)
+        assert (verdict.valid, verdict.reason, verdict.invalid_index) == (False, "hop-proof", 1)
+        assert "grandfathered-v1-hops.txt" in verdict.detail
+
+    def test_the_test_list_is_exactly_the_listed_hops(self):
+        listed_vectors = {v["name"] for v in DOC["vectors"] for e in v["events"] if e.get("id") in LISTED}
+        assert listed_vectors == {n for n in BY_NAME if n.startswith("hop-version-1-listed")}
+        listed_events = [e for v in DOC["vectors"] for e in v["events"] if e.get("id") in LISTED]
+        assert {e["id"] for e in listed_events} == LISTED
+        assert all(_hops([e]) == [e] and is_authentic(e, PUBKEY) for e in listed_events)
+
+    def test_an_unknown_revision_is_refused(self):
+        with pytest.raises(ValueError, match="unknown chain rules revision"):
+            verify_chain(BY_NAME["spawn-only"]["events"], pubkey=PUBKEY, revision="2026-01-01-nothing")
 
 
 class TestVerifier:

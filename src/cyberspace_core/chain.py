@@ -1,6 +1,18 @@
 """The chain rules of CYBERSPACE_V2.md section 8.12, revision
-2026-09-28-virtual-brackets with the rulings folded in on 2026-10-07 and
-2026-10-08: which movement chains are valid and where an identity stands.
+2026-10-08-residue-openings: which movement chains are valid and where an
+identity stands.
+
+This revision is 2026-09-28-virtual-brackets, with the rulings folded in on
+2026-10-07 and 2026-10-08, and with hop proofs of version 2 (residue
+openings, 5.9 to 5.13). A hop carries the seal in its proof tag and its mn
+and mp tags, and is checked at Level 1 (8.7.1). A version 1 hop (no mn and
+no mp) is invalid unless its id is listed in grandfathered-v1-hops.txt, whose
+proof is then accepted without recomputation while everything else about it
+is checked; an unlisted one breaks the chain like any other invalid event,
+which stays frozen at its last valid position. Nothing else changed between
+the two revisions. verify_chain(revision=PREVIOUS_REVISION) still applies
+2026-09-28-virtual-brackets, under which every hop is version 1, so the
+golden vectors of both revisions can be checked.
 
 A verifier holds whatever kind 3333 events relays gave it for one pubkey, in
 no particular order. It first discards every event that is not authentic
@@ -69,8 +81,10 @@ What the walk checks:
 
 This CLI implements no optional DECK, so its recognized actions are exactly
 the base and DECK-0001 actions. The golden vectors in
-vectors/chain-rules-2026-09-28-virtual-brackets.json lock every verdict this
-module gives, for the TypeScript ports to check against.
+vectors/chain-rules-2026-10-08-residue-openings.json lock every verdict this
+module gives, and vectors/chain-rules-2026-09-28-virtual-brackets.json every
+verdict it gives under the previous revision, for the other ports to check
+against.
 """
 
 from __future__ import annotations
@@ -78,15 +92,27 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 from cyberspace_core.coords import AXIS_BITS, coord_to_xyz
 from cyberspace_core.hyperspace import Line, verify_enter_hyperspace_event
-from cyberspace_core.movement import DEFAULT_MAX_COMPUTE_HEIGHT, decode_nonce, verify_hop_event_v1, verify_sidestep_event
+from cyberspace_core.movement import (
+    DEFAULT_MAX_COMPUTE_HEIGHT,
+    MAX_VERIFY_HEIGHT,
+    decode_nonce,
+    verify_hop_event,
+    verify_hop_event_v1,
+    verify_sidestep_event,
+)
+from cyberspace_core.residue import hop_geometry, is_lower_hex, mp_length
 from cyberspace_core.ride import verify_ride_event
 from cyberspace_core.sector import coord_to_sector_id
 
-CHAIN_RULES_REVISION = "2026-09-28-virtual-brackets"
+CHAIN_RULES_REVISION = "2026-10-08-residue-openings"
+# The revision before it, still selectable with verify_chain(revision=...):
+# the same rules with hop proofs of version 1 (the 5.6 proof_hash).
+PREVIOUS_REVISION = "2026-09-28-virtual-brackets"
+REVISIONS = (PREVIOUS_REVISION, CHAIN_RULES_REVISION)
 
 MOVEMENT_KIND = 3333
 
@@ -105,8 +131,9 @@ NOT_IN_BRACKET = RECOGNIZED_ACTIONS - {"spawn", "exit-virtual"}
 REGION_MAX_HEIGHT = AXIS_BITS
 
 # The reason a chain is invalid, one code per rule. The codes, not the
-# free-text detail, are what the golden vectors lock.
-REASONS: Dict[str, str] = {
+# free-text detail, are what the golden vectors lock. The two revisions have
+# the same codes; the texts of malformed and hop-proof differ.
+_REASONS_VIRTUAL_BRACKETS: Dict[str, str] = {
     "no-spawn": "no authentic spawn event for this pubkey, so there is no chain (8.7.3 rule 1)",
     "fork": "two or more events whose e genesis names the newest spawn name the same event as e previous (each event's first e previous tag); the chain is invalid from the spawn, whatever the forking events are and whichever is valid or earlier (8.7.3)",
     "a-tag": "the event carries no A tag, more than one, or one with no value or an empty value; a bare [\"A\"] counts as an A tag (8.8)",
@@ -133,6 +160,18 @@ REASONS: Dict[str, str] = {
     "exit-wrong-entry": "an exit-virtual whose e entry names anything but the open enter-virtual (8.11.4 rule 6)",
     "exit-position": "an exit-virtual whose C is not the c of its enter-virtual (8.11.4 rule 2)",
 }
+
+REASONS_BY_REVISION: Dict[str, Dict[str, str]] = {
+    PREVIOUS_REVISION: _REASONS_VIRTUAL_BRACKETS,
+    CHAIN_RULES_REVISION: dict(
+        _REASONS_VIRTUAL_BRACKETS,
+        **{
+            "malformed": "a tag a chain rule reads is missing, repeated, valueless or ill-formed. Each of these must appear exactly once: e genesis and e previous on every event but the spawn (32-byte lowercase hex); e entry on an exit-virtual (32-byte lowercase hex); C on every recognized action and c on every recognized action but the exit-virtual (32-byte lowercase hex); proof on a hop, sidestep, enter-hyperspace or hyperjump (32-byte lowercase hex); mr (three colon-joined 32-byte lowercase hex roots), mp (non-empty) and hx, hy and hz (base-10) on a sidestep; from_height and B (base-10) and mp (non-empty) on a hyperjump; as_of (base-10) on the first ride after boarding, when it is present at all. mn (16 lowercase hex characters) and mp (lowercase hex of exactly 16 x (128 + 64 x depth) characters, the depth that the hop's c, C and e previous give it, 8.4) on a hop, and mn (16 lowercase hex characters) on a sidestep or hyperjump, may be absent (5.13, 6.16, DECK-0001 5.8) but not repeated",
+            "hop-proof": "the hop does not verify at Level 1 (8.7.1, 5.11): its price or its openings, or it lacks mn or mp; or it is a version 1 hop (no mn and no mp) whose id is not listed in grandfathered-v1-hops.txt (5.13)",
+        },
+    ),
+}
+REASONS: Dict[str, str] = REASONS_BY_REVISION[CHAIN_RULES_REVISION]
 
 
 class LineRequired(Exception):
@@ -456,6 +495,9 @@ class _Bracket:
 class _Walk:
     line: Optional[Line]
     max_compute_height: int
+    revision: str = CHAIN_RULES_REVISION
+    listed_v1_hops: Optional[FrozenSet[str]] = None  # None: grandfathered-v1-hops.txt as embedded
+    max_verify_height: int = MAX_VERIFY_HEIGHT
     position: str = ""
     lookback: Dict[str, Any] = field(default_factory=dict)  # the recognized action that stands before the next one
     bracket: Optional[_Bracket] = None
@@ -552,8 +594,22 @@ class _Walk:
             bad = _require(event, (("proof", _is_hex32),))
             if bad:
                 return bad
-            # Revision 2026-09-28-virtual-brackets: a hop's proof is the 5.6 proof_hash.
-            failures = verify_hop_event_v1(event, max_compute_height=self.max_compute_height)
+            if self.revision == PREVIOUS_REVISION:
+                # Revision 2026-09-28-virtual-brackets: a hop's proof is the 5.6 proof_hash.
+                failures = verify_hop_event_v1(event, max_compute_height=self.max_compute_height)
+            else:
+                # 8.4, 8.8: mn and mp are read once each, mp at the width the hop's depth gives it.
+                # Either may be absent here: a listed version 1 hop may lack both (5.13), and on an
+                # unlisted hop a missing one fails Level 1 below, as a missing mn on a sidestep does.
+                prev = _first_e(event, "previous")
+                depth = hop_geometry(bytes.fromhex(prev), int(c, 16), int(C, 16)).depth  # type: ignore[arg-type]
+                bad = _at_most_once(event, "mn", lambda v: is_lower_hex(v, 16))
+                bad = bad or _at_most_once(event, "mp", lambda v: is_lower_hex(v, mp_length(depth)))
+                if bad:
+                    return bad
+                # 8.7.1 Level 1, or 5.13 for a hop whose id is on the list (the id is the
+                # event's own NIP-01 hash: every event on the chain is authentic).
+                failures = verify_hop_event(event, listed=self.listed_v1_hops, max_verify_height=self.max_verify_height)
             if failures:
                 return "hop-proof", "; ".join(failures)
         elif action == "sidestep":
@@ -633,20 +689,29 @@ def verify_chain(
     *,
     pubkey: Optional[str] = None,
     line: Optional[Line] = None,
+    revision: str = CHAIN_RULES_REVISION,
+    listed_v1_hops: Optional[FrozenSet[str]] = None,
+    max_verify_height: int = MAX_VERIFY_HEIGHT,
     max_compute_height: int = DEFAULT_MAX_COMPUTE_HEIGHT,
 ) -> ChainVerdict:
     """Discard inauthentic events, resolve the identity's active chain
     (8.7.3), reject a fork, and verify the chain under the chain rules of
-    revision CHAIN_RULES_REVISION.
+    `revision`: CHAIN_RULES_REVISION by default, or PREVIOUS_REVISION.
 
     `pubkey` defaults to the one pubkey among the kind 3333 events. Every
     event must be signed: an unsigned or wrongly signed event is not
     authentic and is discarded even if it was never published (8.2), so an
     unsigned local chain resolves to no chain at all. `line` supplies
     Bitcoin's block data for rides, and LineRequired is raised when a ride is
-    met without it. A hop taller than `max_compute_height` raises ValueError.
+    met without it. `listed_v1_hops` replaces grandfathered-v1-hops.txt (as
+    embedded in cyberspace_core.grandfathered), which is what the golden
+    vectors do with their own test list. A hop taller than `max_verify_height`
+    raises ValueError (residue.HopTooTall); under PREVIOUS_REVISION, whose
+    hops are recomputed in full, one taller than `max_compute_height` does.
     Neither exception is a verdict: the rules cannot be applied without the
     data or the work."""
+    if revision not in REVISIONS:
+        raise ValueError(f"unknown chain rules revision {revision!r}; this verifier implements {', '.join(REVISIONS)}")
     events = list(events)
     if pubkey is None:
         pubkeys = {ev.get("pubkey") for ev in events if isinstance(ev, dict) and ev.get("kind") == MOVEMENT_KIND}
@@ -657,13 +722,13 @@ def verify_chain(
     chain = resolution.chain
     ids = tuple(ev["id"] for ev in chain)
     if not chain:
-        return ChainVerdict(valid=False, reason="no-spawn", detail=REASONS["no-spawn"])
+        return ChainVerdict(valid=False, reason="no-spawn", detail=REASONS["no-spawn"], revision=revision)
     if resolution.fork:
         return ChainVerdict(
             valid=False, chain=ids, position=pubkey, reason="fork", invalid_at=ids[0], invalid_index=0,
-            detail=f"{', '.join(resolution.fork)} all name {ids[-1]} as previous",
+            detail=f"{', '.join(resolution.fork)} all name {ids[-1]} as previous", revision=revision,
         )
-    walk = _Walk(line, max_compute_height)
+    walk = _Walk(line, max_compute_height, revision, listed_v1_hops, max_verify_height)
     for index, event in enumerate(chain):
         before = walk.held() or pubkey  # an invalid spawn leaves the identity at its spawn coordinate (3.2)
         failure = walk.step(index, event)
@@ -672,6 +737,7 @@ def verify_chain(
             assert reason in REASONS, reason
             return ChainVerdict(
                 valid=False, chain=ids, position=before, reason=reason, invalid_at=event["id"], invalid_index=index, detail=detail,
+                revision=revision,
             )
     return ChainVerdict(
         valid=True,
@@ -680,4 +746,5 @@ def verify_chain(
         head=ids[-1],
         open_bracket=walk.bracket.entry_id if walk.bracket else None,
         skipped=tuple(walk.skipped),
+        revision=revision,
     )
