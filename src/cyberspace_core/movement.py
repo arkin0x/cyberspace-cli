@@ -701,10 +701,10 @@ def verify_hop_event_v1(event: Dict[str, Any], *, max_compute_height: int = DEFA
     revision 2026-09-28-virtual-brackets define it. Returns the failed checks;
     empty means valid.
 
-    The resolver of cyberspace_core.chain still implements that revision and
-    calls this; it moves to verify_hop_event (residue openings, revision
-    2026-10-08-residue-openings) together with CHAIN_RULES_REVISION and the
-    regenerated chain-rules vectors. Nothing else should call it.
+    cyberspace_core.chain calls this only when asked for that revision
+    (verify_chain(revision=PREVIOUS_REVISION), which checks the golden vectors
+    of 2026-09-28-virtual-brackets); at 2026-10-08-residue-openings it calls
+    verify_hop_event. The 5.13 census audit recomputes the same proof_hash.
 
     The proof is recomputed in full: the Cantor root of every axis at its LCA
     height, the temporal axis from the terrain K of the destination and the

@@ -62,6 +62,7 @@ class Limits:
     deposit_max_msats: int
     invoice_ttl_seconds: int
     local_compute: bool = False
+    hop_proof_version: Optional[int] = None  # absent before HOSAKA served version 2
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> "Limits":
@@ -73,6 +74,7 @@ class Limits:
             deposit_max_msats=int(d.get("deposit_max_msats", 0)),
             invoice_ttl_seconds=int(d.get("invoice_ttl_seconds", 3600)),
             local_compute=bool(d.get("local_compute", False)),
+            hop_proof_version=d["hop_proof_version"] if type(d.get("hop_proof_version")) is int else None,
         )
 
 

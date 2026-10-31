@@ -582,7 +582,7 @@ class TestCloudVersion2:
         (x1, y1, z1, _), (x2, y2, z2, plane) = coord_to_xyz(c), coord_to_xyz(C)
         proof = R.prove_hop(prev, c, C, workers=1)
         res = {"seal": proof.proof, "mn": proof.mn, "mp": proof.mp, "K": proof.terrain_k, "max_height": proof.geometry.h_max}
-        return res, (x1, y1, z1, x2, y2, z2), dict(plane=plane, previous_event_id_hex=v["previous_event_id"], local_ceiling=8)
+        return res, (x1, y1, z1, x2, y2, z2), dict(plane=plane, previous_event_id_hex=v["previous_event_id"])
 
     def test_accepts_and_builds_a_version_2_hop(self):
         res, xyz, kw = self._result()
@@ -641,34 +641,119 @@ class TestMoveCommand:
             assert REF.verify_hop(bytes.fromhex(prev["id"]), int(tag["c"], 16), int(tag["C"], 16), tag["proof"], tag["mn"], tag["mp"])
 
 
-class TestCloudVersion1StillWorks:
-    """Until HOSAKA switches (at once, with no result carrying both shapes), a
-    result without seal, mn and mp is a version 1 result and builds a version 1 hop."""
+def _version_1_result(x1, y1, z1, x2, y2, z2, prev, **extra):
+    """The shape HOSAKA returned before version 2: hop_n and the Cantor envelopes, no seal, mn or mp."""
+    from cyberspace_core.cantor import int_to_bytes_be_min, sha256
 
-    def test_version_1_result(self):
-        from cyberspace_core.cantor import int_to_bytes_be_min, sha256
+    proof = compute_hop_proof(x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=prev, max_compute_height=12)
 
-        x1, y1, z1, x2, y2, z2 = 1000, 2000, 3000, 1000 + (1 << 9), 2000, 3001
-        prev = "ab" * 32
-        proof = compute_hop_proof(x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=prev, max_compute_height=12)
+    def env(n):
+        secret = sha256(int_to_bytes_be_min(n))
+        return {"public_proof": sha256(secret).hex(), "secret_key": secret.hex()}
 
-        def env(n):
-            secret = sha256(int_to_bytes_be_min(n))
-            return {"public_proof": sha256(secret).hex(), "secret_key": secret.hex()}
+    res = {"hop_n": env(proof.hop_n), "region_n": env(proof.region_n), "cantor_x": env(proof.cantor_x),
+           "cantor_y": env(proof.cantor_y), "cantor_z": env(proof.cantor_z), "cantor_t": env(proof.cantor_t),
+           "K": proof.terrain_k, "max_height": max(R.find_lca_height(a, b) for a, b in ((x1, x2), (y1, y2), (z1, z2)))}
+    res.update(extra)
+    return res
 
-        res = {"hop_n": env(proof.hop_n), "region_n": env(proof.region_n), "cantor_x": env(proof.cantor_x),
-               "cantor_y": env(proof.cantor_y), "cantor_z": env(proof.cantor_z), "cantor_t": env(proof.cantor_t),
-               "K": proof.terrain_k, "max_height": max(R.find_lca_height(a, b) for a, b in ((x1, x2), (y1, y2), (z1, z2)))}
-        assert verify_cloud_hop(res, x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=prev, local_ceiling=12) == []
-        hop = cloud_hop_from_result({"id": "job", "result": res}, x1, y1, z1, x2, y2, z2, plane=0)
-        assert (hop.proof, hop.mn, hop.mp) == (proof.proof_hash, None, None)
-        assert hop.lookup_id == res["region_n"]["public_proof"] and hop.terrain_k == proof.terrain_k
-        ev = make_hop_event(pubkey_hex=PUB, created_at=1, genesis_event_id=GENESIS, previous_event_id=prev,
-                            prev_coord_hex=xyz_to_coord(x1, y1, z1).to_bytes(32, "big").hex(),
-                            coord_hex=xyz_to_coord(x2, y2, z2).to_bytes(32, "big").hex(),
-                            proof_hex=hop.proof, nonce_hex=hop.mn, openings_hex=hop.mp)
-        assert not any(t[0] in ("mn", "mp") for t in ev["tags"])
-        assert verify_hop_event_v1(ev) == []
+
+class TestCloudVersion1IsRefused:
+    """cli-2: chain rules revision 2026-10-08-residue-openings rejects every unlisted version 1 hop, and a hop
+    signed now is never listed, so a version 1 HOSAKA result is refused outright (no fallback on which fields are
+    present), and a HOSAKA whose limits do not report hop_proof_version 2 is not even quoted."""
+
+    XYZ = (1000, 2000, 3000, 1000 + (1 << 9), 2000, 3001)
+
+    def test_a_version_1_result_is_refused_with_the_reason(self):
+        from cyberspace_cli.cloud_verify import straddling_v1_hop
+
+        res = _version_1_result(*self.XYZ, "ab" * 32)
+        words = straddling_v1_hop(res, "job-1234567890")
+        assert words and "grandfathered-v1-hops.txt" in words and "Nothing was signed and you did not move." in words
+        assert "eligible for a refund to your HOSAKA balance" in words and "job-1234567890" in words
+        assert "will refund" not in words  # the operator runs refunds; the CLI promises none
+        assert verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex="ab" * 32, job_id="job-1234567890") == [words]
+
+    def test_only_a_version_1_hop_result_is_straddling(self):
+        from cyberspace_cli.cloud_verify import straddling_v1_hop
+
+        res = _version_1_result(*self.XYZ, "ab" * 32)
+        assert straddling_v1_hop(dict(res, seal="ab" * 32), "j") is None  # a partial version 2 result: failed checks instead
+        assert straddling_v1_hop({"seal": "ab" * 32, "mn": "0" * 16, "mp": "00"}, "j") is None
+        for junk in ({}, None, ["hop_n"], "hop_n"):
+            assert straddling_v1_hop(junk, "j") is None
+        assert "this job" in straddling_v1_hop(res, None)
+
+    @pytest.mark.parametrize("field,value", [("K", "abc"), ("max_height", "x"), ("max_height", None), ("region_n", "x"),
+                                             ("cantor_x", {"public_proof": "00" * 32, "secret_key": "zz"}), ("hop_n", {"public_proof": None})])
+    def test_every_version_1_shape_is_refused_whatever_it_holds(self, field, value):
+        from cyberspace_cli.cloud_verify import straddling_v1_hop
+
+        res = dict(_version_1_result(*self.XYZ, "ab" * 32), **{field: value})
+        assert verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex="ab" * 32) == [straddling_v1_hop(res, None)]
+
+    def test_an_empty_result_is_a_failure_not_a_version_1_result(self):
+        failures = verify_cloud_hop({}, *self.XYZ, plane=0, previous_event_id_hex="ab" * 32)
+        assert failures and not any("refund" in f for f in failures) and all("missing" in f for f in failures)
+
+    def test_a_partial_version_2_result_is_a_failure_not_a_version_1_result(self):
+        res = _version_1_result(*self.XYZ, "ab" * 32, seal="ab" * 32)
+        failures = verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex="ab" * 32)
+        assert failures and not any("refund" in f for f in failures) and any(f.startswith("mn") for f in failures)
+
+    def test_finish_cloud_job_records_the_refusal_with_the_job(self, tmp_path, monkeypatch):
+        from cyberspace_cli import cloud_jobs
+        from cyberspace_cli.cloud_move import CloudVerificationFailed, finish_cloud_job
+        from cyberspace_cli.cloud_verify import straddling_v1_hop
+
+        monkeypatch.setenv("CYBERSPACE_HOME", str(tmp_path))
+        res = _version_1_result(*self.XYZ, "ab" * 32)
+        cloud_jobs.record({"job_id": "j-straddle", "action": "hop", "state": "computing"})
+        with pytest.raises(CloudVerificationFailed) as e:
+            finish_cloud_job({"job_id": "j-straddle", "action": "hop"}, {"id": "j-straddle", "result": res},
+                             *self.XYZ, plane2=0, previous_event_id="ab" * 32, echo=lambda s: None)
+        assert e.value.failures == [straddling_v1_hop(res, "j-straddle")]
+        assert cloud_jobs.get("j-straddle")["state"] == "rejected"
+
+    @pytest.mark.parametrize("version", [None, 1, "2", True])
+    def test_a_hosaka_without_hop_proof_version_2_is_not_quoted(self, version, monkeypatch):
+        from cyberspace_cli import cloud_move
+        from cyberspace_cli.hosaka import Limits
+
+        calls = []
+        limits = {"max_hop_height": 25, "max_sidestep_height": 29}
+        if version is not None:
+            limits["hop_proof_version"] = version
+
+        class FakeClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def limits(self):
+                calls.append("limits")
+                return Limits.from_dict(limits)
+
+            def __getattr__(self, name):  # quote, submit, anything that could cost money
+                raise AssertionError(f"{name} called for a hop that should have been refused")
+
+        monkeypatch.setattr(cloud_move, "HosakaClient", FakeClient)
+        x1, y1, z1, x2, y2, z2 = self.XYZ
+        with pytest.raises(cloud_move.CloudDeclined, match="hop proof version 2"):
+            cloud_move.run_cloud_move(
+                privkey_hex="22" * 32, pubkey_hex=PUB, chain_label="t", opts=cloud_move.CloudOptions(mode="auto", api_url="http://unused"),
+                x1=x1, y1=y1, z1=z1, x2=x2, y2=y2, z2=z2, plane2=0, previous_event_id="ab" * 32,
+                echo=lambda s: None, confirm=lambda q: True,
+            )
+        assert calls == ["limits"]
+
+    def test_limits_read_hop_proof_version(self):
+        from cyberspace_cli.hosaka import Limits
+
+        base = {"max_hop_height": 25, "max_sidestep_height": 29}
+        assert Limits.from_dict(dict(base, hop_proof_version=2)).hop_proof_version == 2
+        assert Limits.from_dict(base).hop_proof_version is None
+        assert Limits.from_dict(dict(base, hop_proof_version=True)).hop_proof_version is None
 
 
 
@@ -698,7 +783,7 @@ class TestCloudHardening:
             def limits(self):
                 calls.append("limits")
                 return Limits(max_hop_height=40, max_sidestep_height=40, hop_min_msats=0, deposit_min_msats=0,
-                              deposit_max_msats=0, invoice_ttl_seconds=3600)
+                              deposit_max_msats=0, invoice_ttl_seconds=3600, hop_proof_version=2)
 
             def __getattr__(self, name):  # quote, submit, anything that could cost money
                 raise AssertionError(f"{name} called for a hop that should have been refused")
@@ -708,7 +793,7 @@ class TestCloudHardening:
         with pytest.raises(cloud_move.CloudDeclined, match="verification ceiling"):
             cloud_move.run_cloud_move(
                 privkey_hex="22" * 32, pubkey_hex=PUB, chain_label="t", opts=cloud_move.CloudOptions(mode="auto", api_url="http://unused"),
-                x1=0, y1=0, z1=0, x2=(1 << (h - 1)), y2=0, z2=0, plane2=0, previous_event_id="ab" * 32, local_ceiling=16,
+                x1=0, y1=0, z1=0, x2=(1 << (h - 1)), y2=0, z2=0, plane2=0, previous_event_id="ab" * 32,
                 echo=lambda s: None, confirm=lambda q: True,
             )
         assert calls == ["limits"]
@@ -718,7 +803,7 @@ class TestCloudHardening:
 
         res, prev = self._v2()
         monkeypatch.setattr(cloud_verify, "MAX_VERIFY_HEIGHT", 8)
-        failures = verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex=prev, local_ceiling=8)
+        failures = verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex=prev)
         assert failures and "not checked" in failures[0]
 
     @pytest.mark.parametrize("mutate", [
@@ -728,26 +813,7 @@ class TestCloudHardening:
     ], ids=["K-str", "K-none", "K-bool", "K-list", "region-str", "region-key-not-hex", "region-proof-int", "seal-list", "mp-none"])
     def test_junk_version_2_results_are_failures(self, mutate):
         res, prev = self._v2()
-        assert verify_cloud_hop(mutate(res), *self.XYZ, plane=0, previous_event_id_hex=prev, local_ceiling=8)
-
-    @pytest.mark.parametrize("field,value", [("K", "abc"), ("max_height", "x"), ("max_height", None), ("region_n", "x"),
-                                             ("cantor_x", {"public_proof": "00" * 32, "secret_key": "zz"}), ("hop_n", {"public_proof": None})])
-    def test_junk_version_1_results_are_failures(self, field, value):
-        from cyberspace_core.cantor import int_to_bytes_be_min, sha256
-
-        x1, y1, z1, x2, y2, z2 = self.XYZ
-        prev = "ab" * 32
-        proof = compute_hop_proof(x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=prev, max_compute_height=12)
-
-        def env(n):
-            secret = sha256(int_to_bytes_be_min(n))
-            return {"public_proof": sha256(secret).hex(), "secret_key": secret.hex()}
-
-        res = {"hop_n": env(proof.hop_n), "region_n": env(proof.region_n), "cantor_x": env(proof.cantor_x),
-               "cantor_y": env(proof.cantor_y), "cantor_z": env(proof.cantor_z), "cantor_t": env(proof.cantor_t),
-               "K": proof.terrain_k, "max_height": 11}
-        assert verify_cloud_hop(res, *self.XYZ, plane=0, previous_event_id_hex=prev, local_ceiling=12) == []
-        assert verify_cloud_hop(dict(res, **{field: value}), *self.XYZ, plane=0, previous_event_id_hex=prev, local_ceiling=12)
+        assert verify_cloud_hop(mutate(res), *self.XYZ, plane=0, previous_event_id_hex=prev)
 
     @pytest.mark.parametrize("action,result", [("hop", ["not", "an", "object"]), ("hop", {"seal": "ab" * 32, "mn": "0" * 16, "mp": "0", "region_n": 7}),
                                                ("sidestep", {"lca_heights": [1, 0, 0], "mn": "0" * 16, "bases": ["junk", 0, 0]}),
@@ -760,7 +826,7 @@ class TestCloudHardening:
         cloud_jobs.record({"job_id": "j", "action": action, "state": "computing"})
         with pytest.raises(CloudVerificationFailed):
             finish_cloud_job({"job_id": "j", "action": action}, {"id": "j", "result": result}, *self.XYZ,
-                             plane2=0, previous_event_id="ab" * 32, local_ceiling=8, echo=lambda s: None)
+                             plane2=0, previous_event_id="ab" * 32, echo=lambda s: None)
         assert cloud_jobs.get("j")["state"] == "rejected"
 
 

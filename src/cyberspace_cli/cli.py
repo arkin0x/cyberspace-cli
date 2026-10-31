@@ -2596,7 +2596,6 @@ def move(
                     opts=cloud_opts,
                     x1=x1, y1=y1, z1=z1, x2=x2, y2=y2, z2=z2, plane2=plane2,
                     previous_event_id=prev_event_id,
-                    local_ceiling=max_compute_height,
                     echo=typer.echo,
                     confirm=lambda q: typer.confirm(q, default=False),
                 )

@@ -33,10 +33,6 @@ PK_HEX = SK.public_key.format(compressed=True)[1:].hex()
 PREV = "ab" * 32
 
 
-def dsha(n: int) -> str:
-    return sha256(sha256(int_to_bytes_be_min(n))).hex()
-
-
 class TestNip98(unittest.TestCase):
     def test_event_is_bound_and_signed(self):
         url = "https://api.example/api/v1/hop?x=1"
@@ -178,24 +174,16 @@ class TestVerifierAgainstOracles(unittest.TestCase):
             "cantor_t": env(proof.cantor_t), "K": proof.terrain_k, "max_height": max(heights),
         }, proof
 
-    def test_hop_accepts_reference_and_rejects_mutations(self):
+    def test_a_version_1_hop_result_is_refused(self):
+        """Chain rules revision 2026-10-08-residue-openings: even a correct version 1 result would sign an invalid
+        hop, so it is refused outright. Version 2 results: tests/test_hop_residue.py TestCloudVersion2."""
+        from cyberspace_cli.cloud_verify import straddling_v1_hop
+
         x1, y1, z1 = 1000, 2000, 3000
         x2, y2, z2 = 1000 + (1 << 9), 2000, 3001
-        res, proof = self._hop_result(x1, y1, z1, x2, y2, z2)
-        ok = verify_cloud_hop(res, x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=PREV, local_ceiling=12)
-        self.assertEqual(ok, [])
-        # below the local ceiling the axis root is recomputed and compared
-        bad = json.loads(json.dumps(res)); bad["cantor_x"]["public_proof"] = "00" * 32; bad["cantor_x"]["secret_key"] = None
-        self.assertTrue(any("cantor_x" in f for f in verify_cloud_hop(bad, x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=PREV, local_ceiling=12)))
-        bad = json.loads(json.dumps(res)); bad["K"] = res["K"] + 1
-        self.assertTrue(any(f.startswith("K") for f in verify_cloud_hop(bad, x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=PREV, local_ceiling=12)))
-        bad = json.loads(json.dumps(res)); bad["cantor_t"]["public_proof"] = dsha(proof.cantor_t + 1); bad["cantor_t"]["secret_key"] = None
-        self.assertTrue(any("cantor_t" in f for f in verify_cloud_hop(bad, x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=PREV, local_ceiling=12)))
-        # a different previous event changes the temporal root
-        self.assertTrue(verify_cloud_hop(res, x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex="cd" * 32, local_ceiling=12))
-        # secret_key must hash to public_proof
-        bad = json.loads(json.dumps(res)); bad["region_n"]["secret_key"] = "11" * 32
-        self.assertTrue(any("region_n" in f for f in verify_cloud_hop(bad, x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=PREV, local_ceiling=12)))
+        res, _ = self._hop_result(x1, y1, z1, x2, y2, z2)
+        self.assertEqual(verify_cloud_hop(res, x1, y1, z1, x2, y2, z2, plane=0, previous_event_id_hex=PREV),
+                         [straddling_v1_hop(res, None)])
 
     def test_sidestep_accepts_reference_and_rejects_mutations(self):
         x1, y1, z1 = (1 << 20) + 5, 44, 44

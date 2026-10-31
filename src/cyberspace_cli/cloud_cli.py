@@ -257,8 +257,7 @@ def cloud_resume(job_id: str, api_url: Optional[str] = typer.Option(None, "--api
     try:
         obj = finish_cloud_job(
             rec, done, v1["x"], v1["y"], v1["z"], v2["x"], v2["y"], v2["z"],
-            plane2=int(v2.get("plane", 0)), previous_event_id=rec["previous_event_id"],
-            local_ceiling=int(load_config().default_max_lca_height), echo=typer.echo,
+            plane2=int(v2.get("plane", 0)), previous_event_id=rec["previous_event_id"], echo=typer.echo,
         )
     except CloudVerificationFailed as e:
         typer.echo("HOSAKA result failed verification; nothing appended:", err=True)
