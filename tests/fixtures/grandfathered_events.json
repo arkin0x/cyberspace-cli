@@ -1,5 +1,5 @@
 {
- "source": "kind 3333 events listed in grandfathered-v2-sidesteps.txt and decks/grandfathered-v1-hyperjumps.txt (arkin0x/cyberspace 7f724d5), fetched from wss://cyberspace.nostr1.com on 2026-09-28; 331059b3... and d457ac3a..., the other two listed zero-length rides, fetched from the same relay on 2026-10-06",
+ "source": "kind 3333 events listed in grandfathered-v2-sidesteps.txt and decks/grandfathered-v1-hyperjumps.txt (arkin0x/cyberspace 7f724d5), fetched from wss://cyberspace.nostr1.com on 2026-09-28; 331059b3... and d457ac3a..., the other two listed zero-length rides, fetched from the same relay on 2026-10-06; the hops listed in grandfathered-v1-hops.txt, fetched from the same relay on 2026-10-31 for census 1",
  "sidesteps": [
   {
    "kind": 3333,
@@ -492,6 +492,120 @@
    ],
    "content": "",
    "sig": "27fc1c167c41643b858573eb6846892aa2c0282de77dae8539d09528d21a684b2e23bc0b9ea0e56634616ee70b4c3c4cf39903048a574a85a194cab2a777d5e4"
+  }
+ ],
+ "hops": [
+  {
+   "content": "",
+   "created_at": 1787677043,
+   "id": "39ab7bb9211e23dd1538814e2a54ecfa587cfd6dab8d08fb077c0c50a153017f",
+   "kind": 3333,
+   "pubkey": "1ee7928f70d59af387dd3d34a9efdfa5763d85a66f2e1f3a456ee7bac13976be",
+   "sig": "0922a7bb7ef7a6dd4b47fa4b9cc75e52af095653b079422d2afd3c4da23964063dc0a51206a5d61ad8a99f59a2e243af59a1895ce36b8482e88aa8c23d5843c5",
+   "tags": [
+    [
+     "A",
+     "hop"
+    ],
+    [
+     "e",
+     "63a589a72d27932208bdb02b3f04a764611a294ee7d8dff08b26316798477890",
+     "",
+     "genesis"
+    ],
+    [
+     "e",
+     "52ebcb6407d5c8acc5e9ca6ed87e0db108d2aa4a0b6db6d5e2c26e1f0602732c",
+     "",
+     "previous"
+    ],
+    [
+     "c",
+     "1ee7928f70d59af387dd3d34a9efdfa5763d85a66f2e1f3a45ece69b85d808a6"
+    ],
+    [
+     "C",
+     "1ee7928f70d59af387dd3d34a9efdfa5763d85a66f2e1f3a45ece69ba3654d03"
+    ],
+    [
+     "proof",
+     "41db8b143ffb5c0eed614a83dfc86be782c169b44aeee94795855441d3ca3a29"
+    ],
+    [
+     "X",
+     "16423383303375297"
+    ],
+    [
+     "Y",
+     "13435117217226012"
+    ],
+    [
+     "Z",
+     "14683551116553655"
+    ],
+    [
+     "S",
+     "16423383303375297-13435117217226012-14683551116553655"
+    ]
+   ]
+  },
+  {
+   "content": "",
+   "created_at": 1792768331,
+   "id": "0172f822ab3e190a1399b2757e278fb1d255e573e29ad04a2d7965b7c22f7297",
+   "kind": 3333,
+   "pubkey": "e8ed3798c6ffebffa08501ac39e271662bfd160f688f94c45d692d8767dd345a",
+   "sig": "275ee53edcd18bd66364a91d0a46f7520c8ccdabf346fa53eea694557f3ce54d1784bd64aa439ca09357451bd7b6779a14feebdd530a60d55fc12241e1a1e0f7",
+   "tags": [
+    [
+     "A",
+     "hop"
+    ],
+    [
+     "e",
+     "3b21527bede73df86986ddcd4ec3e8344f27fdebda8b9607468211676cfc0e4b",
+     "",
+     "genesis"
+    ],
+    [
+     "e",
+     "7d90a17082527270e9d3c360f4bc1cbd433c3c4322ff84db146f712712d18231",
+     "",
+     "previous"
+    ],
+    [
+     "c",
+     "cfe6b74cab677b52d850ac659d54266a3a4d7bb48270234d2fec836881d08175"
+    ],
+    [
+     "C",
+     "cfe6b74cab677b52d850ac659d54266a3a4d7bb48270234d2fec83688199a5f7"
+    ],
+    [
+     "proof",
+     "d1f5db59f8c7df5fa42a949c3f7b6193ac4a8cb2168e5038e81bf8a7449e7aad"
+    ],
+    [
+     "X",
+     "25200497907045552"
+    ],
+    [
+     "Y",
+     "36003453695486078"
+    ],
+    [
+     "Z",
+     "14837699276459992"
+    ],
+    [
+     "S",
+     "25200497907045552-36003453695486078-14837699276459992"
+    ],
+    [
+     "client",
+     "ONOSENDAI"
+    ]
+   ]
   }
  ]
 }

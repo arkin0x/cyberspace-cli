@@ -33,6 +33,19 @@ REFERENCE_PATH = FIXTURES / "hop-residue-reference.py"
 # arkin0x/cyberspace master: #83 added the vectors; #50 (8b45430) is the reference they were written from.
 SPEC_COMMIT = "06c287332651f99b75e609b7b098e165993750fd"
 REFERENCE_COMMIT = "8b45430af330f6e93ee763716d33868706cc2879"
+# The spec commit the embedded lists came from, the size of the version 1 hop list, and the hops census 1 audited and refused.
+LIST_COMMIT = "9210d6dff16637079c8339a9c957c60cbd3a744e"
+LIST_SIZE = 2658
+AUDIT_FAILURES = (
+    "66851aaed85fa1dda64d513fb1f2541a7e9201a475d341f4ea395f4c9d9b10fe",
+    "5a96457cf9f6015c1023a330205f9d111ce578d302d560a25eee77b766c4df12",
+    "fe1d6384436c42c6d0bc436686b0a293d805244783b1d6f575e5fbca9d1c56db",
+    "6a1cdf302fdd4dabdbadeaba6ac93a276c6fb9fc1fa44404250fa1b97b76b7ea",
+    "17a1210559063ea105dd52f3e3972f8fd3fb4241b0d1368e5c73822ea7c9fbc7",
+    "93c079360fcf19cbf02c1c69ca7bd2b51dcae47d0eddfdcb143ef5a2b33af37d",
+    "8a24c20a74102aa82f73a9c75cb55609ab8c8ea9050555e80a9f35b530cd3973",
+    "97c4de2ffcda3e1ccfd433fc8862ba97c20572d9a8c40f34621c20aa9a5ed60a",
+)
 VECTORS_SHA256 = "29b2222d3768b173b82887d9fb992cda23044ef84cfcfca48dd049766c7c4d33"
 REFERENCE_SHA256 = "cb42f244b998762adbae4007ea86106eea7685d88cfe847a28adcc92b504a86d"
 
@@ -52,6 +65,7 @@ def _load(name: str, path: Path):
 
 REF = _load("hop_residue_reference", REFERENCE_PATH)
 GEN = _load("gen_grandfathered", ROOT / "scripts" / "gen_grandfathered.py")
+LISTED_HOPS = json.loads((FIXTURES / "grandfathered_events.json").read_text(encoding="utf-8"))["hops"]
 
 
 def _hop(v: Dict[str, Any]):
@@ -450,9 +464,20 @@ class TestGrandfatheredV1:
         assert REF.proof_hash_v1(bytes(32), int(GOLDEN["c"], 16), int(GOLDEN["C"], 16)) == v1.proof_hash
         assert verify_hop_event_v1(_signed_v1_hop()) == []
 
-    def test_the_embedded_list_is_empty_until_the_census(self):
-        assert grandfathered.GRANDFATHERED_V1_HOPS == frozenset()
+    def test_the_embedded_list_is_the_census(self):
+        assert len(grandfathered.GRANDFATHERED_V1_HOPS) == LIST_SIZE
+        assert all(eid not in grandfathered.GRANDFATHERED_V1_HOPS for eid in AUDIT_FAILURES)
+        # A version 1 hop that is not listed is refused.
         assert verify_hop_event(_signed_v1_hop()) == ["proof: a version 1 hop (no mn and no mp tag) not listed in grandfathered-v1-hops.txt (5.13)"]
+
+    @pytest.mark.parametrize("ev", LISTED_HOPS, ids=[e["id"][:12] for e in LISTED_HOPS])
+    def test_a_real_listed_hop(self, ev):
+        assert ev["id"] in grandfathered.GRANDFATHERED_V1_HOPS
+        assert verify_hop_event(ev) == []
+        # Its proof really is the section 5.6 proof_hash, recomputed from its own tags.
+        assert verify_hop_event_v1(ev) == []
+        # The same id on any other content is not on the list.
+        assert verify_hop_event(dict(ev, content="x")) != []
 
     def test_listing_is_by_the_nip01_id(self, monkeypatch):
         ev = _signed_v1_hop()
@@ -505,8 +530,8 @@ class TestListFormat:
 
     def test_the_spec_lists_parse(self):
         hops_text = (FIXTURES.parent.parent / "src" / "cyberspace_core" / "grandfathered.py").read_text()
-        assert "grandfathered-v1-hops.txt (0 ids)" in hops_text
-        assert grandfathered.SPEC_COMMIT == SPEC_COMMIT
+        assert f"grandfathered-v1-hops.txt ({LIST_SIZE} ids)" in hops_text
+        assert grandfathered.SPEC_COMMIT == LIST_COMMIT
 
 
 class TestBuilder:
