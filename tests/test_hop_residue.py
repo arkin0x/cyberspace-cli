@@ -34,7 +34,7 @@ REFERENCE_PATH = FIXTURES / "hop-residue-reference.py"
 SPEC_COMMIT = "06c287332651f99b75e609b7b098e165993750fd"
 REFERENCE_COMMIT = "8b45430af330f6e93ee763716d33868706cc2879"
 # The spec commit the embedded lists came from, the size of the version 1 hop list, and the hops census 1 audited and refused.
-LIST_COMMIT = "8a3fc21a4e1ee4cd02262c0696a713f556cb04a2"
+LIST_COMMIT = "9210d6dff16637079c8339a9c957c60cbd3a744e"
 LIST_SIZE = 2658
 AUDIT_FAILURES = (
     "66851aaed85fa1dda64d513fb1f2541a7e9201a475d341f4ea395f4c9d9b10fe",
