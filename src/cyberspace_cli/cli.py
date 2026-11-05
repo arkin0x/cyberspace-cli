@@ -239,7 +239,12 @@ def _parse_encrypted_payload_tag(event: dict) -> Tuple[str, bytes]:
     return alg, payload
 
 
-DEFAULT_HYPERJUMP_RELAY = "wss://cyberspace.nostr1.com"
+# The canonical relay since 2026-11-05: the owner's own relay, holding the full
+# verified history copied from cyberspace.nostr1.com.
+DEFAULT_HYPERJUMP_RELAY = "wss://relay.onosendai.tech"
+# The former canonical relay, asked second for about two weeks after the
+# switch: only when the default relay was used and returned nothing.
+SECOND_HYPERJUMP_RELAY = "wss://cyberspace.nostr1.com"
 HYPERJUMP_KIND = 321
 SECTOR_BITS = 30
 
@@ -247,7 +252,8 @@ SECTOR_BITS = 30
 def _nak_env() -> Dict[str, str]:
     """Environment for nak: sign NIP-42 AUTH with the local identity when one exists.
 
-    cyberspace.nostr1.com requires AUTH for reads since 2026-08-23. The key is
+    cyberspace.nostr1.com requires AUTH for reads since 2026-08-23
+    (relay.onosendai.tech does not, and ignores an unneeded AUTH). The key is
     passed through the environment (never argv) so it does not show up in `ps`.
     An explicit NOSTR_SECRET_KEY in the caller's environment wins.
     """
@@ -262,7 +268,36 @@ def _nak_env() -> Dict[str, str]:
     return env
 
 
+def _same_relay(a: str, b: str) -> bool:
+    return a.strip().lower().rstrip("/") == b.strip().lower().rstrip("/")
+
+
 def _nak_req_events(
+    *,
+    relay: str,
+    kind: int,
+    tags: Dict[str, List[str]],
+    limit: int,
+    timeout_seconds: int = 20,
+    verbose: bool = False,
+    until: int | None = None,
+    since: int | None = None,
+) -> List[dict]:
+    """Fetch events from relay; on the default relay, ask the second relay when it returns nothing.
+
+    The fallback applies only to the default relay, never to one named with --relay.
+    """
+    kwargs = dict(kind=kind, tags=tags, limit=limit, timeout_seconds=timeout_seconds,
+                  verbose=verbose, until=until, since=since)
+    events = _nak_req_events_once(relay=relay, **kwargs)
+    if not events and _same_relay(relay, DEFAULT_HYPERJUMP_RELAY):
+        if verbose:
+            typer.echo(f"No events on {relay}; asking {SECOND_HYPERJUMP_RELAY}")
+        events = _nak_req_events_once(relay=SECOND_HYPERJUMP_RELAY, **kwargs)
+    return events
+
+
+def _nak_req_events_once(
     *,
     relay: str,
     kind: int,
