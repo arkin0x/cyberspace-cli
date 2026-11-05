@@ -134,7 +134,8 @@ cyberspace history --json
 cyberspace whereami
 cyberspace sector
 # anchors come from wss://relay.onosendai.tech (canonical since 2026-11-05); when it has
-# none, the CLI asks wss://cyberspace.nostr1.com once. A --relay you name is asked alone.
+# none or cannot be reached, the CLI asks wss://cyberspace.nostr1.com once. A --relay you
+# name is asked alone, even the default one.
 cyberspace hyperjump nearest
 cyberspace hyperjump nearest --radius 10 --relay wss://relay.onosendai.tech
 cyberspace hyperjump nearest --coord 0x2b50e88
