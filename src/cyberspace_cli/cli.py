@@ -239,7 +239,16 @@ def _parse_encrypted_payload_tag(event: dict) -> Tuple[str, bytes]:
     return alg, payload
 
 
-DEFAULT_HYPERJUMP_RELAY = "wss://cyberspace.nostr1.com"
+# The canonical relay since 2026-11-05: the owner's own relay, holding the full
+# verified history copied from cyberspace.nostr1.com.
+DEFAULT_HYPERJUMP_RELAY = "wss://relay.onosendai.tech"
+# The former canonical relay, asked second for about two weeks after the
+# switch: only when the default relay was used and returned nothing.
+SECOND_HYPERJUMP_RELAY = "wss://cyberspace.nostr1.com"
+RELAY_HELP = (
+    f"Relay URL for querying hyperjump anchor events (kind=321). Default: {DEFAULT_HYPERJUMP_RELAY}, "
+    f"and {SECOND_HYPERJUMP_RELAY} when it has nothing or cannot be reached. A relay named here is asked alone."
+)
 HYPERJUMP_KIND = 321
 SECTOR_BITS = 30
 
@@ -247,7 +256,8 @@ SECTOR_BITS = 30
 def _nak_env() -> Dict[str, str]:
     """Environment for nak: sign NIP-42 AUTH with the local identity when one exists.
 
-    cyberspace.nostr1.com requires AUTH for reads since 2026-08-23. The key is
+    cyberspace.nostr1.com requires AUTH for reads since 2026-08-23
+    (relay.onosendai.tech does not, and ignores an unneeded AUTH). The key is
     passed through the environment (never argv) so it does not show up in `ps`.
     An explicit NOSTR_SECRET_KEY in the caller's environment wins.
     """
@@ -262,7 +272,57 @@ def _nak_env() -> Dict[str, str]:
     return env
 
 
+def _same_relay(a: str, b: str) -> bool:
+    return a.strip().lower().rstrip("/") == b.strip().lower().rstrip("/")
+
+
+class _NakFailed(Exception):
+    """nak ran and exited non-zero (exit 3: the relay could not be reached); the message is its stderr."""
+
+
 def _nak_req_events(
+    *,
+    relay: Optional[str],
+    kind: int,
+    tags: Dict[str, List[str]],
+    limit: int,
+    timeout_seconds: int = 20,
+    verbose: bool = False,
+    until: int | None = None,
+    since: int | None = None,
+) -> List[dict]:
+    """Fetch events from a relay.
+
+    relay None (no --relay given): the default relay, and the second relay
+    when the default one returns nothing or cannot be reached. A relay that
+    is named, even the default one, is asked alone.
+    """
+    kwargs = dict(kind=kind, tags=tags, limit=limit, timeout_seconds=timeout_seconds,
+                  verbose=verbose, until=until, since=since)
+    if relay is not None:
+        try:
+            return _nak_req_events_once(relay=relay, **kwargs)
+        except _NakFailed as e:
+            typer.echo(f"Nostr query failed: {e}" if str(e) else "Nostr query failed.", err=True)
+            raise typer.Exit(code=1)
+    try:
+        events = _nak_req_events_once(relay=DEFAULT_HYPERJUMP_RELAY, **kwargs)
+    except _NakFailed as e:
+        typer.echo(f"{DEFAULT_HYPERJUMP_RELAY} could not be read ({e or 'nak failed'}); asking {SECOND_HYPERJUMP_RELAY}", err=True)
+        events = []
+    else:
+        if events:
+            return events
+        if verbose:
+            typer.echo(f"No events on {DEFAULT_HYPERJUMP_RELAY}; asking {SECOND_HYPERJUMP_RELAY}")
+    try:
+        return _nak_req_events_once(relay=SECOND_HYPERJUMP_RELAY, **kwargs)
+    except _NakFailed as e:
+        typer.echo(f"Nostr query failed: {e}" if str(e) else "Nostr query failed.", err=True)
+        raise typer.Exit(code=1)
+
+
+def _nak_req_events_once(
     *,
     relay: str,
     kind: int,
@@ -334,12 +394,7 @@ def _nak_req_events(
             typer.echo("(empty)")
 
     if proc.returncode != 0:
-        stderr = (proc.stderr or "").strip()
-        if stderr:
-            typer.echo(f"Nostr query failed: {stderr}", err=True)
-        else:
-            typer.echo("Nostr query failed.", err=True)
-        raise typer.Exit(code=1)
+        raise _NakFailed((proc.stderr or "").strip())
 
     out: List[dict] = []
     for line in (proc.stdout or "").splitlines():
@@ -447,7 +502,7 @@ def _fetch_block_from_mempool(block_height: int, *, timeout_seconds: int = 20) -
 def _query_hyperjump_anchor_for_height(
     *,
     block_height: int,
-    relay: str,
+    relay: Optional[str],
     limit: int,
     verbose: bool = False,
 ) -> Optional[Tuple[Stop, dict]]:
@@ -1611,10 +1666,10 @@ def hyperjump_show(
         min=0,
         help="Hyperjump block height to inspect.",
     ),
-    relay: str = typer.Option(
-        DEFAULT_HYPERJUMP_RELAY,
+    relay: Optional[str] = typer.Option(
+        None,
         "--relay",
-        help="Relay URL for querying hyperjump anchor events (kind=321).",
+        help=RELAY_HELP,
     ),
     limit: int = typer.Option(
         25,
@@ -1752,10 +1807,10 @@ def hyperjump_to(
         "--view",
         help="Show the target hyperjump without creating a movement action.",
     ),
-    relay: str = typer.Option(
-        DEFAULT_HYPERJUMP_RELAY,
+    relay: Optional[str] = typer.Option(
+        None,
         "--relay",
-        help="Relay URL for querying hyperjump anchor events (kind=321).",
+        help=RELAY_HELP,
     ),
     limit: int = typer.Option(
         25,
@@ -1800,10 +1855,10 @@ def hyperjump_next(
         "--view",
         help="Show the next hyperjump without creating a movement action.",
     ),
-    relay: str = typer.Option(
-        DEFAULT_HYPERJUMP_RELAY,
+    relay: Optional[str] = typer.Option(
+        None,
         "--relay",
-        help="Relay URL for querying hyperjump anchor events (kind=321).",
+        help=RELAY_HELP,
     ),
     limit: int = typer.Option(
         25,
@@ -1850,10 +1905,10 @@ def hyperjump_prev(
         "--view",
         help="Show the previous hyperjump without creating a movement action.",
     ),
-    relay: str = typer.Option(
-        DEFAULT_HYPERJUMP_RELAY,
+    relay: Optional[str] = typer.Option(
+        None,
         "--relay",
-        help="Relay URL for querying hyperjump anchor events (kind=321).",
+        help=RELAY_HELP,
     ),
     limit: int = typer.Option(
         25,
@@ -2015,12 +2070,34 @@ def _print_ranked_hyperjumps(
         typer.echo(f"suggested_move=cyberspace move --to {x},{y},{z},{plane}")
 
 
+def _next_sync_until(current: int | None, oldest: int, brought_new: bool) -> int | None:
+    """The next page's `until` for `hyperjump sync`, or None when paging is done.
+
+    Many anchors share a second, and relays differ on `until`: NIP-01 makes it
+    inclusive, some treat it as exclusive. Stepping to oldest - 1 lost every
+    anchor at a page boundary second the page had not finished, and on an
+    exclusive relay the second below it too. So a page that brought new events
+    asks again from its oldest second inclusive (oldest + 1 covers it under
+    either reading; duplicates are dropped by id), and only a page that brought
+    nothing new steps past: to `oldest` (enough for an exclusive relay), and,
+    when an inclusive relay still answers that second (the cursor is already
+    there), to oldest - 1. The cursor never rises, and falls on every step
+    without new events, so paging always ends.
+    """
+    if brought_new:
+        nxt = oldest + 1
+        return nxt if current is None or nxt < current else current
+    if current is None or oldest < current:
+        return oldest
+    return oldest - 1 if oldest - 1 < current else None
+
+
 @hyperjump_app.command("sync")
 def hyperjump_sync(
-    relay: str = typer.Option(
-        DEFAULT_HYPERJUMP_RELAY,
+    relay: Optional[str] = typer.Option(
+        None,
         "--relay",
-        help="Relay URL for querying hyperjump anchor events (kind=321).",
+        help=RELAY_HELP,
     ),
     limit: int = typer.Option(
         10000,
@@ -2071,7 +2148,7 @@ def hyperjump_sync(
                     continue
         typer.echo(f"  Loaded {len(existing_events)} cached event(s).")
 
-    typer.echo(f"Fetching hyperjump anchors from {relay} ...")
+    typer.echo(f"Fetching hyperjump anchors from {relay or DEFAULT_HYPERJUMP_RELAY} ...")
     all_events = list(existing_events)
     seen_ids = set(existing_ids)
     total_fetched = 0
@@ -2092,10 +2169,11 @@ def hyperjump_sync(
     if resume and existing_events:
         oldest_ts = min((ev.get("created_at", 0) for ev in existing_events if ev.get("created_at")), default=0)
         if oldest_ts > 0:
-            cursor_until = oldest_ts - 1
+            # The oldest second itself is asked again (anchors share seconds; dedupe by id).
+            cursor_until = oldest_ts + 1
             min_b = min((get_block_height(ev) for ev in existing_events if get_block_height(ev) >= 0), default=None)
             max_b = max((get_block_height(ev) for ev in existing_events if get_block_height(ev) >= 0), default=None)
-            typer.echo(f"  Resuming: fetching events older than timestamp {cursor_until}")
+            typer.echo(f"  Resuming: fetching events from timestamp {oldest_ts} back")
             if min_b is not None and max_b is not None:
                 typer.echo(f"  Current cache covers blocks {min_b} to {max_b}")
 
@@ -2133,18 +2211,14 @@ def hyperjump_sync(
             f"{new_in_batch} new — {len(all_events)} total unique so far"
         )
 
-        # If we got fewer than the limit, we've exhausted the relay
-        if len(batch) < limit:
+        # A page shorter than --limit is not the end: a relay may cap the
+        # limit below what was asked. Paging ends on an empty page, or when
+        # the cursor cannot step further (_next_sync_until).
+        if oldest_ts is None:
             break
 
-        # If no new events in this batch, we're cycling — done
-        if new_in_batch == 0:
-            break
-
-        # Move cursor to before the oldest timestamp in this batch
-        if oldest_ts is not None:
-            cursor_until = oldest_ts - 1
-        else:
+        cursor_until = _next_sync_until(cursor_until, oldest_ts, new_in_batch > 0)
+        if cursor_until is None:
             break
 
     if not all_events:
@@ -2171,10 +2245,10 @@ def hyperjump_sync(
 
 @hyperjump_app.command("nearest")
 def hyperjump_nearest(
-    relay: str = typer.Option(
-        DEFAULT_HYPERJUMP_RELAY,
+    relay: Optional[str] = typer.Option(
+        None,
         "--relay",
-        help="Relay URL for querying hyperjump anchor events (kind=321).",
+        help=RELAY_HELP,
     ),
     radius: int = typer.Option(
         10,

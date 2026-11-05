@@ -61,9 +61,9 @@ Commands (high-level)
   Hyperjump: cyberspace move --to 0x<coord256> --hyperjump
              cyberspace move --toward 0x<coord256> --hyperjump
   While on the hyperjump system, normal hops require --exit-hyperjump.
-- cyberspace hyperjump nearest [--radius 10] [--coord <coord>] [--relay wss://cyberspace.nostr1.com] [--verbose]
+- cyberspace hyperjump nearest [--radius 10] [--coord <coord>] [--relay wss://relay.onosendai.tech] [--verbose]
   Queries kind=321 block anchor events in nearby sectors and prints direction hints.
-- cyberspace hyperjump show <blockheight> [--relay wss://cyberspace.nostr1.com] [--source relay|mempool] [--from-gps lat,lon | --from <coord>]
+- cyberspace hyperjump show <blockheight> [--relay wss://relay.onosendai.tech] [--source relay|mempool] [--from-gps lat,lon | --from <coord>]
   Shows the DECK-0001 v3 stop for a block height: a port (ideaspace, at the merkle root) or a
   landfall (dataspace, on Earth's surface at a point chosen by the block hash), with lat/lon
   and a maps link for landfalls. --from-gps / --from print distances (per-axis Gibsons and km,
