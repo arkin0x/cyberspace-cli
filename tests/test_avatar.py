@@ -21,8 +21,8 @@ from cyberspace_core.avatar import (
 )
 
 RAW = (Path(__file__).parent / "fixtures" / "avatar-vectors.json").read_bytes()
-SPEC_COMMIT = "938b1050320de6afce5d3646a1c2c06166744e02"  # branch of spec PR #109; re-pin to its merge commit
-SHA256 = "22830c6e13ef4f259337197624ba52e8cdf96f5ef66449adb2386939ae84725f"
+SPEC_COMMIT = "1420330d9b30d77ce714db5cb5330393b084e151"  # branch of spec PR #109; re-pin to its merge commit
+SHA256 = "3f2b9220470d58b335dcd61b27d30d66afb08f484d63d4acbd8a93b6b4febf0e"
 V = json.loads(RAW)
 
 
@@ -79,6 +79,14 @@ def test_verify_avatar_work_is_deprecated_and_never_checks_work():
         assert verify_avatar_work({**low["event"], "content": content_of(low["event"])})["ok"]
 
 
+def test_verify_avatar_work_never_throws_on_what_it_only_displays():
+    content = '{"vertices":[[0,0,0]]}'
+    for extra in ({"tags": "x"}, {"tags": 5}, {"tags": None}, {"tags": [None, ["nonce"]]}, {"id": None}, {"id": 5},
+                  {"tags": [["nonce", "0", "9" * 5000]]}):
+        with pytest.warns(DeprecationWarning):
+            assert verify_avatar_work({"kind": AVATAR_KIND, "id": "00ff", "tags": [], "content": content, **extra})["ok"]
+
+
 def test_the_price_is_gone():
     for name in ("avatar_work", "avatar_bits", "AVATAR_FLOOR_BITS", "AVATAR_DETAIL_BITS"):
         assert not hasattr(avatar, name)
@@ -88,6 +96,7 @@ def test_reach_and_readable():
     assert avatar_reach({"unit": 0, "vertices": [[0, 0, 0], [-1, -1, -1]], "ticks": [[60, 60, 60], [60, 60, 60]]}) == pytest.approx(0.5)
     assert avatar_reach({"unit": 2, "vertices": [[4, 0, 0]]}) == 16
     assert avatar_reach({"vertices": [[3, 0, 0], [0, 0, 0]], "ticks": [-2]}) == 3
+    assert avatar_reach({"unit": 2000, "vertices": [[0, 0, 0]]}) == 0
     assert avatar_readable({"vertices": [[0, 0, 0]]})
     for p in (None, [], {"vertices": "no"}, {"vertices": [None]}, {"vertices": [["x", 0, 0]]}, {"vertices": [[0, 0, 0]], "faces": 5}, {"vertices": [[0, 0, 0]], "ticks": [True]}):
         assert not avatar_readable(p)

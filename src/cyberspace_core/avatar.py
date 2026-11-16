@@ -79,6 +79,8 @@ def avatar_reach(payload: Dict[str, Any]) -> float:
     for i, v in enumerate(vertices):
         for a in range(3):
             reach = max(reach, abs((v[a] if len(v) > a else 0) + ticks[i][a] / _TICKS_PER_UNIT))
+    if reach == 0:
+        return 0.0
     try:
         return reach * (2.0 ** unit)
     except OverflowError:
@@ -124,7 +126,8 @@ def verify_avatar(event: Dict[str, Any]) -> Dict[str, Any]:
     if avatar_content_bytes(content) > AVATAR_CONTENT_MAX:
         return {"ok": False, "reason": "too-large"}
     try:
-        payload = json.loads(content, parse_constant=_refuse_constant)  # NaN and Infinity are not JSON
+        # NaN and Infinity are not JSON; integers read as floats, as JSON.parse reads them.
+        payload = json.loads(content, parse_constant=_refuse_constant, parse_int=float)
     except (ValueError, TypeError, RecursionError):
         return {"ok": False, "reason": "not-an-avatar"}
     if not avatar_readable(payload):
@@ -137,6 +140,10 @@ def verify_avatar_work(event: Dict[str, Any]) -> Dict[str, Any]:
     with required always 0 and the nonce tag's target and the id's zeros for
     display only; work is never checked."""
     warnings.warn("verify_avatar_work is deprecated: avatars carry no proof of work; use verify_avatar", DeprecationWarning, stacklevel=2)
-    nonce = next((t for t in event.get("tags", []) if t and t[0] == "nonce"), None)
-    committed = int(nonce[2]) if nonce and len(nonce) > 2 and re.fullmatch(r"[0-9]+", str(nonce[2])) else None
-    return {**verify_avatar(event), "required": 0, "committed": committed, "zeros": leading_zero_bits(str(event.get("id", "")))}
+    tags = event.get("tags")
+    tags = tags if isinstance(tags, list) else []
+    nonce = next((t for t in tags if isinstance(t, list) and t and t[0] == "nonce"), None)
+    target = nonce[2] if nonce and len(nonce) > 2 else None
+    committed = int(target) if isinstance(target, str) and re.fullmatch(r"[0-9]{1,15}", target) else None
+    ident = event.get("id")
+    return {**verify_avatar(event), "required": 0, "committed": committed, "zeros": leading_zero_bits(ident) if isinstance(ident, str) else 0}
