@@ -103,4 +103,4 @@ Every proof in the vectors is real and checked in full: hops (8.7.1), sidesteps 
 
 ### Where the vectors should live
 
-They are here because the reference implementation generates them and runs them on every test run, and because the other vector files the ports already copy (`tests/fixtures/sidestep_v3.json`, `avatar_work.json`) come from this repository. The chain rules are the spec's, not this implementation's, so the file should also be published in arkin0x/cyberspace next to the revision it locks, with this repository and the ports pinned to that copy, as the sidestep and ride references are.
+They are here because the reference implementation generates them and runs them on every test run, and because the other vector files the ports already copy (`tests/fixtures/sidestep_v3.json`; `avatar-vectors.json` now comes from the spec) come from this repository. The chain rules are the spec's, not this implementation's, so the file should also be published in arkin0x/cyberspace next to the revision it locks, with this repository and the ports pinned to that copy, as the sidestep and ride references are.
