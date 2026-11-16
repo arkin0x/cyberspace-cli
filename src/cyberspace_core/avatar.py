@@ -1,38 +1,27 @@
-"""The work an avatar owes (kind 11333, spec 8.10).
+"""What a reader checks on an avatar (kind 11333, spec 8.10).
 
-An avatar is drawn on every screen near its owner whether they like it or
-not, so its size and its detail are paid for in proof of work on the event
-itself, NIP-13 style: the event id must carry ``required`` leading zero bits,
-with the target committed in a ``nonce`` tag. Any viewer verifies with one
-hash and a walk over the vertices, and draws its default avatar instead for an
-avatar that has not paid.
+An avatar carries no proof of work (owner ruling 2026-11-16). A reader draws
+it when its content is within AVATAR_CONTENT_MAX bytes of UTF-8 and holds a
+payload the reader can read, and draws its default avatar otherwise. A
+``nonce`` tag, which avatars published before 2026-11 carry, is ignored: no
+verdict reads a tag. The same rule and vectors (the spec's avatar-vectors.json)
+as cyberspace-core's avatar.ts.
 
-    required = ceil(10 + 2 log2(reach) + 1.5 log2(detail / 32))
-
-``reach`` is the farthest vertex from the build origin in gibsons at true
-scale (a model unit is 2^unit gibsons), never below one; ``detail`` is the
-vertex count plus the face count, never below 32. The terms are summed and
-the total rounded up once. The content is at most 131,072 bytes of UTF-8; a
-reader draws the default avatar for a larger one. Only the committed target
-is read from the nonce tag: a miner may vary the nonce anywhere, such as a
-trailing ``nonce`` field of the payload. The same rule, constants and vectors
-(the spec's avatar-vectors.json) as cyberspace-core's avatar.ts.
-
-Until 2026-11 the floor was 16 bits and detail 3 bits per doubling; no shape
-costs more now, so every avatar published before the change stays paid.
+Until 2026-11 an avatar paid NIP-13 work priced by its reach and detail; a
+miner that varies the end of the content made that price meaningless, so it
+was dropped. ``verify_avatar_work`` stays as a deprecated alias of
+``verify_avatar`` that never checks work.
 """
 from __future__ import annotations
 
 import json
 import math
 import re
+import warnings
 from typing import Any, Dict, List, Optional, Sequence, Union
 
-AVATAR_FLOOR_BITS = 10
-AVATAR_SIZE_BITS = 2
-AVATAR_DETAIL_BITS = 1.5  # per doubling of detail beyond the free 32 (three per fourfold)
-AVATAR_DETAIL_FREE = 32
-AVATAR_CONTENT_MAX = 131072  # bytes of content, UTF-8
+AVATAR_CONTENT_MAX = 131072  # bytes of content, UTF-8 (128 KiB)
+AVATAR_CONTENT_WARN = 64000  # a publishing client warns above this: some NIP-46 signers refuse
 AVATAR_KIND = 11333  # replaceable; was 33331 before spec #26
 _TICKS_PER_UNIT = 120
 
@@ -96,24 +85,6 @@ def avatar_reach(payload: Dict[str, Any]) -> float:
         return math.inf  # a unit too large for a float: no work can pay for it
 
 
-def avatar_detail(payload: Dict[str, Any]) -> int:
-    """Vertices plus faces, before the free allowance."""
-    return len(payload["vertices"]) + len(payload.get("faces") or [])
-
-
-def avatar_bits(reach: float, detail: int) -> int:
-    """The bits owed for a reach in gibsons and a detail: the terms summed, rounded up once."""
-    r = max(1.0, reach)
-    d = max(AVATAR_DETAIL_FREE, detail)
-    raw = AVATAR_FLOOR_BITS + AVATAR_SIZE_BITS * math.log2(r) + AVATAR_DETAIL_BITS * math.log2(d / AVATAR_DETAIL_FREE)
-    return raw if math.isinf(raw) else math.ceil(raw)  # type: ignore[return-value]
-
-
-def avatar_work(payload: Dict[str, Any]) -> int:
-    """The leading zero bits the avatar's event id must carry."""
-    return avatar_bits(avatar_reach(payload), avatar_detail(payload))
-
-
 def avatar_content_bytes(content: str) -> int:
     """The content's length as the limit counts it: UTF-8 bytes."""
     return len(content.encode("utf-8", errors="surrogatepass"))
@@ -139,33 +110,33 @@ def _refuse_constant(name: str) -> Any:
     raise ValueError(f"{name} is not JSON")
 
 
-def verify_avatar_work(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Whether an avatar event has paid for its shape (NIP-13): the content is
-    within AVATAR_CONTENT_MAX (checked before parsing), the nonce tag's
-    committed target covers what the shape owes, and the id carries at least
-    the committed zeros. Returns ok, required, committed, zeros, reason; the
-    reasons are not-an-avatar, too-large, no-nonce, under-committed, unpaid, ok."""
-    zeros = leading_zero_bits(event.get("id", ""))
+def verify_avatar(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Whether a reader draws this avatar event (spec 8.10): the kind is 11333,
+    the content is within AVATAR_CONTENT_MAX (checked before parsing) and holds
+    a readable payload. Tags are not read. Returns ok and reason: ok,
+    not-an-avatar or too-large. Empty content is the default avatar, the
+    caller's to handle first; here it is not-an-avatar."""
     if event.get("kind") != AVATAR_KIND:
-        return {"ok": False, "required": 0, "committed": None, "zeros": zeros, "reason": "not-an-avatar"}
+        return {"ok": False, "reason": "not-an-avatar"}
     content = event.get("content", "")
     if not isinstance(content, str):
-        return {"ok": False, "required": 0, "committed": None, "zeros": zeros, "reason": "not-an-avatar"}
+        return {"ok": False, "reason": "not-an-avatar"}
     if avatar_content_bytes(content) > AVATAR_CONTENT_MAX:
-        return {"ok": False, "required": 0, "committed": None, "zeros": zeros, "reason": "too-large"}
+        return {"ok": False, "reason": "too-large"}
     try:
         payload = json.loads(content, parse_constant=_refuse_constant)  # NaN and Infinity are not JSON
     except (ValueError, TypeError, RecursionError):
-        return {"ok": False, "required": 0, "committed": None, "zeros": zeros, "reason": "not-an-avatar"}
+        return {"ok": False, "reason": "not-an-avatar"}
     if not avatar_readable(payload):
-        return {"ok": False, "required": 0, "committed": None, "zeros": zeros, "reason": "not-an-avatar"}
-    required = avatar_work(payload)
+        return {"ok": False, "reason": "not-an-avatar"}
+    return {"ok": True, "reason": "ok"}
+
+
+def verify_avatar_work(event: Dict[str, Any]) -> Dict[str, Any]:
+    """Deprecated: an avatar carries no proof of work. verify_avatar's verdict,
+    with required always 0 and the nonce tag's target and the id's zeros for
+    display only; work is never checked."""
+    warnings.warn("verify_avatar_work is deprecated: avatars carry no proof of work; use verify_avatar", DeprecationWarning, stacklevel=2)
     nonce = next((t for t in event.get("tags", []) if t and t[0] == "nonce"), None)
     committed = int(nonce[2]) if nonce and len(nonce) > 2 and re.fullmatch(r"[0-9]+", str(nonce[2])) else None
-    if committed is None:
-        return {"ok": False, "required": required, "committed": None, "zeros": zeros, "reason": "no-nonce"}
-    if committed < required:
-        return {"ok": False, "required": required, "committed": committed, "zeros": zeros, "reason": "under-committed"}
-    if zeros < committed:
-        return {"ok": False, "required": required, "committed": committed, "zeros": zeros, "reason": "unpaid"}
-    return {"ok": True, "required": required, "committed": committed, "zeros": zeros, "reason": "ok"}
+    return {**verify_avatar(event), "required": 0, "committed": committed, "zeros": leading_zero_bits(str(event.get("id", "")))}
