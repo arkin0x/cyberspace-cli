@@ -22,8 +22,8 @@ from cyberspace_core.avatar import (
 )
 
 RAW = (Path(__file__).parent / "fixtures" / "avatar-vectors.json").read_bytes()
-SPEC_COMMIT = "9caa0c4"
-SHA256 = "8ba4852221e3ebb8a4f88d63c1ce36cba959e250b691cc2a212f27393760b955"
+SPEC_COMMIT = "7dd2ce1559a5233acc49492a0b9c5d15680c1908"  # branch of spec PR #109; re-pin to its merge commit
+SHA256 = "37d176493a1d304a3f2fcd9cf84b04e91a13a7a5bf5f8e639f73e983463fcbd5"
 V = json.loads(RAW)
 
 
@@ -78,7 +78,7 @@ def test_mined_with_the_nonce_at_the_end(v):
 
 
 def test_rounds_the_sum_once_and_the_ladder():
-    assert avatar_bits(1.5, 48) == 13
+    assert avatar_bits(1.1, 40) == 11  # each term rounded up would make 12
     assert [avatar_bits(r, 32) for r in (1, 2, 4, 16, 1000)] == [10, 12, 14, 18, 30]
 
 
@@ -88,6 +88,34 @@ def test_limit_counts_utf8_bytes():
     assert len(body) < AVATAR_CONTENT_MAX
     ev = {"kind": AVATAR_KIND, "id": "0" * 64, "tags": [["nonce", "0", "10"]], "content": body}
     assert verify_avatar_work(ev)["reason"] == "too-large"
+
+
+@pytest.mark.parametrize("v", V["content_limit"], ids=[str(v["bytes"]) for v in V["content_limit"]])
+def test_content_limit(v):
+    prefix = '{"vertices":[[0,0,0]],"pad":"'
+    body = '{"vertices":[[0,0,0]]}' if v["bytes"] < len(prefix) + 2 else prefix + "a" * (v["bytes"] - len(prefix) - 2) + '"}'
+    ev = {"kind": AVATAR_KIND, "id": "0" * 64, "tags": [["nonce", "0", "10"]], "content": body}
+    assert (verify_avatar_work(ev)["reason"] == "too-large") == v["refused"]
+
+
+def test_size_is_checked_before_parsing():
+    ev = {"kind": AVATAR_KIND, "id": "0" * 64, "tags": [["nonce", "0", "10"]], "content": "x" * (AVATAR_CONTENT_MAX + 1)}
+    assert verify_avatar_work(ev)["reason"] == "too-large"
+    assert verify_avatar_work({**ev, "content": b"{}"})["reason"] == "not-an-avatar"
+
+
+@pytest.mark.parametrize("body", [
+    '{"vertices":[["x",0,0]]}', '{"vertices":[null]}', '{"vertices":[[0,0,0]],"faces":5}',
+    '{"unit":"x","vertices":[[0,0,0]],"ticks":[-1.5]}', '{"vertices":[[Infinity,0,0]]}',
+])
+def test_unreadable_payloads_return_a_verdict(body):
+    ev = {"kind": AVATAR_KIND, "id": "0" * 64, "tags": [["nonce", "0", "0"]], "content": body}
+    assert verify_avatar_work(ev)["reason"] == "not-an-avatar"
+
+
+def test_huge_unit_is_never_paid():
+    ev = {"kind": AVATAR_KIND, "id": "0" * 64, "tags": [["nonce", "0", "64"]], "content": '{"unit":2000,"vertices":[[1,0,0]]}'}
+    assert verify_avatar_work(ev)["reason"] == "under-committed"
 
 
 def test_leading_zero_bits():
